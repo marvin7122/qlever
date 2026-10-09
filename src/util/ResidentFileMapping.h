@@ -23,6 +23,11 @@ namespace ad_utility {
 // A read-only memory mapping of a file, together with one bit per page that
 // records whether this process has read the page before ("known resident").
 //
+// The file referred to by `fd`, including its size, must remain unchanged
+// while this object is in use. Renaming another file over its pathname does
+// not modify this mapping.
+//
+
 // Purpose: a small read that hits the page cache still costs a system call
 // (`preadv2`), whose kernel work (page-cache lookup, permission and access
 // time checks, copy) dominates the CPU time of lookups of many small,
@@ -36,7 +41,11 @@ namespace ad_utility {
 // fault), which is correct but synchronous. This only happens under memory
 // pressure, for pages this process has read before.
 //
-// Thread safety: all member functions may be called concurrently.
+// Thread safety: the read and mark functions (`tryRead`, `tryReadAll`,
+// `markResident`, `markAllResident`, `isMapped`) may be called concurrently
+// from multiple threads. Move construction, move assignment, and destruction
+// require exclusive access: no other member function may run concurrently
+// with them.
 class ResidentFileMapping {
  public:
   static constexpr size_t pageSize = 4096;

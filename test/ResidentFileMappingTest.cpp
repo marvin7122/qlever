@@ -6,6 +6,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/cleanup/cleanup.h>
 #include <gmock/gmock.h>
 
 #include <string>
@@ -42,6 +43,10 @@ TEST(ResidentFileMapping, servesOnlyMarkedPages) {
   constexpr size_t P = ResidentFileMapping::pageSize;
   const std::string filename = "residentFileMappingTest.dat";
   const std::string contents = makeContents();
+  // Delete the temporary file on every exit path (including the early return
+  // below and assertion failures). Declared before `file`, so it runs after
+  // `file` and `mapping` are destroyed.
+  absl::Cleanup removeFile{[&filename]() { ad_utility::deleteFile(filename); }};
   auto file = writeAndOpen(filename, contents);
   ResidentFileMapping mapping(file.fd(), contents.size());
 #ifdef __linux__
@@ -101,13 +106,15 @@ TEST(ResidentFileMapping, servesOnlyMarkedPages) {
   ResidentFileMapping assigned;
   assigned = std::move(moved);
   EXPECT_TRUE(assigned.tryRead(1, 4, target.data()));
-  ad_utility::deleteFile(filename);
 }
 
 // _____________________________________________________________________________
 TEST(ResidentFileMapping, emptyAndUnmappableFiles) {
   // An empty file is not mapped.
-  auto file = writeAndOpen("residentFileMappingEmpty.dat", "");
+  const std::string filename = "residentFileMappingEmpty.dat";
+  // Declared before `file`, so the removal runs after `file` is destroyed.
+  absl::Cleanup removeFile{[&filename]() { ad_utility::deleteFile(filename); }};
+  auto file = writeAndOpen(filename, "");
   ResidentFileMapping empty(file.fd(), 0);
   EXPECT_FALSE(empty.isMapped());
   char c = 'X';
@@ -118,5 +125,4 @@ TEST(ResidentFileMapping, emptyAndUnmappableFiles) {
   ResidentFileMapping invalid(-1, 4096);
   EXPECT_FALSE(invalid.isMapped());
   EXPECT_FALSE(invalid.tryRead(0, 1, &c));
-  ad_utility::deleteFile("residentFileMappingEmpty.dat");
 }

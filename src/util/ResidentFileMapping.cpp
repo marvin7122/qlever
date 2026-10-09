@@ -28,15 +28,19 @@ ResidentFileMapping::ResidentFileMapping([[maybe_unused]] int fd,
   if (fileSize == 0) {
     return;
   }
+  const size_t numPages = (fileSize + pageSize - 1) / pageSize;
+  const size_t numBitWords = (numPages + 63) / 64;
+  // Allocate the bitmap before mapping: if the allocation throws, no mapping
+  // exists yet that could leak, and the object simply fails to construct.
+  auto residentBits = std::make_unique<std::atomic<uint64_t>[]>(numBitWords);
   void* data = ::mmap(nullptr, fileSize, PROT_READ, MAP_SHARED, fd, 0);
   if (data == MAP_FAILED) {
     return;
   }
   data_ = static_cast<const char*>(data);
   size_ = fileSize;
-  const size_t numPages = (fileSize + pageSize - 1) / pageSize;
-  numBitWords_ = (numPages + 63) / 64;
-  residentBits_ = std::make_unique<std::atomic<uint64_t>[]>(numBitWords_);
+  numBitWords_ = numBitWords;
+  residentBits_ = std::move(residentBits);
   for (size_t i = 0; i < numBitWords_; ++i) {
     residentBits_[i].store(0, std::memory_order_relaxed);
   }
@@ -138,7 +142,9 @@ std::vector<size_t> ResidentFileMapping::tryReadAll(
 void ResidentFileMapping::markAllResident(
     ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
     ql::span<const size_t> positions) const {
+  AD_CONTRACT_CHECK(offsets.size() == numBytes.size());
   for (size_t i : positions) {
+    AD_CONTRACT_CHECK(i < numBytes.size());
     markResident(offsets[i], numBytes[i]);
   }
 }

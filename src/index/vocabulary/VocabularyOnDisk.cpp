@@ -422,13 +422,23 @@ VocabularyOnDisk::WordWriter::~WordWriter() {
 void VocabularyOnDisk::open(const std::string& filename) {
   file_.open(filename, "r");
   offsetsFile_.open(filename + offsetSuffix_, "r");
-  // Map both files for `vocabulary-mmap-resident-reads`. If a mapping fails,
-  // all reads of that file take the other paths.
-  wordsMapping_ = ad_utility::ResidentFileMapping(
-      file_.fd(), static_cast<size_t>(ql::filesystem::file_size(filename)));
-  offsetsMapping_ = ad_utility::ResidentFileMapping(
-      offsetsFile_.fd(), static_cast<size_t>(ql::filesystem::file_size(
-                             filename + std::string{offsetSuffix_})));
+  // Map both files for `vocabulary-mmap-resident-reads`, but only when the
+  // feature is enabled (and the page-cache fast path is available, which the
+  // resident reads require): a disabled feature takes the pre-PR path with
+  // no address-space or bitmap cost. The parameter is read here at open time;
+  // changing it later takes effect when the vocabulary is reopened. If a
+  // mapping fails, all reads of that file take the other paths.
+  if (getRuntimeParameter<&RuntimeParameters::vocabularyMmapResidentReads_>() &&
+      ad_utility::pageCacheFastPathIsSupported()) {
+    wordsMapping_ = ad_utility::ResidentFileMapping(
+        file_.fd(), static_cast<size_t>(ql::filesystem::file_size(filename)));
+    offsetsMapping_ = ad_utility::ResidentFileMapping(
+        offsetsFile_.fd(), static_cast<size_t>(ql::filesystem::file_size(
+                               filename + std::string{offsetSuffix_})));
+  } else {
+    wordsMapping_ = ad_utility::ResidentFileMapping{};
+    offsetsMapping_ = ad_utility::ResidentFileMapping{};
+  }
 
   // Read the offset count from the `MmapVectorMetaData` trailer, which is
   // the canonical layout used by both old and new vocabulary files.
