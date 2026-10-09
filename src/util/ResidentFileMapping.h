@@ -94,9 +94,10 @@ class ResidentFileMapping {
   // `tryRead` or marked via `markResident` get a second chance: the sweep
   // clears their reference bit and skips them, evicting unreferenced pages.
   //
-  // Enforced on `markResident` and immediately when set, using the resident
-  // bitmap to count marked pages. Concurrent accesses can keep pages marked
-  // above the cap after the bounded sweep; the next call re-evaluates it.
+  // Enforced when `markResident` adds pages and immediately when set, using
+  // the resident bitmap to count marked pages. Concurrent accesses can keep
+  // pages marked above the cap after the bounded sweep; adding pages or
+  // setting the cap re-evaluates it.
   // May be called concurrently.
   void setResidentCapPages(size_t capPages) const;
 

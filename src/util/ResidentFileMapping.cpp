@@ -128,17 +128,19 @@ void ResidentFileMapping::markResident(uint64_t offset, size_t numBytes) const {
     return;
   }
   auto [firstPage, lastPage] = pagesOf(offset, numBytes);
+  bool addedResidentPage = false;
   for (size_t page = firstPage; page <= lastPage; ++page) {
     const uint64_t mask = uint64_t{1} << (page % 64);
     referenceBits_[page / 64].fetch_or(mask, std::memory_order_relaxed);
     auto& word = residentBits_[page / 64];
     // Skip the atomic read-modify-write if the bit is already set.
     if ((word.load(std::memory_order_relaxed) & mask) == 0) {
-      word.fetch_or(mask, std::memory_order_relaxed);
+      const uint64_t old = word.fetch_or(mask, std::memory_order_relaxed);
+      addedResidentPage |= (old & mask) == 0;
     }
   }
   const size_t cap = capPages_.load(std::memory_order_relaxed);
-  if (cap > 0) {
+  if (cap > 0 && addedResidentPage) {
     evictDownTo(cap);
   }
 }
@@ -155,7 +157,7 @@ void ResidentFileMapping::setResidentCapPages(size_t capPages) const {
 // Clear marked pages down to `target`, sweeping from the CLOCK hand in file
 // order, giving referenced pages a second chance and demoting cleared runs
 // from the page cache. Stops after two revolutions: concurrent accesses may
-// keep the bitmap above target, which the next `markResident` re-evaluates.
+// keep the bitmap above target, which a `markResident` adding pages re-evaluates.
 // Only ever clears bits, so concurrent `tryRead` either sees the page (correct:
 // it is still mapped) or misses it (correct: it takes the other path).
 void ResidentFileMapping::evictDownTo(size_t target) const {
