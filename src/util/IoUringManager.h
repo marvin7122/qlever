@@ -12,9 +12,11 @@
 #define QLEVER_SRC_UTIL_IOURINGMANAGER_H
 
 #include <gtest/gtest_prod.h>
+#include <sys/uio.h>
 
 #include <cstdint>
 #include <unordered_map>
+#include <vector>
 
 #include "backports/algorithm.h"
 #include "backports/concepts.h"
@@ -237,8 +239,97 @@ using BatchIoManager = BatchManager<IoUringPolicy>;
 using BatchIoManager = BatchManager<SyncIoPolicy>;
 #endif
 
+// Returns how many of the leading reads of a batch were served from the page
+// cache: read `i` is attempted with a non-blocking `preadv2(RWF_NOWAIT)`, which
+// copies the bytes if they are cached and fails with `EAGAIN` otherwise. Stops
+// at the first read that is not fully served (not cached, short, error, or
+// `RWF_NOWAIT` unsupported), so the caller issues that read and all later
+// ones through its regular path, which also reports any real error. Always
+// returns 0 on platforms without `RWF_NOWAIT`. Precondition: the three spans
+// have equal length.
+size_t readLeadingPageCacheHits(int fd, ql::span<const size_t> numBytesToRead,
+                                ql::span<const uint64_t> offsets,
+                                ql::span<char*> buffers);
+
+// Wraps a `ReadPolicy`: serves the leading reads of each batch that are
+// already in the page cache with one synchronous syscall each and forwards the
+// rest of the batch to `Inner`. On a warm cache an io_uring read costs about
+// twice the kernel time of a `pread` (request setup, submission and completion
+// bookkeeping), while its asynchrony only pays off on a cache miss. A cold
+// batch costs one extra failed syscall.
+template <typename Inner>
+class PageCacheFirstPolicy {
+ public:
+  using BatchHandle = typename Inner::BatchHandle;
+
+  explicit PageCacheFirstPolicy(unsigned ringSize) : inner_(ringSize) {}
+
+  void addBatch(int fd, ql::span<const size_t> numBytesToRead,
+                ql::span<const uint64_t> offsets, ql::span<char*> buffers,
+                BatchHandle handle) {
+    const size_t numServed =
+        readLeadingPageCacheHits(fd, numBytesToRead, offsets, buffers);
+    inner_.addBatch(fd, numBytesToRead.subspan(numServed),
+                    offsets.subspan(numServed), buffers.subspan(numServed),
+                    handle);
+  }
+
+  void wait(BatchHandle handle) { inner_.wait(handle); }
+
+ private:
+  Inner inner_;
+};
+
+// Serve the reads of a batch that are fully in the page cache with
+// non-blocking `preadv2(RWF_NOWAIT)` calls, and return the positions (indices
+// into the three spans, ascending) of the reads that were not served. The
+// caller must issue those through its regular path, which also reports real
+// errors. Reads whose file ranges are exactly adjacent (`offsets[i] +
+// numBytes[i] == offsets[i + 1]`) are coalesced into one `preadv2` call with
+// one `iovec` per read. A read is served only if all of its bytes were read:
+// `EAGAIN` (not cached), a short read (end of file, or only a prefix cached)
+// or any other error leaves the read (and, for a failed call, the rest of its
+// run) to the caller. If the kernel or file system rejects `RWF_NOWAIT`
+// (`EOPNOTSUPP`), the fast path is disabled for the rest of the process (see
+// `pageCacheFastPathIsSupported`), which is logged once. Where `preadv2` with
+// `RWF_NOWAIT` is not available (outside Linux, and in Emscripten builds),
+// the function exists but serves nothing: every read is returned, and
+// `pageCacheFastPathIsSupported()` is false.
+// Precondition: the three spans have the same length.
+// `preadv2` and `RWF_NOWAIT` (Linux >= 4.14), including the caveat that a
+// `RWF_NOWAIT` read may return 0 before the end of the file (such a read is
+// treated as not served): readv(2),
+// https://web.archive.org/web/20260828220215/https://man7.org/linux/man-pages/man2/readv.2.html
+std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
+                                      ql::span<const uint64_t> offsets,
+                                      ql::span<char*> buffers);
+
+// False once `readPageCacheHits` found that `RWF_NOWAIT` is not supported, or
+// if it is not available at compile time.
+bool pageCacheFastPathIsSupported();
+
+namespace detail {
+// The one `preadv2(fd, iov, iovcnt, offset, RWF_NOWAIT)` call per run that
+// `readPageCacheHits` makes, with the same contract (the number of bytes read,
+// or -1 with `errno` set). A replaceable function pointer so that unit tests
+// can inject `EAGAIN`, short reads and `EOPNOTSUPP`; production code never
+// changes it.
+using PageCacheRead = int64_t (*)(int fd, const ::iovec* iov, int iovcnt,
+                                  int64_t offset);
+// The default: the system call. Where it is not available it fails with
+// `EOPNOTSUPP` (it is never called there).
+int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
+                            int64_t offset);
+// The function `readPageCacheHits` calls (initially `systemPageCacheRead`).
+PageCacheRead& pageCacheRead();
+// Undo the effect of an `EOPNOTSUPP` on `pageCacheFastPathIsSupported()`, for
+// tests that injected one.
+void resetPageCacheFastPathSupport();
+}  // namespace detail
+
 // Build a batch manager. When io_uring is compiled in and the runtime flag
-// `preferIoUring` is set, try to build an `IoUringManager`. If its setup
+// `preferIoUring` is set, try to build an `IoUringManager` that serves page
+// cache hits synchronously (`PageCacheFirstPolicy`). If its setup
 // syscall fails at runtime clear `preferIoUring` and fall back to a
 // `SyncIoManager`. Passing the flag by reference makes this probe-once: after
 // the first failure, every subsequent call goes straight to the sync manager,
@@ -248,7 +339,8 @@ inline std::unique_ptr<BatchManagerBase> makeBatchManager(
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
     try {
-      return std::make_unique<BatchManager<IoUringPolicy>>(ringSize);
+      return std::make_unique<
+          BatchManager<PageCacheFirstPolicy<IoUringPolicy>>>(ringSize);
     } catch (const std::exception& e) {
       preferIoUring = false;
       AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("

@@ -1,9 +1,16 @@
-// Copyright 2024, University of Freiburg
-// Chair of Algorithms and Data Structures
-// Authors: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+// Copyright 2024 - 2026 The QLever Authors, in particular:
+//
+// 2024        Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <gmock/gmock.h>
 
+#include "../util/GTestHelpers.h"
 #include "../util/IdTableHelpers.h"
 #include "../util/IndexTestHelpers.h"
 #include "./ValuesForTesting.h"
@@ -303,4 +310,34 @@ TEST(QueryExecutionTree,
                             ->getRootOperation();
   EXPECT_TRUE(std::dynamic_pointer_cast<IndexScan>(childOperation));
   EXPECT_EQ(childOperation->getLimitOffset(), limitOffset);
+}
+
+// Work that may outlive the context (export helper tasks) holds the index via
+// `getIndexSharedPtr`; it must alias `getIndex()` and share ownership.
+TEST(QueryExecutionContext, getIndexSharedPtrSharesOwnershipOfTheIndex) {
+  auto* qec = getQec();
+  const auto index = qec->getIndexSharedPtr();
+  ASSERT_NE(index, nullptr);
+  EXPECT_EQ(index.get(), &qec->getIndex());
+  const auto useCount = index.use_count();
+  {
+    const auto second = qec->getIndexSharedPtr();
+    EXPECT_EQ(second.get(), index.get());
+    EXPECT_EQ(index.use_count(), useCount + 1);
+  }
+  EXPECT_EQ(index.use_count(), useCount);
+}
+
+// _____________________________________________________________________________
+TEST(QueryExecutionTree, constructorRequiresQecAndRootOperation) {
+  auto* qec = getQec();
+  auto operation = std::make_shared<ValuesForTesting>(
+      qec, makeIdTableFromVector({{3}}),
+      std::vector<std::optional<Variable>>{Variable{"?x"}});
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      QueryExecutionTree(nullptr, operation),
+      ::testing::HasSubstr("Assertion `qec_ != nullptr` failed."));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      QueryExecutionTree(qec, nullptr),
+      ::testing::HasSubstr("Assertion `rootOperation_ != nullptr` failed."));
 }

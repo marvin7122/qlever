@@ -11,7 +11,7 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
 
-#include <cstring>
+#include <range/v3/view/zip.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -59,9 +59,6 @@ CPP_template(typename UnderlyingVocabulary,
  private:
   UnderlyingVocabulary underlyingVocabulary_;
   CompressionWrapper compressionWrapper_;
-  // We need to store two files, one for the words and one for the codebooks.
-  static constexpr std::string_view wordsSuffix = ".words";
-  static constexpr std::string_view decodersSuffix = ".codebooks";
 
   // Whether the underlying vocabulary has "holes", meaning that not every index
   // in `[0, endIndex())` has a word associated with it. This currently is the
@@ -81,6 +78,12 @@ CPP_template(typename UnderlyingVocabulary,
                     UnderlyingVocabulary>);
 
  public:
+  // Two files are stored, one for the words (which is the base filename of the
+  // `UnderlyingVocabulary`) and one for the codebooks. These suffixes are
+  // appended to the base filename of this vocabulary to obtain their names.
+  static constexpr std::string_view wordsSuffix = ".words";
+  static constexpr std::string_view decodersSuffix = ".codebooks";
+
   // The vocabulary is initialized using the `open()` method, the default
   // constructor leads to an empty vocabulary.
   CompressedVocabulary() = default;
@@ -164,87 +167,91 @@ CPP_template(typename UnderlyingVocabulary,
           const auto& [index, word] = compressed;
           const size_t decoderIdx = getDecoderIdxFromPosition(position);
           ++position;
-          AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
+          // Per-word hot path (runs once per decoded word): an expensive
+          // check — active in debug/test builds, compiled out with NDEBUG.
+          AD_EXPENSIVE_CHECK(decoderIdx < compressionWrapper_.numDecoders());
           const size_t bound =
               compressionWrapper_.maxDecompressedSize(word, decoderIdx);
           if (buffer.size() < bound) {
             buffer.resize(bound);
           }
-          std::string_view decompressed =
-              decompressIntoSpan(ql::span<char>{buffer.data(), bound}, bound,
-                                 [&](ql::span<char> span) {
-                                   return compressionWrapper_.decompressInto(
-                                       word, decoderIdx, span, scratch);
-                                 });
+          std::string_view decompressed = decompressIntoSpan(
+              ql::span<char>{buffer.data(), bound}, bound,
+              [this, &word, decoderIdx, &scratch](ql::span<char> span) {
+                return compressionWrapper_.decompressInto(word, decoderIdx,
+                                                          span, scratch);
+              });
           return IndexAndWord{index, decompressed};
         });
   }
 
   //____________________________________________________________________________
-  // TODO: Compact or tail-trim the PMR arena allocations so batch memory
-  // tracks decoded payload sizes rather than maxDecompressedSize bounds.
-  // Batch-read the compressed words from the underlying vocabulary, then
-  // decompress each word with the decoder of its block into memory owned by the
-  // returned result. Unlike `sequentialLookupBatch` (still used by
-  // `VocabularyInMemory::lookupBatch` as the generic fallback), this
-  // specialization decodes directly into a PMR arena instead of materializing
-  // owning `std::string`s per word. The order of words in the result matches
-  // `indices`. Return a `VocabBatchLookupResult` keeping the PMR monotonic
-  // buffer resource alive and providing `string_view`s for each requested index
-  // in `indices`. `indices` must not be empty.
+  // Look up the words for `indices` and append them to `builder` in the
+  // order of `indices`. `indices` must not be empty. The compressed words of
+  // the whole batch are fetched with one `lookupBatch` call on the underlying
+  // vocabulary; each word is then decoded by the decoder of its block
+  // directly into the arena of `builder` (no `std::string` per word).
   //
-  // Note: each word reserves its full `maxDecompressedSize` bound in the
-  // arena, so for FSST the slack between the worst-case expansion bound and
-  // the actually decoded size is retained until the returned result dies.
-  // No compaction or tail-trimming pass exists yet: peak batch memory stays
-  // proportional to the sum of the per-word bounds, not of the decoded
-  // payload sizes. When the caller passes an `ArenaVocabBatchBuilder` that
-  // was constructed with the Index/query `AllocatorWithLimit`, those
-  // allocations charge `--memory-max` and throw
-  // `AllocationExceedsLimitException` instead of growing the process heap.
-  // Decompress into `builder`. The caller owns the arena and the allocator.
+  // For an underlying vocabulary with holes, a hole index has no stored word:
+  // like `operator[]`, append the placeholder for it instead of feeding the
+  // plain-text placeholder to the decoder.
+  //
+  // Memory: each word is decoded into one reused buffer of its
+  // `maxDecompressedSize` bound and then copied into the arena with its
+  // decoded size, so the arena holds exactly the decoded bytes (for FSST the
+  // bound is several times the decoded size). When `builder` was constructed
+  // with the query's `AllocatorWithLimit`, these allocations are charged
+  // against the memory limit and throw `AllocationExceedsLimitException`
+  // instead of growing the process heap.
   void lookupBatch(ql::span<const size_t> indices,
                    ArenaVocabBatchBuilder& builder) const {
     AD_CONTRACT_CHECK(!indices.empty());
     auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
-    AD_CORRECTNESS_CHECK(compressedWords.size() == indices.size());
+    // Per-batch hot path: an expensive check (see above for the rationale).
+    AD_EXPENSIVE_CHECK(compressedWords.size() == indices.size());
 
     std::string scratch;
+    std::string decoded;
     for (const auto& [idx, compressedWord] :
          ::ranges::views::zip(indices, compressedWords)) {
-      // Like `operator[]`, report holes directly via the placeholder: there
-      // is no compressed word to decompress for them.
+      size_t decoderIdx;
       if constexpr (underlyingHasHoles) {
-        if (!underlyingVocabulary_.positionOfIndex(idx).has_value()) {
+        const auto position = underlyingVocabulary_.positionOfIndex(idx);
+        if (!position.has_value()) {
           builder.appendWord(
               ad_utility::vocabulary::placeholderForMissingVocabIndex(idx));
           continue;
         }
+        decoderIdx = getDecoderIdxFromPosition(position.value());
+      } else {
+        decoderIdx = getDecoderIdx(idx);
       }
-      const size_t decoderIdx = getDecoderIdx(idx);
-      AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
-      builder.appendDecompressedWord(
-          compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx),
-          [&](ql::span<char> outSpan) {
+      // Per-word hot path: an expensive check (see above for the rationale).
+      AD_EXPENSIVE_CHECK(decoderIdx < compressionWrapper_.numDecoders());
+      const size_t bound =
+          compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx);
+      if (bound > decoded.size()) {
+        decoded.resize(bound);
+      }
+      builder.appendWord(decompressIntoSpan(
+          ql::span<char>{decoded.data(), decoded.size()}, bound,
+          [this, &compressedWord, decoderIdx,
+           &scratch](ql::span<char> outSpan) {
             return compressionWrapper_.decompressInto(
                 compressedWord, decoderIdx, outSpan, scratch);
-          });
+          }));
     }
   }
 
+  // Convenience overload that decodes into a builder on the default
+  // (untracked) PMR resource and returns the finalized result. Callers that
+  // must charge the decoded bytes against a memory limit have to use the
+  // overload above with a builder that uses the query's `AllocatorWithLimit`.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
     ArenaVocabBatchBuilder builder(indices.size());
     lookupBatch(indices, builder);
     return std::move(builder).finalize();
-  }
-
-  [[nodiscard]] size_t decoderIndex(size_t idx) const {
-    return getDecoderIdx(idx);
-  }
-
-  [[nodiscard]] const CompressionWrapper& compressionWrapper() const {
-    return compressionWrapper_;
   }
 
   //____________________________________________________________________________
@@ -383,11 +390,12 @@ CPP_template(typename UnderlyingVocabulary,
     uint64_t counter_ = 0;
 
    public:
-    /// Constructor.
-    explicit DiskWriterFromUncompressedWords(
-        const std::string& filenameWords, const std::string& filenameDecoders)
-        : underlyingWriter_{filenameWords},
-          filenameDecoders_{filenameDecoders} {}
+    /// Constructor. The `filename` is the base filename of the vocabulary; the
+    /// names of the two files that are actually written are derived from it via
+    /// `wordsSuffix` and `decodersSuffix`.
+    explicit DiskWriterFromUncompressedWords(const std::string& filename)
+        : underlyingWriter_{absl::StrCat(filename, wordsSuffix)},
+          filenameDecoders_{absl::StrCat(filename, decodersSuffix)} {}
 
     /// Compress the `uncompressedWord` and write it to disk.
     uint64_t operator()(std::string_view uncompressedWord,
@@ -515,11 +523,12 @@ CPP_template(typename UnderlyingVocabulary,
     std::optional<uint64_t> lastIndex_ = std::nullopt;
 
    public:
-    // Constructor.
-    explicit DiskWriterWithExplicitIndices(const std::string& filenameWords,
-                                           const std::string& filenameDecoders)
-        : underlyingWriter_{filenameWords},
-          filenameDecoders_{filenameDecoders} {}
+    // Constructor. The `filename` is the base filename of the vocabulary; the
+    // names of the two files that are actually written are derived from it via
+    // `wordsSuffix` and `decodersSuffix`.
+    explicit DiskWriterWithExplicitIndices(const std::string& filename)
+        : underlyingWriter_{absl::StrCat(filename, wordsSuffix)},
+          filenameDecoders_{absl::StrCat(filename, decodersSuffix)} {}
 
     // This type can neither be copied nor moved (the user-declared destructor
     // below suppresses the implicit move operations). It is always used
@@ -598,6 +607,16 @@ CPP_template(typename UnderlyingVocabulary,
       std::conditional_t<underlyingHasHoles, DiskWriterWithExplicitIndices,
                          DiskWriterFromUncompressedWords<>>;
 
+  // The files of the underlying vocabulary, which is stored under the base
+  // filename plus `wordsSuffix`, plus the file for the codebooks.
+  static FileSuffixes fileSuffixes() {
+    FileSuffixes suffixes;
+    addFileSuffixesWithPrefix(suffixes, wordsSuffix,
+                              UnderlyingVocabulary::fileSuffixes());
+    suffixes.emplace_back(decodersSuffix);
+    return suffixes;
+  }
+
   // Return a `unique_ptr<DiskWriterFromUncompressedWords>` that can be used to
   // create the vocabulary. For an underlying vocabulary with holes this throws,
   // because such a vocabulary requires an explicit index for each word (see
@@ -615,9 +634,7 @@ CPP_template(typename UnderlyingVocabulary,
           "Such a vocabulary can only be created by filtering an existing "
           "vocabulary.");
     } else {
-      return std::make_unique<DiskWriterFromUncompressedWords<>>(
-          absl::StrCat(filename, wordsSuffix),
-          absl::StrCat(filename, decodersSuffix));
+      return std::make_unique<DiskWriterFromUncompressedWords<>>(filename);
     }
   }
 

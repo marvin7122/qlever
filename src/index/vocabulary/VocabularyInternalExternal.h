@@ -35,6 +35,11 @@ class VocabularyInternalExternal {
   VocabularyOnDisk externalVocab_;
 
  public:
+  // These suffixes are appended to the base filename in order to get the base
+  // filenames of the internal and the external vocabulary.
+  static constexpr std::string_view internalSuffix = ".internal";
+  static constexpr std::string_view externalSuffix = ".external";
+
   /// Construct an empty vocabulary
   VocabularyInternalExternal() = default;
 
@@ -63,12 +68,13 @@ class VocabularyInternalExternal {
   auto scanAll() const { return externalVocab_.scanAll(); }
 
   //____________________________________________________________________________
-  // Look up words for `indices` in a batch, returning string views in request
-  // order. `indices` must not be empty.
-  // Resolve `indices` in request order. Words present in `internalVocab_` are
-  // taken from RAM. The remaining indices are resolved in one
-  // `externalVocab_.lookupBatch` call (the on-disk path). If every index
-  // misses the RAM cache, return that disk result without copying.
+  // Look up the words for `indices` and return them in the order of
+  // `indices`. `indices` must not be empty. Words of the internal vocabulary
+  // are returned as views into this vocabulary (no copy), all other words are
+  // read with one batched lookup in the external vocabulary, whose buffer is
+  // owned by the result. Lifetime: the result must not be used after this
+  // vocabulary is closed or destroyed (the index outlives every query, so
+  // this holds for lookups during query processing).
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   //____________________________________________________________________________
@@ -144,6 +150,17 @@ class VocabularyInternalExternal {
     // Finish writing.
     void finishImpl() override;
   };
+
+  // The files of the internal and the external vocabulary, which are stored
+  // under the base filename plus `internalSuffix`/`externalSuffix`.
+  static FileSuffixes fileSuffixes() {
+    FileSuffixes suffixes;
+    addFileSuffixesWithPrefix(suffixes, internalSuffix,
+                              VocabularyInMemoryBinSearch::fileSuffixes());
+    addFileSuffixesWithPrefix(suffixes, externalSuffix,
+                              VocabularyOnDisk::fileSuffixes());
+    return suffixes;
+  }
 
   // Return a `unique_ptr<WordWriter>` that writes to the given `filename`.
   static auto makeDiskWriterPtr(const std::string& filename) {

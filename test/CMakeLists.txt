@@ -144,6 +144,8 @@ add_subdirectory(backports)
 add_subdirectory(rdfTypes)
 add_subdirectory(joinAlgorithms)
 add_subdirectory(libqlever)
+add_subdirectory(parallelBlockMerge)
+add_subdirectory(blockSort)
 
 OPTION(_DISABLE_EMSCRIPTEN_PROBLEMATIC_TESTS "Disable some tests that cause undefined symbol errors when building with Emscripten." OFF)
 
@@ -174,6 +176,10 @@ addLinkAndDiscoverTest(SparqlParserTest sparqlParser engine sparqlExpressions)
 addLinkAndDiscoverTest(VariableCounterTest sparqlParser engine)
 
 addLinkAndDiscoverTest(StringUtilsTest qlever_util)
+
+addLinkAndDiscoverTest(RegexSetTest qlever_util)
+
+addLinkAndDiscoverTest(BinaryDiffApplierTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(ConstexprSmallStringTest)
 
@@ -254,7 +260,14 @@ addLinkAndDiscoverTestNoLibs(RdfParserTest index)
 addLinkAndDiscoverTest(MultiColumnJoinTest engine)
 
 if (QLEVER_ENABLE_EXPORT_V2)
-    addLinkAndDiscoverTest(ElasticExportSchedulerTest engine server)
+    # The `server` library is not built for Emscripten (see
+    # `src/engine/CMakeLists.txt`); the scheduler test needs no `server`
+    # symbols, so link it only where the target exists.
+    if (TARGET server)
+        addLinkAndDiscoverTest(ElasticExportSchedulerTest engine server)
+    else ()
+        addLinkAndDiscoverTest(ElasticExportSchedulerTest engine)
+    endif ()
 endif ()
 
 addLinkAndDiscoverTest(IdTableTest qlever_util)
@@ -285,6 +298,8 @@ addLinkAndDiscoverTest(VectorWithMemoryLimitTest)
 
 addLinkAndDiscoverTestNoLibs(AllocatorPmrTest)
 
+addLinkAndDiscoverTestNoLibs(AllocateSharedTest)
+
 addLinkAndDiscoverTestNoLibs(AllocatorBackendTest)
 
 addLinkAndDiscoverTestNoLibs(AlignedAllocatorTest)
@@ -305,7 +320,11 @@ addLinkAndDiscoverTestNoLibs(ConstructDeduplicationModeTest)
 
 addLinkAndDiscoverTest(ZstdCompressionTest zstd ${cmake_thread_libs_init})
 
+addLinkAndDiscoverTest(CompressedBlockFileTest zstd ${cmake_thread_libs_init})
+
 addLinkAndDiscoverTest(TaskQueueTest)
+
+addLinkAndDiscoverTest(TaskQueueOnExecutorTest)
 
 addLinkAndDiscoverTest(SetOfIntervalsTest sparqlExpressions)
 
@@ -316,6 +335,8 @@ addLinkAndDiscoverTest(SparqlExpressionTest sparqlExpressions index engine)
 addLinkAndDiscoverTest(SparqlExpressionMemberFunctionsTest sparqlExpressions index engine)
 
 addLinkAndDiscoverTest(StreamableBodyTest http)
+
+addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
 
 addLinkAndDiscoverTest(StreamableGeneratorTest)
 
@@ -337,7 +358,11 @@ addLinkAndDiscoverTestNoLibs(IteratorTest)
 
 addLinkAndDiscoverTestNoLibs(ViewsTest)
 
+addLinkAndDiscoverTestNoLibs(UniqueBlockViewTest qlever_util)
+
 addLinkAndDiscoverTestNoLibs(TakeUntilInclusiveViewTest)
+
+addLinkAndDiscoverTestNoLibs(ChunkedIotaViewTest)
 
 addLinkAndDiscoverTest(ForwardTest)
 
@@ -346,6 +371,8 @@ addLinkAndDiscoverTestNoLibs(CompressorStreamTest Boost::iostreams)
 addLinkAndDiscoverTestNoLibs(AsyncStreamTest)
 
 addLinkAndDiscoverTest(BitUtilsTest)
+
+addLinkAndDiscoverTestNoLibs(BitVectorWithRankTest qlever_util)
 
 addLinkAndDiscoverTest(NBitIntegerTest)
 
@@ -400,11 +427,22 @@ endif ()
 
 addLinkAndDiscoverTest(HttpProxyConfigTest http)
 
+# The `fetch`-based implementation of the HTTP client that replaces the
+# Boost.Beast-based one for Emscripten (see `HttpClientEmscripten.cpp`) can of
+# course only be tested in a WebAssembly build.
+if (EMSCRIPTEN)
+    addLinkAndDiscoverTest(HttpClientEmscriptenTest http)
+endif ()
+
 addLinkAndDiscoverTestNoLibs(CallFixedSizeTest)
 
 addLinkAndDiscoverTestNoLibs(ConstexprUtilsTest)
 
 addLinkAndDiscoverTestNoLibs(ResetWhenMovedTest)
+
+addLinkAndDiscoverTestNoLibs(NoCopyNoMoveTest)
+
+addLinkAndDiscoverTestNoLibs(CopyOnWritePtrTest)
 
 addLinkAndDiscoverTestSerial(TimerTest)
 
@@ -473,6 +511,8 @@ addLinkAndDiscoverTest(ComparisonWithNanTest)
 
 addLinkAndDiscoverTestNoLibs(ThreadSafeQueueTest)
 
+addLinkAndDiscoverTestNoLibs(RecyclingPoolTest)
+
 addLinkAndDiscoverTest(IdTableHelpersTest)
 
 # GTestHelpersTest is registered exactly once above.
@@ -493,6 +533,8 @@ if (EMSCRIPTEN)
     set_source_files_properties(AsioHelpersTest.cpp PROPERTIES COMPILE_OPTIONS "-O1")
 endif ()
 
+addLinkAndDiscoverTest(AsyncResourcePoolTest)
+
 addLinkAndDiscoverTest(UniqueCleanupTest)
 
 addLinkAndDiscoverTest(WebSocketSessionTest http)
@@ -510,8 +552,6 @@ addLinkAndDiscoverTest(MessageSenderTest http)
 addLinkAndDiscoverTestNoLibs(CancellationHandleTest qlever_util)
 
 addLinkAndDiscoverTestSerial(ProgressBarTest qlever_util)
-
-addLinkAndDiscoverTest(CachingMemoryResourceTest)
 
 addLinkAndDiscoverTestNoLibs(ParallelMultiwayMergeTest)
 
@@ -553,9 +593,13 @@ addLinkAndDiscoverTest(LruCacheWithStatisticsTest)
 
 addLinkAndDiscoverTestNoLibs(InputRangeUtilsTest)
 
+addLinkAndDiscoverTestNoLibs(RangeThatReleasesOnEndTest)
+
 addLinkAndDiscoverTest(TripleSerializerTest)
 
 addLinkAndDiscoverTest(GeometryInfoTest qlever_util)
+
+addLinkAndDiscoverTest(GeoCellGridTest vocabulary)
 
 addLinkAndDiscoverTest(QueryRewriteUtilTest engine)
 
@@ -595,6 +639,8 @@ addLinkAndDiscoverTest(ExternalValuesTest engine)
 
 addLinkAndDiscoverTest(ConstructBatchEvaluatorTest engine)
 
+addLinkAndDiscoverTest(FastExportStreamFormatterTest engine rdfEscaping)
+
 addLinkAndDiscoverTest(ExportIdsTest engine sparqlParser)
 
 addLinkAndDiscoverTestNoLibs(EnumWithStringsTest Boost::program_options)
@@ -609,12 +655,18 @@ addLinkAndDiscoverTest(LogTest)
 
 addLinkAndDiscoverTest(QueryEventLogTest qlever_util)
 
+addLinkAndDiscoverTestNoLibs(GlobalExecutorTest qlever_util)
+
 addLinkAndDiscoverTest(MetricsTest metrics)
 
 addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
 addLinkAndDiscoverTest(ExportPipelineRouterTest engine sparqlParser)
+
+addLinkAndDiscoverTest(ColumnLatticeTest engine sparqlParser)
+
+addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
 
 # Header-only util under export_v2; do not pull testUtil/index (cluster GCC
 # range-v3 needs -fpermissive for those translation units).
@@ -650,3 +702,11 @@ if (QLEVER_ENABLE_EXPORT_V2)
         target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
     endif()
 endif ()
+
+# Byte identity of the V2 serializer with and without
+# `MonomorphicRowSerializer` against Legacy; needs a test index.
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ExportEngineV2MonomorphicTest engine sparqlParser)
+endif ()
+
+addLinkAndDiscoverTestNoLibs(AdaptiveChunkSizerTest qlever_util)

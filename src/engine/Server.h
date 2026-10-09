@@ -13,8 +13,10 @@
 #include <absl/functional/any_invocable.h>
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "backports/filesystem.h"
@@ -25,6 +27,7 @@
 #include "engine/QueryExecutionContext.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/SortPerformanceEstimator.h"
+#include "engine/export_v2/ElasticExportScheduler.h"
 #include "index/IdTableUtils.h"
 #include "index/Index.h"
 #include "libqlever/Qlever.h"
@@ -52,6 +55,11 @@ namespace serverTestHelpers {
 class ServerForTesting;
 }
 
+// Defined in `util/ResourceMonitor.h`, which only `Server.cpp` includes.
+namespace ad_utility {
+class IndexRebuildIdTracker;
+}
+
 //! The HTTP Server used.
 class Server {
   using json = nlohmann::json;
@@ -75,11 +83,13 @@ class Server {
   friend serverTestHelpers::ServerForTesting;
 
  public:
-  explicit Server(unsigned short port, size_t numThreads,
-                  std::string accessToken, const qlever::EngineConfig& config,
-                  bool noAccessCheck = false,
-                  std::shared_ptr<ad_utility::metrics::MetricsReader>
-                      metricsReader = nullptr);
+  explicit Server(
+      unsigned short port, size_t numThreads, std::string accessToken,
+      const qlever::EngineConfig& config, bool noAccessCheck = false,
+      std::shared_ptr<ad_utility::metrics::MetricsReader> metricsReader =
+          nullptr,
+      std::shared_ptr<ad_utility::IndexRebuildIdTracker> indexRebuildIdTracker =
+          nullptr);
 
   virtual ~Server() = default;
 
@@ -97,6 +107,15 @@ class Server {
   unsigned short port_;
   std::string accessToken_;
   bool noAccessCheck_;
+#if defined(QLEVER_ENABLE_EXPORT_V2)
+  // Declared before `queryRegistry_` so the registry (and its start/end
+  // callbacks) is destroyed first. Declared before `queryThreadPool_` below
+  // for the same reason in reverse: the pool joins (draining posted V2
+  // morsels) before the scheduler is destroyed, so posted callbacks never
+  // outlive the scheduler.
+  std::unique_ptr<ad_utility::export_v2::ElasticExportScheduler>
+      exportScheduler_;
+#endif
   ad_utility::websocket::QueryRegistry queryRegistry_{};
 
   /// Non-owning reference to the `QueryHub` instance living inside
@@ -131,6 +150,13 @@ class Server {
   // disabled (--enable-metrics not passed).
   std::shared_ptr<ad_utility::metrics::MetricsReader> metricsReader_;
 
+  // Holds the ID of the currently running index rebuild, which the resource
+  // sampler reads for the `index_rebuild_id` column. The `shared_ptr` is never
+  // null, as the constructor creates a tracker even if the caller passes none.
+  // Note: This member is purely observational. Preventing a second concurrent
+  // index rebuild is the job of the `rebuildInProgress_` data member above.
+  std::shared_ptr<ad_utility::IndexRebuildIdTracker> indexRebuildIdTracker_;
+
   // Deregisters callbacks on destruction. Declared after `qlever_` so that it
   // is destroyed before `qlever_` which the callbacks access.
   std::unique_ptr<ServerMetrics> metrics_;
@@ -159,7 +185,10 @@ class Server {
   class MockSend {
    public:
     Awaitable<void> operator()(auto response) {
-      response_ = std::move(response);
+      using Sent = std::decay_t<decltype(response)>;
+      if constexpr (std::is_same_v<Sent, ResponseT>) {
+        response_ = std::move(response);
+      }
       co_return;
     }
 
@@ -216,9 +245,7 @@ class Server {
 
   // Handle a `load-materialized-view` command: extract the view name from
   // `parameters` and load it via `indexAndViews`'s materialized views
-  // manager. The caller is responsible for resetting the request's operation
-  // to `None{}` so that `process()` doesn't also try to execute it as a
-  // regular query. Unlike `processWriteMaterializedView` above, this neither
+  // manager. Unlike `processWriteMaterializedView` above, this neither
   // executes a query nor honors a timeout, so it runs synchronously and
   // either returns its result or throws.
   json processLoadMaterializedView(const ParamValueMap& parameters,
@@ -227,10 +254,13 @@ class Server {
   // Handle a `delete-materialized-view` command: extract the view name from
   // `parameters`, delete it via a freshly taken index/views snapshot (not the
   // one from the beginning of `process()`, so that a concurrent rebuild
-  // cannot make this operate on a stale manager). The caller is responsible
-  // for resetting the request's operation to `None{}`, like
-  // `processLoadMaterializedView` above.
+  // cannot make this operate on a stale manager).
   json processDeleteMaterializedView(const ParamValueMap& parameters) const;
+
+  // Handle an `unload-materialized-view` command: unload the view named in
+  // `parameters` if loaded, keeping its on-disk files (unlike `delete`). The
+  // response tells whether the view was loaded before.
+  json processUnloadMaterializedView(const ParamValueMap& parameters) const;
 
   // Handle the `/ping` endpoint: log the alive check (with or without an
   // accompanying "msg" parameter) and return a fixed confirmation response.
@@ -262,6 +292,36 @@ class Server {
       requires ad_utility::httpUtils::HttpRequest<RequestT>)
       Awaitable<ResponseT> processRebuildIndex(const ParamValueMap& parameters,
                                                const RequestT& request);
+
+  // Result of `processCommands` below.
+  struct ProcessCommandsResult {
+    // The response produced by the matched `cmd=` URL parameter, if any.
+    std::optional<ResponseT> response_;
+
+    // Set to true for commands whose `serverProcessHelpers::CommandMeta::
+    // supportsOperation_` is true (currently only `write-materialized-view`,
+    // which uses the given query as the view-defining query and already
+    // executes it) to tell `process()` not to run the operation again via
+    // `processOperation`.
+    bool queryOperationWasConsumed_ = false;
+  };
+
+  // Handle the `cmd=<name>` URL parameter (see `serverProcessHelpers::
+  // commands` in `Server.cpp` for the full list); throws an `HttpError` if
+  // `cmd` is set but not one of those, or if the matched command's
+  // `CommandMeta::supportsOperation_` is `false` while the request supplies a
+  // "query"/"update"/graph-store `operation` anyway. `write-materialized-
+  // view` is currently the only command with `supportsOperation_` set to
+  // `true`; its `operation` doubles as the view-defining query, and the
+  // returned `ProcessCommandsResult::queryOperationWasConsumed_` is set to
+  // tell `process()` not to also execute it as a regular query.
+  CPP_template(typename RequestT)(
+      requires ad_utility::httpUtils::HttpRequest<RequestT>)
+      Awaitable<ProcessCommandsResult> processCommands(
+          const SharedIndexAndView& indexAndViews,
+          const ParamValueMap& parameters, const SparqlOperation& operation,
+          bool accessTokenOk, const ad_utility::Timer& requestTimer,
+          RequestT& request);
 
   // Initialize and register server metrics which are stored in `metrics_`.
   void initializeServerMetrics(
@@ -316,6 +376,18 @@ class Server {
   CPP_template(typename RequestT, typename SendT)(
       requires ad_utility::httpUtils::HttpRequest<RequestT>)
       Awaitable<void> process(RequestT& request, SendT&& send);
+
+  // The final step of `process()`: by this point the operation type (which also
+  // can be `no-operation`) is known, so this builds the
+  // query/update/graph-store-protocol/no-operation visitors and hands them,
+  // together with `operation`, to `processOperation`.
+  CPP_template(typename RequestT, typename SendT)(
+      requires ad_utility::httpUtils::HttpRequest<RequestT>)
+      Awaitable<void> processSparqlOperation(
+          SparqlOperation operation, const ParamValueMap& parameters,
+          bool accessTokenOk, const ad_utility::Timer& requestTimer,
+          SharedIndexAndView indexAndViews, RequestT& request, SendT&& send,
+          std::optional<ResponseT> response);
 
   // Wraps the error handling around the processing of operations. Calls the
   // visitor on the given operation.
@@ -384,7 +456,8 @@ class Server {
       requires ad_utility::httpUtils::HttpRequest<RequestT>)
       ad_utility::websocket::MessageSender createMessageSender(
           const std::weak_ptr<ad_utility::websocket::QueryHub>& queryHub,
-          const RequestT& request, std::string_view operation,
+          const RequestT& request, std::string_view operationString,
+          ad_utility::websocket::QueryOperation operationType,
           std::string_view clientIp = {});
   /// Invoke `function` on `threadPool_`, and return an awaitable to wait for
   /// its completion, wrapping the result.
@@ -404,6 +477,8 @@ class Server {
   ///
   /// \param request The HTTP request to extract the id from.
   /// \param query A string representation of the query to register an id for.
+  /// \param operationType Whether this is a query or an update. It is written
+  ///        to the `type` field of the `start` event in the query event log.
   ///
   /// \return An OwningQueryId object. It removes itself from the registry
   ///         on destruction.
@@ -411,6 +486,7 @@ class Server {
       requires ad_utility::httpUtils::HttpRequest<RequestT>)
       ad_utility::websocket::OwningQueryId
       getQueryId(const RequestT& request, std::string_view query,
+                 ad_utility::websocket::QueryOperation operationType,
                  std::string_view clientIp = {});
 
   /// Schedule a task to trigger the timeout after the `timeLimit`.
@@ -452,13 +528,15 @@ class Server {
       std::optional<std::string_view> userTimeout, bool accessTokenOk) const;
 
   /// Send response for the streamable media types (tsv, csv, octet-stream,
-  /// turtle, sparqlJson, qleverJson).
+  /// turtle, sparqlJson, qleverJson). `params` feeds ExportPipelineRouter
+  /// (`fast-export`, `export-engine`) when selecting Legacy V1 vs Export V2.
   CPP_template(typename RequestT, typename SendT)(
       requires ad_utility::httpUtils::HttpRequest<RequestT>)
       Awaitable<void> sendStreamableResponse(
           const RequestT& request, SendT& send, ad_utility::MediaType mediaType,
           const PlannedQuery plannedQuery, const ad_utility::Timer requestTimer,
-          SharedCancellationHandle cancellationHandle) const;
+          SharedCancellationHandle cancellationHandle,
+          const ParamValueMap& params = {}) const;
 
   FRIEND_TEST(MaterializedViewsTest, serverIntegration);
 

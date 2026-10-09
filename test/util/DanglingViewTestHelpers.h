@@ -15,19 +15,25 @@
 
 // _____________________________________________________________________________
 // STRICTLY TEST-LOCAL BEST-EFFORT TRIPWIRE — NOT A CORRECTNESS MECHANISM.
-// Overwrite the current stack frame with sentinel bytes, so that stale stack
-// contents (e.g. from a destroyed local object that a dangling view still
-// points into) become implausible to survive. Call it multiple times to also
-// clobber deeper frames. Returns the last byte written, read back through the
-// `volatile` buffer, so callers can assert that the stack was actually
-// overwritten with the sentinel.
+// Overwrite `NumBytes` of stack directly below the caller's frame with
+// sentinel bytes. This is the region where the frames of functions that the
+// caller has already returned from lived, so stale stack contents there (e.g.
+// a destroyed local object that a dangling view still points into) become
+// implausible to survive. Every call starts at the same depth, so repeated
+// calls overwrite the same region; to reach further down, use a larger
+// `NumBytes`. Returns the last byte written, read back through the `volatile`
+// buffer, so callers can assert that the stack was actually overwritten with
+// the sentinel.
 template <size_t NumBytes = 4096>
 [[gnu::noinline]] char clobberStack(char sentinel = '#') {
   // `volatile` prevents the compiler from optimizing the stack writes away.
   static_assert(NumBytes > 0, "clobberStack requires a non-empty buffer");
+  static_assert(NumBytes <= 65536,
+                "clobberStack buffer is limited to 64KB to prevent stack "
+                "overflow from excessively large template arguments");
   volatile char buffer[NumBytes];
-  for (size_t i = 0; i < NumBytes; ++i) {
-    buffer[i] = sentinel;
+  for (volatile char& byte : buffer) {
+    byte = sentinel;
   }
   // Compiler barrier: prevents the optimizer from eliding the stack writes or
   // reordering them past the return. A signal fence compiles to no

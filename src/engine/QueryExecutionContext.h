@@ -1,7 +1,13 @@
-// Copyright 2011 - 2024, University of Freiburg
-// Chair of Algorithms and Data Structures
-// Authors: Björn Buchhold <buchhold@cs.uni-freiburg.de> [2011 - 2017]
-//          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de> [2017 - 2024]
+// Copyright 2011 - 2026 The QLever Authors, in particular:
+//
+// 2011 - 2017 Björn Buchhold <buchhold@cs.uni-freiburg.de>, UFR
+// 2017 - 2024 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_ENGINE_QUERYEXECUTIONCONTEXT_H
 #define QLEVER_SRC_ENGINE_QUERYEXECUTIONCONTEXT_H
@@ -20,6 +26,7 @@
 #include "global/Id.h"
 #include "index/DeltaTriples.h"
 #include "index/Index.h"
+#include "util/AllocateShared.h"
 #include "util/Cache.h"
 #include "util/ConcurrentCache.h"
 
@@ -121,6 +128,12 @@ class QueryExecutionContext
 
   [[nodiscard]] const Index& getIndex() const { return *_index; }
 
+  // Shared ownership of the index, for work that may outlive this context
+  // (e.g. export helper tasks that still run after the request finished).
+  [[nodiscard]] std::shared_ptr<const Index> getIndexSharedPtr() const {
+    return _index;
+  }
+
   const LocatedTriplesState& locatedTriplesState() const {
     AD_CORRECTNESS_CHECK(locatedTriplesSharedState_ != nullptr);
     return *locatedTriplesSharedState_;
@@ -159,12 +172,25 @@ class QueryExecutionContext
     return _allocator;
   }
 
+  // define a `makeShared` member function that has the same interface as
+  // `std::make_shared`, but allocates via the `getAllocator()` (see
+  // `util/AllocateShared.h`).
+  DEFINE_MAKE_SHARED_MEMBER(getAllocator())
+
   // Serialize the given `runtimeInformation` to a JSON string and send it
   // using `updateCallback_`. If `sendPriority` is set to `IfDue`, this only
   // happens if the last update was sent more than `websocketUpdateInterval_`
   // ago; if it is set to `Always`, the update is always sent.
   void signalQueryUpdate(const RuntimeInformation& runtimeInformation,
                          RuntimeInformation::SendPriority sendPriority) const;
+
+  // Information about the planning of the query (the time and the details).
+  // Once set, `signalQueryUpdate` sends it along with every
+  // update, as the key `meta` of the runtime information, like the result in
+  // the `application/qlever-results+json` format does.
+  void setQueryPlanningInfo(QueryPlanningInfo info) {
+    queryPlanningInfo_ = std::move(info);
+  }
 
   bool _pinSubtrees;
   bool _pinResult;
@@ -304,6 +330,9 @@ class QueryExecutionContext
   // limiting the update frequency when `sendPriority` is `IfDue`.
   mutable std::chrono::steady_clock::time_point lastWebsocketUpdate_ =
       std::chrono::steady_clock::time_point::min();
+
+  // See `setQueryPlanningInfo`.
+  std::optional<QueryPlanningInfo> queryPlanningInfo_;
 
   // Disable the automatic rewriting of joins to materialized views. This also
   // deactivates the check for materialized view rewriting of
