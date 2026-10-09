@@ -8,6 +8,7 @@
 
 #include "util/ResidentFileMapping.h"
 
+#include <algorithm>
 #include <cstring>
 #include <utility>
 #include <vector>
@@ -20,6 +21,216 @@
 #endif
 
 namespace ad_utility {
+
+// _____________________________________________________________________________
+VocabFramePool::VocabFramePool(size_t numFrames) {
+  frames_.resize(std::max<size_t>(numFrames, 1));
+}
+
+// _____________________________________________________________________________
+VocabFramePool::Frame* VocabFramePool::findLocked(const FrameKey& key) {
+  auto it = index_.find(key);
+  return it == index_.end() ? nullptr : &frames_[it->second];
+}
+
+// _____________________________________________________________________________
+VocabFramePool::Frame* VocabFramePool::tryPin(const FrameKey& key) {
+  std::lock_guard<std::mutex> lock{mutex_};
+  Frame* frame = findLocked(key);
+  if (frame == nullptr || frame->state != FrameState::Resident) {
+    return nullptr;
+  }
+  frame->pinCount += 1;
+  frame->referenceBit = true;
+  return frame;
+}
+
+// _____________________________________________________________________________
+size_t VocabFramePool::clockVictimLocked() {
+  const size_t n = frames_.size();
+  // Prefer a free slot without touching the hand.
+  for (size_t i = 0; i < n; ++i) {
+    if (frames_[i].state == FrameState::Free) {
+      return i;
+    }
+  }
+  // CLOCK over unpinned frames only: clear set reference bits for a second
+  // chance, evict the first unpinned frame whose bit is already clear.
+  // Loading frames are always pinned, so they are never victims.
+  for (size_t revolution = 0; revolution < 2; ++revolution) {
+    for (size_t examined = 0; examined < n; ++examined) {
+      size_t i = hand_;
+      hand_ = (hand_ + 1) % n;
+      Frame& frame = frames_[i];
+      if (frame.pinCount > 0) {
+        continue;
+      }
+      if (frame.referenceBit) {
+        frame.referenceBit = false;
+        continue;
+      }
+      return i;
+    }
+  }
+  return n;
+}
+
+// _____________________________________________________________________________
+VocabFramePool::Frame* VocabFramePool::allocate(const FrameKey& key) {
+  std::lock_guard<std::mutex> lock{mutex_};
+  if (Frame* hit = findLocked(key)) {
+    // A loading frame is pinned by its filler; a second allocator pins it
+    // too and waits for `markLoaded` via its own fill path. Reference it.
+    hit->pinCount += 1;
+    hit->referenceBit = true;
+    return hit;
+  }
+  const size_t victim = clockVictimLocked();
+  if (victim == frames_.size()) {
+    // Every frame is pinned: never evict-while-pinned.
+    return nullptr;
+  }
+  Frame& frame = frames_[victim];
+  if (frame.state != FrameState::Free) {
+    index_.erase(frame.key);
+  }
+  frame.key = key;
+  frame.state = FrameState::Loading;
+  frame.pinCount = 1;
+  frame.referenceBit = true;
+  index_[key] = victim;
+  return &frame;
+}
+
+// _____________________________________________________________________________
+void VocabFramePool::markLoaded(const FrameKey& key) {
+  std::lock_guard<std::mutex> lock{mutex_};
+  if (Frame* frame = findLocked(key)) {
+    if (frame->state == FrameState::Loading) {
+      frame->state = FrameState::Resident;
+    }
+  }
+}
+
+// _____________________________________________________________________________
+void VocabFramePool::abandon(const FrameKey& key) {
+  std::lock_guard<std::mutex> lock{mutex_};
+  auto it = index_.find(key);
+  if (it == index_.end()) {
+    return;
+  }
+  Frame& frame = frames_[it->second];
+  if (frame.state != FrameState::Loading) {
+    return;
+  }
+  AD_CONTRACT_CHECK(frame.pinCount > 0);
+  frame.pinCount -= 1;
+  if (frame.pinCount == 0) {
+    index_.erase(it);
+    frame.state = FrameState::Free;
+    frame.referenceBit = false;
+  }
+}
+
+// _____________________________________________________________________________
+void VocabFramePool::unpin(const FrameKey& key) {
+  std::lock_guard<std::mutex> lock{mutex_};
+  Frame* frame = findLocked(key);
+  AD_CONTRACT_CHECK(frame != nullptr);
+  AD_CONTRACT_CHECK(frame->pinCount > 0);
+  frame->pinCount -= 1;
+}
+
+// _____________________________________________________________________________
+bool VocabFramePool::copyPinned(const FrameKey& key, size_t offsetInPage,
+                                size_t numBytes, char* target) {
+  std::lock_guard<std::mutex> lock{mutex_};
+  Frame* frame = findLocked(key);
+  if (frame == nullptr || frame->state != FrameState::Resident) {
+    return false;
+  }
+  if (offsetInPage > kPageSize || numBytes > kPageSize - offsetInPage) {
+    return false;
+  }
+  if (numBytes > 0) {
+    std::memcpy(target, frame->data.data() + offsetInPage, numBytes);
+  }
+  return true;
+}
+
+// _____________________________________________________________________________
+size_t VocabFramePool::residentCount() const {
+  std::lock_guard<std::mutex> lock{mutex_};
+  size_t count = 0;
+  for (const auto& frame : frames_) {
+    count += frame.state == FrameState::Resident ? 1 : 0;
+  }
+  return count;
+}
+
+// _____________________________________________________________________________
+size_t VocabFramePool::pinnedCount() const {
+  std::lock_guard<std::mutex> lock{mutex_};
+  size_t count = 0;
+  for (const auto& frame : frames_) {
+    count += frame.pinCount > 0 ? 1 : 0;
+  }
+  return count;
+}
+
+// _____________________________________________________________________________
+ScanRingBuffer::ScanRingBuffer() : slots_(kNumSlots) {
+  for (auto& slot : slots_) {
+    slot.resize(kSlotSize, 0);
+  }
+}
+
+// _____________________________________________________________________________
+char* ScanRingBuffer::next() {
+  std::lock_guard<std::mutex> lock{mutex_};
+  char* slot = slots_[next_].data();
+  next_ = (next_ + 1) % kNumSlots;
+  return slot;
+}
+
+// _____________________________________________________________________________
+HotStringCache::HotStringCache(size_t capacity) : capacity_{capacity} {}
+
+// _____________________________________________________________________________
+std::optional<std::string> HotStringCache::lookup(uint64_t vocabIndex) const {
+  std::lock_guard<std::mutex> lock{mutex_};
+  auto it = index_.find(vocabIndex);
+  if (it == index_.end()) {
+    return std::nullopt;
+  }
+  lru_.splice(lru_.begin(), lru_, it->second);
+  return it->second->value;
+}
+
+// _____________________________________________________________________________
+void HotStringCache::insert(uint64_t vocabIndex, std::string value) {
+  std::lock_guard<std::mutex> lock{mutex_};
+  if (capacity_ == 0) {
+    return;
+  }
+  if (auto it = index_.find(vocabIndex); it != index_.end()) {
+    it->second->value = std::move(value);
+    lru_.splice(lru_.begin(), lru_, it->second);
+    return;
+  }
+  lru_.push_front(Entry{vocabIndex, std::move(value)});
+  index_[vocabIndex] = lru_.begin();
+  while (index_.size() > capacity_) {
+    index_.erase(lru_.back().index);
+    lru_.pop_back();
+  }
+}
+
+// _____________________________________________________________________________
+size_t HotStringCache::size() const {
+  std::lock_guard<std::mutex> lock{mutex_};
+  return index_.size();
+}
 
 // _____________________________________________________________________________
 ResidentFileMapping::ResidentFileMapping([[maybe_unused]] int fd,
@@ -60,6 +271,8 @@ void ResidentFileMapping::unmap() {
   residentBits_.reset();
   referenceBits_.reset();
   clockHand_.store(0, std::memory_order_relaxed);
+  std::lock_guard<std::mutex> lock{framePoolMutex_};
+  framePool_.reset();
 }
 
 // _____________________________________________________________________________
@@ -71,11 +284,14 @@ ResidentFileMapping::ResidentFileMapping(ResidentFileMapping&& other) noexcept
       size_{std::exchange(other.size_, 0)},
       numBitWords_{std::exchange(other.numBitWords_, 0)},
       residentBits_{std::move(other.residentBits_)},
-      referenceBits_{std::move(other.referenceBits_)} {
+      referenceBits_{std::move(other.referenceBits_)},
+      framePoolFileId_{other.framePoolFileId_} {
   capPages_.store(other.capPages_.load(std::memory_order_relaxed),
                   std::memory_order_relaxed);
   clockHand_.store(other.clockHand_.load(std::memory_order_relaxed),
                    std::memory_order_relaxed);
+  std::lock_guard<std::mutex> lock{other.framePoolMutex_};
+  framePool_ = std::move(other.framePool_);
 }
 
 // _____________________________________________________________________________
@@ -92,6 +308,10 @@ ResidentFileMapping& ResidentFileMapping::operator=(
                     std::memory_order_relaxed);
     clockHand_.store(other.clockHand_.load(std::memory_order_relaxed),
                      std::memory_order_relaxed);
+    framePoolFileId_ = other.framePoolFileId_;
+    std::lock_guard<std::mutex> lock{other.framePoolMutex_};
+    std::lock_guard<std::mutex> selfLock{framePoolMutex_};
+    framePool_ = std::move(other.framePool_);
   }
   return *this;
 }
@@ -157,9 +377,10 @@ void ResidentFileMapping::setResidentCapPages(size_t capPages) const {
 // Clear marked pages down to `target`, sweeping from the CLOCK hand in file
 // order, giving referenced pages a second chance and demoting cleared runs
 // from the page cache. Stops after two revolutions: concurrent accesses may
-// keep the bitmap above target, which a `markResident` adding pages re-evaluates.
-// Only ever clears bits, so concurrent `tryRead` either sees the page (correct:
-// it is still mapped) or misses it (correct: it takes the other path).
+// keep the bitmap above target, which a `markResident` adding pages
+// re-evaluates. Only ever clears bits, so concurrent `tryRead` either sees the
+// page (correct: it is still mapped) or misses it (correct: it takes the other
+// path).
 void ResidentFileMapping::evictDownTo(size_t target) const {
 #ifdef QL_RESIDENT_FILE_MAPPING
   if (data_ == nullptr || numBitWords_ == 0) {
@@ -267,6 +488,121 @@ void ResidentFileMapping::markAllResident(
   for (size_t i : positions) {
     markResident(offsets[i], numBytes[i]);
   }
+}
+
+// _____________________________________________________________________________
+void ResidentFileMapping::enableFramePool(size_t numFrames,
+                                          uint32_t fileId) const {
+  std::lock_guard<std::mutex> lock{framePoolMutex_};
+  framePool_ = std::make_unique<VocabFramePool>(numFrames);
+  framePoolFileId_ = fileId;
+}
+
+// _____________________________________________________________________________
+void ResidentFileMapping::disableFramePool() const {
+  std::lock_guard<std::mutex> lock{framePoolMutex_};
+  framePool_.reset();
+}
+
+// _____________________________________________________________________________
+bool ResidentFileMapping::framePoolEnabled() const {
+  std::lock_guard<std::mutex> lock{framePoolMutex_};
+  return framePool_ != nullptr;
+}
+
+// _____________________________________________________________________________
+bool ResidentFileMapping::fillFrameFromFile(
+    uint64_t page, const FrameFillReader& reader) const {
+  if (size_ == 0 || reader == nullptr) {
+    return false;
+  }
+  const size_t numPages = (size_ + pageSize - 1) / pageSize;
+  if (page >= numPages) {
+    return false;
+  }
+  VocabFramePool* pool = nullptr;
+  uint32_t fileId = 0;
+  {
+    std::lock_guard<std::mutex> lock{framePoolMutex_};
+    pool = framePool_.get();
+    fileId = framePoolFileId_;
+  }
+  if (pool == nullptr) {
+    return false;
+  }
+  const FrameKey key{fileId, page};
+  VocabFramePool::Frame* frame = pool->allocate(key);
+  if (frame == nullptr) {
+    return false;
+  }
+  if (frame->state == VocabFramePool::FrameState::Resident) {
+    // Another thread already filled it; our pin is the hit.
+    pool->unpin(key);
+    return true;
+  }
+  const uint64_t fileOffset = page * pageSize;
+  const size_t numBytes = std::min(pageSize, size_ - fileOffset);
+  const bool ok = reader(frame->data.data(), fileOffset, numBytes);
+  if (!ok) {
+    pool->abandon(key);
+    return false;
+  }
+  if (numBytes < VocabFramePool::kPageSize) {
+    std::fill(frame->data.begin() + numBytes, frame->data.end(), 0);
+  }
+  pool->markLoaded(key);
+  pool->unpin(key);
+  return true;
+}
+
+// _____________________________________________________________________________
+bool ResidentFileMapping::tryReadPooled(uint64_t offset, size_t numBytes,
+                                        char* target) const {
+  if (numBytes == 0) {
+    return true;
+  }
+  if (size_ == 0 || offset > size_ || numBytes > size_ - offset) {
+    return false;
+  }
+  VocabFramePool* pool = nullptr;
+  uint32_t fileId = 0;
+  {
+    std::lock_guard<std::mutex> lock{framePoolMutex_};
+    pool = framePool_.get();
+    fileId = framePoolFileId_;
+  }
+  if (pool == nullptr) {
+    return false;
+  }
+  auto [firstPage, lastPage] = pagesOf(offset, numBytes);
+  // Pin every page first so concurrent eviction cannot drop a page between
+  // the hit check and the copy (no use-after-unpin).
+  std::vector<FrameKey> pinned;
+  pinned.reserve(lastPage - firstPage + 1);
+  for (size_t page = firstPage; page <= lastPage; ++page) {
+    const FrameKey key{fileId, page};
+    if (pool->tryPin(key) == nullptr) {
+      for (const auto& done : pinned) {
+        pool->unpin(done);
+      }
+      return false;
+    }
+    pinned.push_back(key);
+  }
+  size_t copied = 0;
+  bool ok = true;
+  for (size_t page = firstPage; page <= lastPage && ok; ++page) {
+    const FrameKey key{fileId, page};
+    const size_t pageBase = page * pageSize;
+    const size_t begin = std::max<size_t>(offset, pageBase);
+    const size_t end = std::min<size_t>(offset + numBytes, pageBase + pageSize);
+    ok = pool->copyPinned(key, begin - pageBase, end - begin, target + copied);
+    copied += end - begin;
+  }
+  for (const auto& key : pinned) {
+    pool->unpin(key);
+  }
+  return ok;
 }
 
 }  // namespace ad_utility
