@@ -363,12 +363,22 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   std::shared_ptr<const Result> result = qet.getResult(true);
   result->logResultSize();
 
+  // The root operation may already have applied LIMIT/OFFSET (e.g. an
+  // `IndexScan` handles it `FULL` while scanning, see
+  // `QueryPlanner::createExecutionTrees`). Compensate exactly like Legacy
+  // (`ExportQueryExecutionTrees::computeResult`) so `planExportMorsels`
+  // applies each exactly once; without this, OFFSET rows would be skipped a
+  // second time for such roots.
+  auto plannedLimitOffset = parsedQuery._limitOffset;
+  ExportQueryExecutionTrees::compensateForLimitOffsetClause(plannedLimitOffset,
+                                                            qet);
+
   constexpr uint64_t rowsPerMorsel = 8192;
   if (scheduler == nullptr) {
     // No session exists here, so nothing can revoke: serialize each plan
     // directly without checkpoints.
-    for (auto&& plan : planExportMorsels(
-             resultBlocks(result), parsedQuery._limitOffset, rowsPerMorsel)) {
+    for (auto&& plan : planExportMorsels(resultBlocks(std::move(result)),
+                                         plannedLimitOffset, rowsPerMorsel)) {
       cancellationHandle->throwIfCancelled();
       ScatterGatherChunkBuilder builder;
       for (const auto& segment : plan.segments_) {
@@ -394,6 +404,10 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
           ? ad_utility::export_v2::HelperPolicy::Exclusive
           : ad_utility::export_v2::HelperPolicy::Fair;
   auto session = scheduler->createSession<ScatterGatherChunkBuilder>(policy);
+  // `ordered` deliberately uses the original clause: a query that was bounded
+  // (LIMIT and/or OFFSET) keeps deterministic slot order like Legacy V1, even
+  // when compensation above already zeroed the offset for a root that applied
+  // it. Only the planner consumes the compensated clause.
   const auto& limitOffset = parsedQuery._limitOffset;
   const bool ordered = limitOffset._limit.has_value() ||
                        limitOffset._offset != 0 ||
@@ -448,8 +462,8 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
     logHelpers(false);
     return builder;
   };
-  for (auto&& plan : planExportMorsels(
-           resultBlocks(result), parsedQuery._limitOffset, rowsPerMorsel)) {
+  for (auto&& plan : planExportMorsels(resultBlocks(std::move(result)),
+                                       plannedLimitOffset, rowsPerMorsel)) {
     cancellationHandle->throwIfCancelled();
     session.submitMorsel(runner.makeTask(std::move(plan)));
     while (session.totalSlots() - session.consumedSlots() >= maxInFlight) {
