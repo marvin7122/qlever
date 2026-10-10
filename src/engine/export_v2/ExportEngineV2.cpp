@@ -56,14 +56,22 @@ String escapeCell(String input) {
         std::string_view::npos) {
       return input;
     }
-    return String{RdfEscaping::escapeForCsv(std::string{input})};
+    // Single pass straight into caller-owned storage (arena bump for the pmr
+    // instantiation): no owning temporary, no second copy. Byte-identical to
+    // `escapeForCsv`. The output reuses the input's allocator, so arena
+    // strings stay on the arena.
+    String out{input.get_allocator()};
+    RdfEscaping::escapeForCsvInto(std::string_view{input}, out);
+    return out;
   } else {
     static_assert(Format == RowFormat::Tsv);
     if (SimdEscapeClassifier::findFirstEscapeSimd<EscapeFormat::Tsv>(input) ==
         std::string_view::npos) {
       return input;
     }
-    return String{RdfEscaping::escapeForTsv(std::string{input})};
+    String out{input.get_allocator()};
+    RdfEscaping::escapeForTsvInto(std::string_view{input}, out);
+    return out;
   }
 }
 
