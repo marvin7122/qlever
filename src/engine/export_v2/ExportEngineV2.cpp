@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <string>
@@ -32,8 +33,10 @@
 #include "engine/Sort.h"
 #include "engine/Values.h"
 #include "engine/export_v2/ColumnLattice.h"
+#include "engine/export_v2/ConstructRowSerializer.h"
 #include "engine/export_v2/ExportMorselPlanner.h"
 #include "engine/export_v2/MonomorphicSerializers.h"
+#include "engine/export_v2/ResolvedColumn.h"
 #include "engine/export_v2/SimdEscapeClassifier.h"
 #include "global/Id.h"
 #include "global/RuntimeParameters.h"
@@ -77,72 +80,6 @@ std::string escapeCell(std::string input) {
   }
   return escapeForFormat<Format>(input);
 }
-
-// The text of one output column for a window of rows. A cell views either a
-// decoded vocabulary word (kept alive by `batch_`, no copy) or `scratch_`
-// (escaped words, values encoded in the `Id`, local-vocab words). Undefined
-// and unbound cells are empty views: Legacy and V2 both serialize them as an
-// empty field, exactly like an empty string.
-class ResolvedColumn {
- private:
-  std::vector<std::string_view> cells_;
-  std::string scratch_;
-  // Cells whose text lives in `scratch_`: (row, offset, size). `scratch_` may
-  // reallocate while the column is resolved, so these become views only in
-  // `finish`.
-  struct ScratchCell {
-    size_t row_;
-    size_t offset_;
-    size_t size_;
-  };
-  std::vector<ScratchCell> scratchCells_;
-  ad_utility::vocabulary::VocabBatchLookupResult batch_;
-  size_t totalBytes_ = 0;
-
- public:
-  explicit ResolvedColumn(size_t numRows) : cells_(numRows) {}
-  // Pinned: after `finish`, cells view `scratch_`, whose bytes may live inside
-  // the object (small-string buffer), so a moved or copied column would
-  // dangle.
-  ResolvedColumn(const ResolvedColumn&) = delete;
-  ResolvedColumn& operator=(const ResolvedColumn&) = delete;
-  ResolvedColumn(ResolvedColumn&&) = delete;
-  ResolvedColumn& operator=(ResolvedColumn&&) = delete;
-
-  // Point `row` at `text`, which must outlive this column (vocabulary batch).
-  void setView(size_t row, std::string_view text) {
-    cells_[row] = text;
-    totalBytes_ += text.size();
-  }
-
-  // Copy `text` into the column's scratch buffer.
-  void setCopy(size_t row, std::string_view text) {
-    if (text.empty()) {
-      return;
-    }
-    scratchCells_.push_back({row, scratch_.size(), text.size()});
-    scratch_.append(text);
-    totalBytes_ += text.size();
-  }
-
-  void keepAlive(ad_utility::vocabulary::VocabBatchLookupResult batch) {
-    batch_ = std::move(batch);
-  }
-
-  // Turn the scratch cells into views. Call once, after the last `set*`.
-  void finish() {
-    for (const auto& cell : scratchCells_) {
-      cells_[cell.row_] =
-          std::string_view{scratch_.data() + cell.offset_, cell.size_};
-    }
-  }
-
-  [[nodiscard]] std::string_view operator[](size_t row) const {
-    return cells_[row];
-  }
-  [[nodiscard]] size_t size() const { return cells_.size(); }
-  [[nodiscard]] size_t totalBytes() const { return totalBytes_; }
-};
 
 // Write the cell for `word` into `column`, with the same text as
 // `literalOrIriToStringAndType<Format == Csv>(word, escapeCell<Format>)`:
@@ -441,6 +378,27 @@ bool reserveForMorsel(ScatterGatherChunkBuilder& builder, uint64_t rowsDone,
   return true;
 }
 
+// The OFFSET that is still to be applied to the result of `qet`. Like Legacy
+// `compensateForLimitOffsetClause`: when the root operation already applied
+// the OFFSET (e.g. an `IndexScan`), its result starts at the first row to
+// export. Re-applying the LIMIT is harmless, so it is never compensated.
+uint64_t offsetLeftToApply(const QueryExecutionTree& qet,
+                           const LimitOffsetClause& limitOffset) {
+  return qet.handlesLimitOffset() == LimitOffsetHandling::NONE
+             ? limitOffset._offset
+             : 0;
+}
+
+// Serializes the rows `[begin, end)` of `segment`'s block into `builder`.
+// There is one per request (SELECT CSV/TSV or CONSTRUCT), shared by all morsel
+// tasks of that request, so calls must be safe from concurrent threads. It
+// owns everything it reads besides the block (shared ownership): closing the
+// session does not join running helpers, so a helper may still serialize after
+// the request's context is gone.
+using SegmentSerializer =
+    std::function<void(const ExportMorselSegment& segment, uint64_t begin,
+                       uint64_t end, ScatterGatherChunkBuilder& builder)>;
+
 // Builds morsel tasks with cooperative revocation checkpoints (unordered
 // sessions only). On revocation the task returns its partial builder and
 // resubmits the unprocessed tail as an ordinary morsel, so no row is lost
@@ -451,14 +409,8 @@ struct CheckpointMorselRunner {
   std::shared_ptr<
       ad_utility::export_v2::ExportJobState<ScatterGatherChunkBuilder>>
       state_;
-  std::shared_ptr<std::vector<std::optional<ColumnIndex>>> columnsPtr_;
-  std::shared_ptr<std::vector<ColumnLattice>> latticePtr_;
-  // Shared ownership: closing the session does not join running helpers, so
-  // a helper may still serialize after the request's context is gone.
-  std::shared_ptr<const Index> index_;
-  RowFormat format_ = RowFormat::Csv;
+  std::shared_ptr<const SegmentSerializer> serialize_;
   bool checkpoints_ = false;
-  bool monomorphicRows_ = false;
 
   absl::AnyInvocable<ScatterGatherChunkBuilder()> makeTask(
       ExportMorsel plan) const {
@@ -482,10 +434,7 @@ struct CheckpointMorselRunner {
       while (pos < seg.end_) {
         const uint64_t windowEnd =
             std::min(seg.end_, pos + kRevocationCheckRows);
-        ExportEngineV2::appendSerializedRows(
-            seg.block_->idTable_.asStaticView<0>(), seg.block_->localVocab_,
-            format_, builder, *index_, *columnsPtr_, pos, windowEnd,
-            *latticePtr_, monomorphicRows_);
+        (*serialize_)(seg, pos, windowEnd, builder);
         rowsDone += windowEnd - pos;
         if (!reserved) {
           reserved = reserveForMorsel(builder, rowsDone, plan.numRows_);
@@ -498,7 +447,9 @@ struct CheckpointMorselRunner {
           if (checkpoints_ && state_->currentEpoch() != epoch) {
             ExportMorsel remainder;
             if (pos < seg.end_) {
-              remainder.segments_.push_back({seg.block_, pos, seg.end_});
+              auto tail = seg;
+              tail.begin_ = pos;
+              remainder.segments_.push_back(std::move(tail));
               remainder.numRows_ += seg.end_ - pos;
             }
             for (size_t r = s + 1; r < numSegments; ++r) {
@@ -527,51 +478,42 @@ struct CheckpointMorselRunner {
 // The morsel plans stream straight from the lazy result blocks: every segment
 // serializes from its block in place, so there is no `sliced` copy and no
 // second copy through a rechunker.
-cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
-    const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
-    RowFormat format, ad_utility::SharedCancellationHandle cancellationHandle,
+cppcoro::generator<ScatterGatherChunkBuilder> serializeMorsels(
+    const QueryExecutionTree& qet, LimitOffsetClause limitOffset,
+    std::optional<std::string> header,
+    std::shared_ptr<const SegmentSerializer> serialize,
+    ad_utility::SharedCancellationHandle cancellationHandle,
     ad_utility::export_v2::ElasticExportScheduler* scheduler) {
-  const auto& selectClause = parsedQuery.selectClause();
-  const auto columns = selectedColumns(parsedQuery, qet, selectClause);
-  const Index& index = qet.getQec()->getIndex();
-  const bool monomorphicRows =
-      getRuntimeParameter<&RuntimeParameters::exportV2MonomorphicRows_>();
-
-  {
-    ScatterGatherChunkBuilder header;
-    header.appendOwned(makeHeaderLine(selectClause, format));
-    co_yield std::move(header);
+  if (header.has_value()) {
+    ScatterGatherChunkBuilder builder;
+    builder.appendOwned(std::move(header).value());
+    co_yield std::move(builder);
   }
 
   std::shared_ptr<const Result> result = qet.getResult(true);
   result->logResultSize();
 
-  // The root operation may already have applied LIMIT/OFFSET (e.g. an
-  // `IndexScan` handles it `FULL` while scanning, see
-  // `QueryPlanner::createExecutionTrees`). Compensate exactly like Legacy
-  // (`ExportQueryExecutionTrees::computeResult`) so `planExportMorsels`
-  // applies each exactly once; without this, OFFSET rows would be skipped a
-  // second time for such roots.
-  auto plannedLimitOffset = parsedQuery._limitOffset;
-  ExportQueryExecutionTrees::compensateForLimitOffsetClause(plannedLimitOffset,
-                                                            qet);
+  // The order of the morsels follows the clause the user wrote, the rows to
+  // skip follow the plan (see `offsetLeftToApply`).
+  const bool ordered = limitOffset._limit.has_value() ||
+                       limitOffset._offset != 0 ||
+                       limitOffset.textLimit_.has_value() ||
+                       limitOffset.exportLimit_.has_value();
+  limitOffset._offset = offsetLeftToApply(qet, limitOffset);
 
   constexpr uint64_t rowsPerMorsel = 8192;
   if (scheduler == nullptr) {
     // No session exists here, so nothing can revoke: serialize each plan
     // directly without checkpoints.
-    for (auto&& plan : planExportMorsels(resultBlocks(std::move(result)),
-                                         plannedLimitOffset, rowsPerMorsel)) {
+    for (auto&& plan :
+         planExportMorsels(resultBlocks(result), limitOffset, rowsPerMorsel)) {
       cancellationHandle->throwIfCancelled();
       ScatterGatherChunkBuilder builder;
       uint64_t rowsDone = 0;
       bool reserved = false;
       for (const auto& segment : plan.segments_) {
-        ExportEngineV2::appendSerializedRows(
-            segment.block_->idTable_.asStaticView<0>(),
-            segment.block_->localVocab_, format, builder, index,
-            columns.indices_, segment.begin_, segment.end_,
-            columns.lattice_.columns_, monomorphicRows);
+        cancellationHandle->throwIfCancelled();
+        (*serialize)(segment, segment.begin_, segment.end_, builder);
         rowsDone += segment.end_ - segment.begin_;
         if (!reserved) {
           reserved = reserveForMorsel(builder, rowsDone, plan.numRows_);
@@ -587,88 +529,91 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   AD_LOG_INFO << "ExportEngineV2 streaming lazy result blocks to morsels on "
                  "queryThreadPool_ (no extra V2 threads)"
               << std::endl;
-  const auto policy =
-      getRuntimeParameter<&RuntimeParameters::exportV2HelperPolicy_>() ==
-              "exclusive"
-          ? ad_utility::export_v2::HelperPolicy::Exclusive
-          : ad_utility::export_v2::HelperPolicy::Fair;
-  auto session = scheduler->createSession<ScatterGatherChunkBuilder>(policy);
-  // `ordered` deliberately uses the original clause: a query that was bounded
-  // (LIMIT and/or OFFSET) keeps deterministic slot order like Legacy V1, even
-  // when compensation above already zeroed the offset for a root that applied
-  // it. Only the planner consumes the compensated clause.
-  const auto& limitOffset = parsedQuery._limitOffset;
-  const bool ordered = limitOffset._limit.has_value() ||
-                       limitOffset._offset != 0 ||
-                       limitOffset.textLimit_.has_value() ||
-                       limitOffset.exportLimit_.has_value();
+  auto session = scheduler->createSession<ScatterGatherChunkBuilder>();
   session.setOrdered(ordered);
-  auto columnsPtr = std::make_shared<std::vector<std::optional<ColumnIndex>>>(
-      columns.indices_);
-  auto latticePtr =
-      std::make_shared<std::vector<ColumnLattice>>(columns.lattice_.columns_);
   // The plans own their blocks, so workers can serialize after the driver
   // moved on. No table or vocabulary clone: one shared owner per block.
   // Unordered tasks checkpoint revocation mid-morsel (see above); ordered
   // tasks run each morsel to completion.
   const CheckpointMorselRunner runner{session.sharedState(),
-                                      columnsPtr,
-                                      latticePtr,
-                                      qet.getQec()->getIndexSharedPtr(),
-                                      format,
-                                      !ordered,
-                                      monomorphicRows};
-  // Optional helper trace for concurrency measurements.
-  const auto logInterval = std::chrono::milliseconds{
-      getRuntimeParameter<&RuntimeParameters::exportV2HelperLogIntervalMs_>()};
-  auto nextLog = std::chrono::steady_clock::now();
-  auto logHelpers = [&session, logInterval, policy, &nextLog](bool force) {
-    if (logInterval.count() == 0) {
-      return;
-    }
-    const auto now = std::chrono::steady_clock::now();
-    if (!force && now < nextLog) {
-      return;
-    }
-    nextLog = now + logInterval;
-    AD_LOG_INFO << "ExportEngineV2 helpers job=" << session.jobId()
-                << " policy=" << ad_utility::export_v2::toString(policy)
-                << " active=" << session.activeHelpers()
-                << " quota=" << session.helperQuota()
-                << " state=" << ad_utility::export_v2::toString(session.state())
-                << " consumed=" << session.consumedSlots() << "/"
-                << session.totalSlots() << std::endl;
-  };
-  logHelpers(true);
-  // Keep a small window of work available to the pool without pulling the
-  // entire lazy result or retaining all serialized builders. Use the session
-  // counters so remainders submitted at revocation checkpoints also count.
-  const size_t maxInFlight = std::max(size_t{1}, 2 * scheduler->poolSize());
-  auto consume = [&]() {
-    cancellationHandle->throwIfCancelled();
-    auto builder = session.consumeNextResult();
-    cancellationHandle->throwIfCancelled();
-    logHelpers(false);
-    return builder;
-  };
-  for (auto&& plan : planExportMorsels(resultBlocks(std::move(result)),
-                                       plannedLimitOffset, rowsPerMorsel)) {
+                                      std::move(serialize), !ordered};
+  for (auto&& plan :
+       planExportMorsels(resultBlocks(result), limitOffset, rowsPerMorsel)) {
     cancellationHandle->throwIfCancelled();
     session.submitMorsel(runner.makeTask(std::move(plan)));
-    while (session.totalSlots() - session.consumedSlots() >= maxInFlight) {
-      auto builder = consume();
-      if (!builder.empty()) {
-        co_yield std::move(builder);
-      }
-    }
   }
   while (session.hasMoreResults()) {
-    auto builder = consume();
+    auto builder = session.consumeNextResult();
     if (!builder.empty()) {
       co_yield std::move(builder);
     }
   }
-  logHelpers(true);
+}
+
+// The SELECT CSV/TSV morsels: a header line, then the selected columns of
+// every row.
+cppcoro::generator<ScatterGatherChunkBuilder> buildSelectMorsels(
+    const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
+    RowFormat format, ad_utility::SharedCancellationHandle cancellationHandle,
+    ad_utility::export_v2::ElasticExportScheduler* scheduler) {
+  const auto& selectClause = parsedQuery.selectClause();
+  auto columns = selectedColumns(parsedQuery, qet, selectClause);
+  const bool monomorphicRows =
+      getRuntimeParameter<&RuntimeParameters::exportV2MonomorphicRows_>();
+  auto serialize = std::make_shared<const SegmentSerializer>(
+      [indices = std::move(columns.indices_),
+       lattice = std::move(columns.lattice_.columns_),
+       index = qet.getQec()->getIndexSharedPtr(), format,
+       monomorphicRows](const ExportMorselSegment& segment, uint64_t begin,
+                        uint64_t end, ScatterGatherChunkBuilder& builder) {
+        ExportEngineV2::appendSerializedRows(
+            segment.block_->idTable_.asStaticView<0>(),
+            segment.block_->localVocab_, format, builder, *index, indices,
+            begin, end, lattice, monomorphicRows);
+      });
+  return serializeMorsels(
+      qet, parsedQuery._limitOffset, makeHeaderLine(selectClause, format),
+      std::move(serialize), std::move(cancellationHandle), scheduler);
+}
+
+// The CONSTRUCT Turtle/N-Triples morsels: the instantiated template of every
+// row, no header. The serializer numbers blank nodes from the OFFSET that is
+// still applied, exactly like Legacy.
+cppcoro::generator<ScatterGatherChunkBuilder> buildConstructMorsels(
+    const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
+    ad_utility::MediaType mediaType,
+    ad_utility::SharedCancellationHandle cancellationHandle,
+    ad_utility::export_v2::ElasticExportScheduler* scheduler) {
+  const auto& limitOffset = parsedQuery._limitOffset;
+  auto index = qet.getQec()->getIndexSharedPtr();
+  auto serializer = std::make_shared<const ConstructRowSerializer>(
+      parsedQuery.constructClause().triples_, qet.getVariableColumns(), *index,
+      mediaType, offsetLeftToApply(qet, limitOffset));
+  auto serialize = std::make_shared<const SegmentSerializer>(
+      [serializer = std::move(serializer), index = std::move(index)](
+          const ExportMorselSegment& segment, uint64_t begin, uint64_t end,
+          ScatterGatherChunkBuilder& builder) {
+        serializer->appendRows(segment.block_->idTable_.asStaticView<0>(),
+                               segment.block_->localVocab_, *index, begin, end,
+                               segment.rowsExportedBeforeBlock_, builder);
+      });
+  return serializeMorsels(qet, limitOffset, std::nullopt, std::move(serialize),
+                          std::move(cancellationHandle), scheduler);
+}
+
+// The morsels of `parsedQuery` in `mediaType`. Requires `canHandle`.
+cppcoro::generator<ScatterGatherChunkBuilder> buildMorsels(
+    const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
+    ad_utility::MediaType mediaType,
+    ad_utility::SharedCancellationHandle cancellationHandle,
+    ad_utility::export_v2::ElasticExportScheduler* scheduler) {
+  if (parsedQuery.hasConstructClause()) {
+    return buildConstructMorsels(parsedQuery, qet, mediaType,
+                                 std::move(cancellationHandle), scheduler);
+  }
+  return buildSelectMorsels(parsedQuery, qet,
+                            ExportEngineV2::rowFormatFor(mediaType).value(),
+                            std::move(cancellationHandle), scheduler);
 }
 
 }  // namespace
@@ -706,13 +651,18 @@ static bool operationTreeIsSupported(const ::Operation& operation) {
 bool ExportEngineV2::canHandle(const ParsedQuery& parsedQuery,
                                ad_utility::MediaType mediaType) noexcept {
   using enum ad_utility::MediaType;
-  if (!parsedQuery.hasSelectClause()) {
-    return false;
+  if (parsedQuery.hasSelectClause()) {
+    return mediaType == csv || mediaType == tsv;
   }
-  if (mediaType != csv && mediaType != tsv) {
-    return false;
+  if (parsedQuery.hasConstructClause()) {
+    // CONSTRUCT CSV/TSV and a deduplicating CONSTRUCT stay on Legacy.
+    return ConstructRowSerializer::supportsMediaType(mediaType) &&
+           std::holds_alternative<ad_utility::DeduplicationMode::None>(
+               getRuntimeParameter<
+                   &RuntimeParameters::constructDeduplication_>()
+                   .value_);
   }
-  return true;
+  return false;
 }
 
 // _____________________________________________________________________________
@@ -919,9 +869,8 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
     co_return;
   }
 
-  const auto format = rowFormatFor(mediaType).value();
-  for (auto builder : buildSerializedMorsels(parsedQuery, qet, format,
-                                             cancellationHandle, scheduler)) {
+  for (auto builder : buildMorsels(parsedQuery, qet, mediaType,
+                                   cancellationHandle, scheduler)) {
     co_yield std::move(builder).finalizeToString();
   }
 }
@@ -932,15 +881,33 @@ cppcoro::generator<ScatterGatherChunk> ExportEngineV2::computeResultChunks(
     ad_utility::MediaType mediaType,
     ad_utility::SharedCancellationHandle cancellationHandle,
     ad_utility::export_v2::ElasticExportScheduler* scheduler) {
-  AD_CONTRACT_CHECK(canHandle(parsedQuery, qet, mediaType));
+  if (!canHandle(parsedQuery, qet, mediaType)) {
+    // Backstop, mirroring the string path above: `canHandle` re-reads the
+    // mutable `construct-deduplication` runtime parameter, so an admin flip
+    // between the server's routing check and this coroutine's first resume
+    // must fall back to Legacy instead of tripping a contract check. Each
+    // Legacy string becomes one owned chunk.
+    AD_LOG_INFO << "ExportEngineV2 falls back to Legacy V1 "
+                   "(operation tree not supported)"
+                << std::endl;
+    ad_utility::Timer timer{ad_utility::Timer::Started};
+    for (auto& chunk : ExportQueryExecutionTrees::computeResult(
+             parsedQuery, qet, mediaType, timer,
+             std::move(cancellationHandle))) {
+      if (!chunk.empty()) {
+        ScatterGatherChunkBuilder builder;
+        builder.appendOwned(std::move(chunk));
+        co_yield std::move(builder).finalize();
+      }
+    }
+    co_return;
+  }
   // Serialize on the caller thread. Do not spawn a producer thread here:
   // GCC rewrites this function as a coroutine frame and rejected
   // `std::thread` + `AsyncChunkPipeline` locals (91a9a7845). Overlap with
   // HTTP send is `runStreamAsync` in `Server::sendStreamableResponse`.
-  const auto format = rowFormatFor(mediaType).value();
-  for (auto builder :
-       buildSerializedMorsels(parsedQuery, qet, format,
-                              std::move(cancellationHandle), scheduler)) {
+  for (auto builder : buildMorsels(parsedQuery, qet, mediaType,
+                                   std::move(cancellationHandle), scheduler)) {
     auto chunk = std::move(builder).finalize();
     if (!chunk.empty()) {
       co_yield std::move(chunk);
