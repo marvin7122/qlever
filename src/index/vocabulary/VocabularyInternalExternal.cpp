@@ -93,7 +93,14 @@ static IndexPartition partitionIndicesBySource(
   // these loads ahead (see `vocabulary-internal-rank-prefetch-distance`), so
   // that they overlap instead of stalling one after another.
   const size_t n = indices.size();
-  std::vector<std::optional<size_t>> internalPositions(n);
+  // Scratch buffer for the per-index probe results. `thread_local` (one buffer
+  // per export helper thread) so that only growth is paid instead of one
+  // allocation plus O(n) initialization per batch. Every element is overwritten
+  // in the first loop below before it is read, so retained values never leak
+  // across batches. This function never suspends, so a coroutine cannot migrate
+  // threads between the writes and the reads.
+  thread_local std::vector<std::optional<size_t>> internalPositions;
+  internalPositions.resize(n);
   for (size_t i = 0; i < n; ++i) {
     if (i + distance < n) {
       internalVocab.prefetchPositionOfIndex(indices[i + distance]);
