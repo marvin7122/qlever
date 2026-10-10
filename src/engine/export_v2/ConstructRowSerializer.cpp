@@ -88,7 +88,8 @@ void resolveTermColumn(ResolvedColumn& column, const Index& index,
   }
   ad_utility::vocabulary::ArenaVocabBatchBuilder builder(
       vocabIndices.size(), index.getImpl().allocator());
-  auto words = index.getImpl().getVocab().lookupBatch(vocabIndices, builder);
+  index.getImpl().getVocab().lookupBatch(vocabIndices, builder);
+  auto words = std::move(builder).finalize();
   AD_CORRECTNESS_CHECK(words.size() == vocabRows.size());
   auto word = words.begin();
   for (size_t row : vocabRows) {
