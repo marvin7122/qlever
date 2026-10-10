@@ -68,6 +68,8 @@ RuntimeParameters::RuntimeParameters() {
   add(permutationWriterNumThreads_);
   add(vacuumMinimumBlockSize_);
   add(disableCaching_);
+  add(vocabAnonVmcacheEnabled_);
+  add(vocabAnonVmcacheNumFrames_);
   add(logLevel_);
   add(constructDeduplication_);
 

@@ -193,6 +193,8 @@ addLinkAndDiscoverTest(CryptographicHashUtilsTest qlever_util)
 
 addLinkAndDiscoverTest(CacheTest)
 
+addLinkAndDiscoverTest(AnonymousResidencyCacheTest qlever_util)
+
 addLinkAndDiscoverTestSerialNoLibs(ConcurrentCacheTest)
 
 # This test also seems to use the same filenames and should be fixed.

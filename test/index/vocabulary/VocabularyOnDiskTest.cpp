@@ -14,6 +14,7 @@
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
+#include "../../util/RuntimeParametersTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
@@ -332,4 +333,53 @@ TEST(VocabularyOnDisk, LookupBatchesStreamedEmptyBatchThrows) {
     for ([[maybe_unused]] auto& r : streamed) {
     }
   });
+}
+
+// With `vocab-anon-vmcache-enabled`, `operator[]`, `scanAll`, and
+// `lookupBatch` must return byte-identical results to the uncached paths.
+// The frame budget (2 frames) is far smaller than the vocabulary (words span
+// multiple pages), so this also exercises eviction and refill. `scanAll`
+// bypasses the cache by design; it is compared for completeness.
+TEST(VocabularyOnDisk, AnonVmcacheByteIdentityVsDirectReads) {
+  // Twenty ~1 KiB words: the words file spans multiple 4 KiB pages.
+  std::vector<std::string> words;
+  for (size_t i = 0; i < 20; ++i) {
+    words.push_back(absl::StrCat(
+        "word-", i, "-",
+        std::string(1000 + (i * 37) % 500,
+                    static_cast<char>('a' + static_cast<int>(i % 26)))));
+  }
+  const std::string testName = gtestCurrentTestName();
+  VocabularyOnDiskHandle plain{absl::StrCat(testName, "-plain.dat"), words};
+  auto restoreEnabled =
+      setRuntimeParameterForTest<&RuntimeParameters::vocabAnonVmcacheEnabled_>(
+          true);
+  auto restoreFrames = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabAnonVmcacheNumFrames_>(size_t{2});
+  VocabularyOnDiskHandle cached{absl::StrCat(testName, "-cached.dat"), words};
+
+  for (size_t i = 0; i < words.size(); ++i) {
+    EXPECT_EQ((*cached)[i], (*plain)[i]) << "at index " << i;
+  }
+  EXPECT_THAT(scanAllToVector(cached->scanAll()),
+              ::testing::ElementsAreArray(scanAllToVector(plain->scanAll())));
+  std::array<size_t, 10> indices{19, 0, 7, 3, 3, 12, 1, 19, 5, 9};
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *plain, cached->lookupBatch(indices), indices);
+}
+
+// Enabling the flag with a zero frame budget must behave exactly like the
+// flag being off (caches stay null, direct reads everywhere).
+TEST(VocabularyOnDisk, AnonVmcacheZeroFramesFallsBackToDirectReads) {
+  auto vocabPlain = createExampleVocabulary();
+  auto restoreEnabled =
+      setRuntimeParameterForTest<&RuntimeParameters::vocabAnonVmcacheEnabled_>(
+          true);
+  auto restoreFrames = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabAnonVmcacheNumFrames_>(size_t{0});
+  VocabularyOnDiskHandle vocab{absl::StrCat(gtestCurrentTestName(), ".dat"),
+                               {"alpha", "delta", "beta", "42", "gamma"}};
+  for (size_t i = 0; i < 5; ++i) {
+    EXPECT_EQ((*vocab)[i], (*vocabPlain)[i]);
+  }
 }

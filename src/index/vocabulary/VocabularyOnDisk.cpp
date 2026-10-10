@@ -11,6 +11,7 @@
 #include <array>
 
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
@@ -21,6 +22,13 @@
 using OffsetAndSize = VocabularyOnDisk::OffsetAndSize;
 
 // ____________________________________________________________________________
+bool VocabularyOnDisk::anonCacheActive() const {
+  return wordsAnonCache_ != nullptr && offsetsAnonCache_ != nullptr &&
+         getRuntimeParameter<
+             &RuntimeParameters::vocabAnonVmcacheEnabled_>();
+}
+
+// ____________________________________________________________________________
 OffsetAndSize VocabularyOnDisk::getOffsetAndSize(uint64_t i) const {
   AD_CORRECTNESS_CHECK(i < size());
   // Read the offset of the word at index `i` and the offset of the next word
@@ -28,6 +36,12 @@ OffsetAndSize VocabularyOnDisk::getOffsetAndSize(uint64_t i) const {
   std::array<Offset, 2> offsets{};
   // Assert no unexpected padding.
   static_assert(sizeof(offsets) == sizeof(Offset) * 2);
+  if (anonCacheActive() && offsetsAnonCache_->readThrough(
+                               offsetsFile_, i * sizeof(Offset),
+                               sizeof(offsets),
+                               reinterpret_cast<char*>(offsets.data()))) {
+    return {offsets[0], offsets[1] - offsets[0]};
+  }
   offsetsFile_.read(offsets.data(), sizeof(offsets),
                     static_cast<off_t>(i * sizeof(Offset)));
   return {offsets[0], offsets[1] - offsets[0]};
@@ -38,8 +52,12 @@ std::string VocabularyOnDisk::operator[](uint64_t idx) const {
   AD_CONTRACT_CHECK(idx < size());
   auto offsetAndSize = getOffsetAndSize(idx);
   std::string result(offsetAndSize.size_, '\0');
-  file_.read(result.data(), offsetAndSize.size_,
-             static_cast<off_t>(offsetAndSize.offset_));
+  if (!(anonCacheActive() &&
+        wordsAnonCache_->readThrough(file_, offsetAndSize.offset_,
+                                     offsetAndSize.size_, result.data()))) {
+    file_.read(result.data(), offsetAndSize.size_,
+               static_cast<off_t>(offsetAndSize.offset_));
+  }
   return result;
 }
 
@@ -163,6 +181,29 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
   // (which bounds the string) as one 16-byte pair from `.offsets`.
   const size_t numIndices = indices.size();
   std::vector<OffsetPair> offsetPairs(numIndices);
+  if (anonCacheActive()) {
+    // Serve each pair from the anonymous offsets cache (synchronous fill on
+    // miss); fall back to the batched path per unread pair.
+    std::vector<size_t> sizes;
+    std::vector<uint64_t> fileOffsets;
+    std::vector<char*> targets;
+    for (size_t k = 0; k < numIndices; ++k) {
+      AD_CONTRACT_CHECK(indices[k] < size());
+      if (!offsetsAnonCache_->readThrough(
+              offsetsFile_, indices[k] * sizeof(uint64_t),
+              sizeof(OffsetPair),
+              reinterpret_cast<char*>(&offsetPairs[k]))) {
+        sizes.push_back(sizeof(OffsetPair));
+        fileOffsets.push_back(indices[k] * sizeof(uint64_t));
+        targets.push_back(reinterpret_cast<char*>(&offsetPairs[k]));
+      }
+    }
+    if (!targets.empty()) {
+      manager.wait(
+          manager.addBatch(offsetsFile_.fd(), sizes, fileOffsets, targets));
+    }
+    return offsetPairs;
+  }
   std::vector<size_t> sizes(numIndices, sizeof(OffsetPair));
   std::vector<uint64_t> fileOffsets(numIndices);
   std::vector<char*> targets(numIndices);
@@ -205,6 +246,26 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     bufferOffset += size;
   }
 
+  if (anonCacheActive()) {
+    // Serve each string from the anonymous words cache (synchronous fill on
+    // miss); fall back to the batched path per unread string.
+    std::vector<size_t> pendingSizes;
+    std::vector<uint64_t> pendingOffsets;
+    std::vector<char*> pendingTargets;
+    for (size_t k = 0; k < numIndices; ++k) {
+      if (!wordsAnonCache_->readThrough(file_, fileOffsets[k], sizes[k],
+                                        targets[k])) {
+        pendingSizes.push_back(sizes[k]);
+        pendingOffsets.push_back(fileOffsets[k]);
+        pendingTargets.push_back(targets[k]);
+      }
+    }
+    if (!pendingTargets.empty()) {
+      manager.wait(manager.addBatch(file_.fd(), pendingSizes, pendingOffsets,
+                                    pendingTargets));
+    }
+    return VocabBatchLookupData::asResult(std::move(data));
+  }
   manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targets));
   return VocabBatchLookupData::asResult(std::move(data));
 }
@@ -279,6 +340,21 @@ VocabularyOnDisk::WordWriter::~WordWriter() {
 void VocabularyOnDisk::open(const std::string& filename) {
   file_.open(filename, "r");
   offsetsFile_.open(filename + offsetSuffix_, "r");
+
+  // Create the anonymous residency caches when enabled (applied at `open()`:
+  // enabling the flag later requires reopening the vocabulary). A zero frame
+  // budget disables the caches even when the flag is set.
+  if (getRuntimeParameter<&RuntimeParameters::vocabAnonVmcacheEnabled_>()) {
+    const size_t numFrames = getRuntimeParameter<
+        &RuntimeParameters::vocabAnonVmcacheNumFrames_>();
+    if (numFrames > 0) {
+      wordsAnonCache_ = std::make_unique<ad_utility::AnonymousResidencyCache>(
+          numFrames, static_cast<uint64_t>(file_.sizeOfFile()));
+      offsetsAnonCache_ =
+          std::make_unique<ad_utility::AnonymousResidencyCache>(
+              numFrames, static_cast<uint64_t>(offsetsFile_.sizeOfFile()));
+    }
+  }
 
   // Read the offset count from the `MmapVectorMetaData` trailer, which is
   // the canonical layout used by both old and new vocabulary files.

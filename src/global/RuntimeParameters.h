@@ -234,6 +234,16 @@ struct RuntimeParameters {
   // particular the computation of cache keys) when caching is not required.
   Bool disableCaching_{false, "disable-caching"};
 
+  // If set to `true`, `VocabularyOnDisk` serves word and offset reads from an
+  // explicitly managed anonymous residency cache (VMCache subset, see
+  // `ad_utility::AnonymousResidencyCache`) instead of plain `pread`. Default
+  // `false`: no behavior change unless enabled.
+  Bool vocabAnonVmcacheEnabled_{false, "vocab-anon-vmcache-enabled"};
+  // Number of 4 KiB anonymous frames per vocabulary file (words and offsets
+  // files each get their own cache of this size). Applied when the vocabulary
+  // is opened; 0 disables the caches even when the flag above is set.
+  SizeT vocabAnonVmcacheNumFrames_{4096, "vocab-anon-vmcache-num-frames"};
+
   // Configure how many blocks are compressed and written concurrently per
   // permutation. The blocks are compressed and written on the global thread
   // pool, so this is not a number of threads of its own, and it is capped at

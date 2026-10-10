@@ -13,6 +13,7 @@
 #include "index/vocabulary/VocabularyBinarySearchMixin.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Algorithm.h"
+#include "util/AnonymousResidencyCache.h"
 #include "util/File.h"
 #include "util/Generator.h"
 #include "util/IoUringManager.h"
@@ -44,6 +45,15 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>
       ioManagers_;
+
+  // Explicit anonymous residency caches (VMCache subset) for the words file
+  // and the offsets file. Null unless `vocab-anon-vmcache-enabled` was set
+  // when `open()` ran; all residency state is owned here, nothing leaks to
+  // callers. `unique_ptr` (not the cache itself) keeps the class movable.
+  // `mutable` like `ioManagers_`: the const read paths fetch through them.
+  mutable std::unique_ptr<ad_utility::AnonymousResidencyCache> wordsAnonCache_;
+  mutable std::unique_ptr<ad_utility::AnonymousResidencyCache>
+      offsetsAnonCache_;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
@@ -156,6 +166,11 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   }
 
  private:
+  // True when the anonymous residency caches are live and enabled: caches
+  // created at `open()` and `vocab-anon-vmcache-enabled` currently set.
+  // Reads check this and otherwise execute today's direct-`pread` code.
+  bool anonCacheActive() const;
+
   // Get the `OffsetAndSize` for the element with the `idx`. Return
   // `std::nullopt` if `idx` is not contained in the vocabulary.
   OffsetAndSize getOffsetAndSize(uint64_t idx) const;
