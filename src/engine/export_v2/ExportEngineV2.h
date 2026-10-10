@@ -35,8 +35,10 @@ namespace ql::engine::export_v2 {
 class ExportEngineV2 {
  public:
   // True when this engine can serve `mediaType` for `parsedQuery` without
-  // falling back to Legacy V1. Currently: SELECT + CSV/TSV (LIMIT/OFFSET
-  // included). CONSTRUCT and other media types still use Legacy.
+  // falling back to Legacy V1. Currently: SELECT + CSV/TSV, and CONSTRUCT +
+  // Turtle/N-Triples without deduplication (runtime parameter
+  // `construct-deduplication=none`), LIMIT/OFFSET included. Other media types
+  // still use Legacy.
   [[nodiscard]] static bool canHandle(const ParsedQuery& parsedQuery,
                                       ad_utility::MediaType mediaType) noexcept;
 
@@ -90,7 +92,8 @@ class ExportEngineV2 {
       uint64_t rowEnd = std::numeric_limits<uint64_t>::max());
 
   // Compute streamed query export results using the push-driven V2 pipeline
-  // for eligible SELECT CSV/TSV requests; otherwise delegates to Legacy V1.
+  // for eligible SELECT CSV/TSV and CONSTRUCT Turtle/N-Triples requests;
+  // otherwise delegates to Legacy V1.
   // Default HTTP path: one `std::string` per morsel (`export-send=string`).
   static cppcoro::generator<std::string> computeResult(
       const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
@@ -99,8 +102,8 @@ class ExportEngineV2 {
       ad_utility::export_v2::ElasticExportScheduler* scheduler = nullptr);
 
   // Same serialize as `computeResult`, but each morsel is a ScatterGatherChunk
-  // for `export-send=iovec`. Requires `canHandle`; does not fall back to
-  // Legacy.
+  // for `export-send=iovec`; otherwise delegates to Legacy V1, one owned
+  // chunk per Legacy string.
   static cppcoro::generator<ScatterGatherChunk> computeResultChunks(
       const ParsedQuery& parsedQuery, const QueryExecutionTree& qet,
       ad_utility::MediaType mediaType,
