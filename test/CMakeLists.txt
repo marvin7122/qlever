@@ -640,6 +640,11 @@ addLinkAndDiscoverTest(ExportIdsTest engine sparqlParser)
 
 addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
 
+# Live V2 serializer (vocabulary resolution) vs Legacy V1 on a test index.
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ExportEngineV2LiveTest engine sparqlParser)
+endif ()
+
 # Header-only util under export_v2; do not pull testUtil/index (cluster GCC
 # range-v3 needs -fpermissive for those translation units).
 addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
