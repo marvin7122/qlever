@@ -173,12 +173,12 @@ CPP_template(typename UnderlyingVocabulary,
           if (buffer.size() < bound) {
             buffer.resize(bound);
           }
-          std::string_view decompressed =
-              decompressIntoSpan(ql::span<char>{buffer.data(), bound}, bound,
-                                 [&](ql::span<char> span) {
-                                   return compressionWrapper_.decompressInto(
-                                       word, decoderIdx, span, scratch);
-                                 });
+          std::string_view decompressed = decompressIntoSpan(
+              ql::span<char>{buffer.data(), bound}, bound,
+              [this, &word, decoderIdx, &scratch](ql::span<char> span) {
+                return compressionWrapper_.decompressInto(word, decoderIdx,
+                                                          span, scratch);
+              });
           return IndexAndWord{index, decompressed};
         });
   }
@@ -194,14 +194,13 @@ CPP_template(typename UnderlyingVocabulary,
   // like `operator[]`, append the placeholder for it instead of feeding the
   // plain-text placeholder to the decoder.
   //
-  // Memory: each word reserves its full `maxDecompressedSize` bound in the
-  // arena, so for FSST the slack between the worst-case expansion bound and
-  // the decoded size is retained until the result dies. When `builder` was
-  // constructed with the query's `AllocatorWithLimit`, these allocations are
-  // charged against the memory limit and throw
-  // `AllocationExceedsLimitException` instead of growing the process heap.
-  // TODO<marvin7122>: Tail-trim the arena allocations so that batch memory
-  // tracks the decoded sizes instead of the bounds.
+  // Memory: each word is decoded into one reused buffer of its
+  // `maxDecompressedSize` bound and then copied into the arena with its
+  // decoded size, so the arena holds exactly the decoded bytes (for FSST the
+  // bound is several times the decoded size). When `builder` was constructed
+  // with the query's `AllocatorWithLimit`, these allocations are charged
+  // against the memory limit and throw `AllocationExceedsLimitException`
+  // instead of growing the process heap.
   void lookupBatch(ql::span<const size_t> indices,
                    ArenaVocabBatchBuilder& builder) const {
     AD_CONTRACT_CHECK(!indices.empty());

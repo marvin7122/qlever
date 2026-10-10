@@ -145,6 +145,7 @@ add_subdirectory(rdfTypes)
 add_subdirectory(joinAlgorithms)
 add_subdirectory(libqlever)
 add_subdirectory(parallelBlockMerge)
+add_subdirectory(blockSort)
 
 OPTION(_DISABLE_EMSCRIPTEN_PROBLEMATIC_TESTS "Disable some tests that cause undefined symbol errors when building with Emscripten." OFF)
 
@@ -354,6 +355,8 @@ addLinkAndDiscoverTestNoLibs(IteratorTest)
 
 addLinkAndDiscoverTestNoLibs(ViewsTest)
 
+addLinkAndDiscoverTestNoLibs(UniqueBlockViewTest qlever_util)
+
 addLinkAndDiscoverTestNoLibs(TakeUntilInclusiveViewTest)
 
 addLinkAndDiscoverTestNoLibs(ChunkedIotaViewTest)
@@ -502,6 +505,8 @@ addLinkAndDiscoverTest(ComparisonWithNanTest)
 
 addLinkAndDiscoverTestNoLibs(ThreadSafeQueueTest)
 
+addLinkAndDiscoverTestNoLibs(RecyclingPoolTest)
+
 addLinkAndDiscoverTest(IdTableHelpersTest)
 
 addLinkAndDiscoverTest(GeneratorTest)
@@ -578,6 +583,8 @@ addLinkAndDiscoverTest(LruCacheWithStatisticsTest)
 
 addLinkAndDiscoverTestNoLibs(InputRangeUtilsTest)
 
+addLinkAndDiscoverTestNoLibs(RangeThatReleasesOnEndTest)
+
 addLinkAndDiscoverTest(TripleSerializerTest)
 
 addLinkAndDiscoverTest(GeometryInfoTest qlever_util)
@@ -614,6 +621,7 @@ addLinkAndDiscoverTestNoLibs(ParallelExecutorTest)
 addLinkAndDiscoverTestNoLibs(IoUringManagerTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(VocabBlockCacheTest qlever_util)
+addLinkAndDiscoverTestNoLibs(ResidentFileMappingTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(VariantRangeFilterTest)
 

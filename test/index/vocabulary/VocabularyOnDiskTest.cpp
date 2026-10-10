@@ -10,10 +10,14 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
+#include <fcntl.h>
 #include <gmock/gmock.h>
+#include <unistd.h>
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
+#include "../../util/PageCacheReadTestHelpers.h"
+#include "../../util/RuntimeParametersTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "global/Constants.h"
@@ -125,6 +129,26 @@ auto createVocabulary() {
 
 VocabularyOnDiskHandle createExampleVocabulary() {
   return createVocabularyFromWords({"alpha", "delta", "beta", "42", "gamma"});
+}
+
+// Drop the pages of both files of the vocabulary created by
+// `createExampleVocabulary` from the page cache, so that the reads of the
+// page-cache fast path (`preadv2(RWF_NOWAIT)`) miss with `EAGAIN` and go
+// through the batch manager instead. Best effort: on file systems that ignore
+// `POSIX_FADV_DONTNEED` (e.g. tmpfs) or without `posix_fadvise` the pages stay
+// cached, and the tests below then check the hit path only.
+void evictExampleVocabularyFromPageCache() {
+#ifdef POSIX_FADV_DONTNEED
+  auto filename = absl::StrCat(gtestCurrentTestName(), ".dat");
+  for (const auto& file : {filename, absl::StrCat(filename, ".offsets")}) {
+    int fd = ::open(file.c_str(), O_RDONLY);
+    ASSERT_GE(fd, 0) << file;
+    // Only clean pages can be dropped.
+    ::fdatasync(fd);
+    ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+    ::close(fd);
+  }
+#endif
 }
 
 // Create a `VocabularyOnDisk` from `words` and assert that `scanAll` yields
@@ -394,6 +418,81 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathWithDirectIo) {
   ad_utility::useDirectIoForVocabularyReads = true;
   auto combined = vocab->lookupBatch(indices);
   EXPECT_THAT(combined, ::testing::ElementsAreArray(plain));
+}
+
+// _____________________________________________________________________________
+// Every other page-cache read finds nothing cached.
+int64_t everyOtherReadCached(int fd, const ::iovec* iov, int iovcnt,
+                             int64_t offset) {
+  static size_t numCalls = 0;
+  if (numCalls++ % 2 == 1) {
+    return pageCacheReadTestHelpers::nothingCached(fd, iov, iovcnt, offset);
+  }
+  return ad_utility::detail::systemPageCacheRead(fd, iov, iovcnt, offset);
+}
+
+// With the fast path on, reads that the page-cache read does not serve (none,
+// some or all of them, and after the fast path was found unsupported) go
+// through the batch manager; the result always matches `operator[]`.
+TEST(VocabularyOnDisk, LookupBatchPageCacheMissesGoThroughTheManager) {
+  if (!ad_utility::pageCacheFastPathIsSupported()) {
+    GTEST_SKIP() << "preadv2(RWF_NOWAIT) is not available";
+  }
+  using pageCacheReadTestHelpers::ScopedPageCacheRead;
+  auto vocab = createExampleVocabulary();
+  // Runs of consecutive indices, reordered and duplicated indices.
+  std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
+  auto check = [&]() {
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+  };
+  {
+    ScopedPageCacheRead inject{&pageCacheReadTestHelpers::nothingCached};
+    check();
+  }
+  {
+    ScopedPageCacheRead inject{&everyOtherReadCached};
+    check();
+  }
+  {
+    ScopedPageCacheRead inject{&pageCacheReadTestHelpers::notSupported};
+    check();
+    EXPECT_FALSE(ad_utility::pageCacheFastPathIsSupported());
+    // The flag is still set, but the fast path is not used any more.
+    check();
+  }
+  EXPECT_TRUE(ad_utility::pageCacheFastPathIsSupported());
+}
+
+// _____________________________________________________________________________
+// With `vocabulary-mmap-resident-reads`, the second lookup of the same words is
+// served from the mappings (their pages were marked resident by the first
+// one). The results are the same as without the mappings, also after the files
+// were evicted from the page cache (the mapping then faults the pages back
+// in), and for words that were read through the batch manager.
+TEST(VocabularyOnDisk, ResidentReadsAreByteIdentical) {
+  auto vocab = createExampleVocabulary();
+  std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
+  auto withoutMapping = [&]() {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabularyMmapResidentReads_>(false);
+    return vocab->lookupBatch(indices);
+  }();
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyMmapResidentReads_>(true);
+  // Cold: through the manager, then marked resident.
+  evictExampleVocabularyFromPageCache();
+  auto first = vocab->lookupBatch(indices);
+  // Served from the mappings.
+  auto second = vocab->lookupBatch(indices);
+  // Marked resident, but evicted since.
+  evictExampleVocabularyFromPageCache();
+  auto third = vocab->lookupBatch(indices);
+  for (const auto* result : {&first, &second, &third}) {
+    EXPECT_THAT(*result, ::testing::ElementsAreArray(withoutMapping));
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, *result, indices);
+  }
 }
 
 // An empty batch is an invalid request and must throw.

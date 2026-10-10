@@ -249,6 +249,13 @@ struct RuntimeParameters {
   Bool vocabularyIouringPageCacheFastPath_{
       true, "vocabulary-iouring-page-cache-fast-path"};
 
+  // If set to true (and the page-cache fast path above is on), the vocabulary
+  // files are also mapped into memory, and a word (or offset) whose pages this
+  // process has read before is copied from the mapping instead of being read
+  // with a system call (see `ad_utility::ResidentFileMapping`). All other
+  // reads take the paths above.
+  Bool vocabularyMmapResidentReads_{true, "vocabulary-mmap-resident-reads"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.
@@ -318,17 +325,17 @@ struct RuntimeParameters {
   // scattered ones. Has no effect without `vocabulary-iouring-direct-io`.
   SizeT vocabBlockCacheBlockSize_{4096, "vocab-block-cache-block-size"};
 
-  // If set to `true`, CONSTRUCT query export of Turtle formats the
-  // triples using `FastExportStreamFormatter` (zero-allocation, in-buffer
-  // formatting) instead of the legacy per-term `std::string` construction
-  // in `formatTerm`/`formatTriple`. Output is required to be byte-identical
-  // to the legacy path; default `false` keeps master's behaviour unchanged.
-  Bool useFastExportStreamFormatter_{false, "use-fast-export-stream-formatter"};
+  // If set to `true` (the default), the Turtle export of CONSTRUCT queries
+  // formats the triples with `FastExportStreamFormatter` into strings of about
+  // 64 KiB (`formatTriplesAsTurtleInBatches`) instead of building a
+  // `std::string` per term and per triple (`formatTerm`/`formatTriple`). The
+  // output is byte-identical; `false` selects the previous path.
+  Bool useFastExportStreamFormatter_{true, "use-fast-export-stream-formatter"};
 
   // If true, the chunks of a streamed query result start at 64 KiB and double
   // after every chunk up to the fixed 1 MiB, so that the first bytes reach the
   // client earlier. If false, every chunk has the fixed size of 1 MiB.
-  Bool adaptiveExportChunkSize_{false, "adaptive-export-chunk-size"};
+  Bool adaptiveExportChunkSize_{true, "adaptive-export-chunk-size"};
 
   // If set, Export V2 sizes SELECT CSV/TSV morsels adaptively
   // (`AdaptiveChunkSizer`): the first morsel targets a small 64 KB buffer for

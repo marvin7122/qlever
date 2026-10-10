@@ -96,6 +96,11 @@ class VocabBatchLookupResult {
  public:
   VocabBatchLookupResult() = default;
 
+  // No custom cleanup: `storage_` owns the bytes via `shared_ptr` and
+  // `span_` is a non-owning view. Declared explicitly because this class
+  // manages shared ownership through the moves below (Sonar cpp:S3624).
+  ~VocabBatchLookupResult() = default;
+
   explicit VocabBatchLookupResult(VocabBatchOwner storage)
       : storage_{std::move(storage)},
         span_{storage_ ? storage_->viewSpan()
@@ -104,13 +109,13 @@ class VocabBatchLookupResult {
   // Moves reset the source span, so a moved-from result is empty (rather than
   // a null owner paired with a stale view into the moved-to storage).
   VocabBatchLookupResult(VocabBatchLookupResult&& other) noexcept
-      : storage_{std::move(other.storage_)}, span_{std::move(other.span_)} {
+      : storage_{std::move(other.storage_)}, span_{other.span_} {
     other.span_ = {};
   }
   VocabBatchLookupResult& operator=(VocabBatchLookupResult&& other) noexcept {
     if (this != &other) {
       storage_ = std::move(other.storage_);
-      span_ = std::move(other.span_);
+      span_ = other.span_;
       other.span_ = {};
     }
     return *this;
@@ -462,7 +467,8 @@ class ArenaVocabBatchBuilder {
     ql::pmr::polymorphic_allocator<char> allocator{buffer_.get()};
     char* mem = allocator.allocate(bound);
     views_.push_back(
-        decompressIntoSpan(ql::span<char>{mem, bound}, bound, decompress));
+        decompressIntoSpan(ql::span<char>{mem, bound}, bound,
+                           std::forward<DecompressFunc>(decompress)));
   }
 
   // Allocate storage inside the arena and copy the given word into it.
@@ -783,9 +789,10 @@ template <size_t NumVocabs>
 VocabBatchLookupResult mergeMarkerBatchesInInputOrder(
     MarkerBatchLookups<NumVocabs> markerLookups,
     const IndicesAndPositionsByMarker<NumVocabs>& markerIndicesAndPositions) {
-  return mergeMarkerBatchesInInputOrder(
-      markerIndicesAndPositions,
-      [&](size_t marker) { return markerLookups.release(marker); });
+  return mergeMarkerBatchesInInputOrder(markerIndicesAndPositions,
+                                        [&markerLookups](size_t marker) {
+                                          return markerLookups.release(marker);
+                                        });
 }
 
 // _____________________________________________________________________________
@@ -923,17 +930,29 @@ template <typename Vocab>
 VocabBatchLookupResult sequentialLookupBatch(const Vocab& vocab,
                                              ql::span<const size_t> indices) {
   AD_CONTRACT_CHECK(!indices.empty());
-  // Materialize the words as owning `std::string`s and move them into the
-  // result's `std::vector<std::string>` buffer. The views then point at those
-  // strings; no byte copying into a contiguous buffer is needed. Building the
-  // views after the move is safe: moving the vector does not relocate the
-  // contained strings.
-
-  std::vector<std::string> words = ::ranges::to<std::vector<std::string>>(
-      indices | ql::views::transform([&vocab](size_t idx) {
-        return wordAsStringOrPlaceholder(vocab, idx);
-      }));
-
+  // Construct each word as an owning `std::string` directly in the result's
+  // `std::vector<std::string>` buffer; `fromWords` then points one view at
+  // each of them. Words that the vocabulary returns as (optional) views are
+  // copied straight into their slot: building a temporary `std::string` per
+  // word (via `wordAsStringOrPlaceholder`) and moving it into the vector costs
+  // about 30 extra instructions per word (callgrind, 4,096-word batch from a
+  // `VocabularyInMemoryBinSearch`). Only a missing word (a "hole", see
+  // `wordAsStringOrPlaceholder`) takes that path.
+  std::vector<std::string> words;
+  words.reserve(indices.size());
+  for (size_t index : indices) {
+    decltype(auto) word = vocab[index];
+    if constexpr (ad_utility::similarToInstantiation<decltype(word),
+                                                     std::optional>) {
+      if (word.has_value()) {
+        words.emplace_back(word.value());
+      } else {
+        words.push_back(wordAsStringOrPlaceholder(vocab, index));
+      }
+    } else {
+      words.emplace_back(std::move(word));
+    }
+  }
   return StringVectorVocabBatchLookupData::fromWords(std::move(words));
 }
 
