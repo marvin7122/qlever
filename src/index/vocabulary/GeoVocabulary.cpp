@@ -22,6 +22,8 @@
 #include "util/Exception.h"
 #include "util/File.h"
 
+namespace ad_utility::vocabulary {
+
 using ad_utility::GeometryInfo;
 
 // ____________________________________________________________________________
@@ -219,3 +221,4 @@ std::optional<GeometryInfo> GeoVocabulary<V>::geoInfoAtPosition(
 // Explicit template instantiations
 template class GeoVocabulary<CompressedVocabulary<VocabularyInternalExternal>>;
 template class GeoVocabulary<VocabularyInMemory>;
+}  // namespace ad_utility::vocabulary

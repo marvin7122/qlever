@@ -26,6 +26,9 @@ if (QLEVER_ENABLE_EXPORT_V2)
 endif ()
         MaterializedViewsPatternMatcher.cpp UpdateMetadata.cpp ExternalValues.cpp
         DistinctGraphs.cpp)
+if (QLEVER_ENABLE_EXPORT_V2)
+    target_sources(engine PRIVATE export_v2/ElasticExportScheduler.cpp export_v2/ExportEngineV2.cpp)
+endif ()
 add_subdirectory(spatialJoinAlgorithms)
 
 # `Boost::program_options` is not used inside `engine` itself, but the

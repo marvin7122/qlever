@@ -38,6 +38,8 @@
 #include "util/TypeTraits.h"
 #include "util/Views.h"
 
+namespace ad_utility::vocabulary {
+
 // _____________________________________________________________________________
 // Frozen owner of a batch's `string_view`s. Builders allocate and write, then
 // move the populated views and the backing storage into a derived class;
@@ -969,8 +971,6 @@ VocabLookupOutput lookupBatchesStreamed(const Vocab& vocab,
                            })};
 }
 
-}  // namespace ad_utility::vocabulary
-
 // _____________________________________________________________________________
 // A word and its index in the vocabulary from which it was obtained. Also
 // contains a special state `end()` which can be queried by the `isEnd()`
@@ -1129,5 +1129,7 @@ class WordWriterBase {
   // The base classes have to implement the actual logic for `finish` here.
   virtual void finishImpl() = 0;
 };
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYTYPES_H

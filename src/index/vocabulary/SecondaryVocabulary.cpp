@@ -17,6 +17,8 @@
 #include "util/Exception.h"
 #include "util/Views.h"
 
+namespace ad_utility::vocabulary {
+
 // _____________________________________________________________________________
 SecondaryVocabulary::SecondaryVocabulary(ql::span<const std::string> words) {
   CompactVectorOfStrings<char> segment;
@@ -151,3 +153,4 @@ SecondaryVocabulary::lowerBoundInSortedIndices(
 std::string_view SecondaryVocabulary::wordAt(uint64_t globalIndex) const {
   return (*this)[SecondaryVocabIndex::make(globalIndex)];
 }
+}  // namespace ad_utility::vocabulary

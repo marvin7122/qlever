@@ -31,6 +31,8 @@
 #include "util/Serializer/SerializeVector.h"
 #include "util/StringUtils.h"
 
+namespace ad_utility::vocabulary {
+
 // TODO<joka921> Include the relevant constants directly here.
 
 // ____________________________________________________________________________
@@ -231,5 +233,7 @@ class PrefixCompressor {
   // ___________________________________________________________________________
   const auto& prefixToCode() const { return prefixToCode_; }
 };
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_PREFIXCOMPRESSOR_H

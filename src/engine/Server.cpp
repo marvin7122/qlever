@@ -90,12 +90,13 @@ Server::Server(
             auto held =
                 std::make_shared<absl::AnyInvocable<void()>>(std::move(work));
             boost::asio::post(queryThreadPool_, [held]() { (*held)(); });
-          });
+          },
+          numThreads_);
   exportScheduler_->attachToQueryRegistry(queryRegistry_);
   AD_LOG_INFO << "ExportEngineV2 serialize posts onto queryThreadPool_ ("
               << numThreads_
-              << " threads); no extra V2 pool. Helpers stop admitting when "
-                 "another query is registered."
+              << " threads); no extra V2 pool. Helper threads per query: "
+                 "runtime parameter export-v2-helper-policy (fair|exclusive)."
               << std::endl;
 #endif
 
@@ -1101,6 +1102,19 @@ CPP_template_def(typename RequestT)(
   }
   return std::move(queryId.value());
 }
+
+namespace {
+// Own `range` in the coroutine frame (parameter, not a `[&]` capture). Used to
+// attach `runStreamAsync` *outside* `ExportEngineV2::computeResultChunks`: a
+// producer thread nested in that coroutine failed to compile (91a9a7845).
+template <typename Range>
+cppcoro::generator<qlever::export_v2::ScatterGatherChunk> asScatterGatherBody(
+    Range range) {
+  for (auto& chunk : range) {
+    co_yield std::move(chunk);
+  }
+}
+}  // namespace
 
 // _____________________________________________________________________________
 namespace {

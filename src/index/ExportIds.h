@@ -539,7 +539,10 @@ void resolveVocabIndexIds(
       }
       return;
     }
-    auto vocabStrings = index.getImpl().getVocab().lookupBatch(rawIndices);
+    ad_utility::vocabulary::ArenaVocabBatchBuilder builder(
+        rawIndices.size(), index.getImpl().allocator());
+    index.getImpl().getVocab().lookupBatch(rawIndices, builder);
+    auto vocabStrings = std::move(builder).finalize();
 
     // `vocabStrings` is in the same order as `positions`, so zip scatters each
     // looked-up string back to the position it came from.

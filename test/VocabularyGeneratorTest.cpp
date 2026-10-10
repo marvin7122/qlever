@@ -212,7 +212,7 @@ TEST_F(MergeVocabularyTest, mergeVocabulary) {
       }
     };
 
-    TripleComponentComparator comparator;
+    ad_utility::vocabulary::TripleComponentComparator comparator;
     res = mergeVocabulary(
         basePath_, 2,
         [&comparator](std::string_view a, std::string_view b) {

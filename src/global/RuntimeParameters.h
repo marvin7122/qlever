@@ -361,6 +361,17 @@ struct RuntimeParameters {
   // scattered ones. Has no effect without `vocabulary-iouring-direct-io`.
   SizeT vocabBlockCacheBlockSize_{4096, "vocab-block-cache-block-size"};
 
+  // How Export V2 shares the query thread pool among concurrent queries (see
+  // `HelperPolicy` in `ElasticExportScheduler.h`). "fair": each of the `n`
+  // running queries gets floor(m/n) of the `m` pool threads (the first m mod n
+  // queries one more), its coordinator included. "exclusive" (default): helpers
+  // only while no other query is running.
+  String exportV2HelperPolicy_{"exclusive", "export-v2-helper-policy"};
+
+  // If positive, every Export V2 session logs its active helper count at most
+  // this often (milliseconds); 0 disables the trace.
+  SizeT exportV2HelperLogIntervalMs_{0, "export-v2-helper-log-interval-ms"};
+
   // If set to `true` (the default), the Turtle export of CONSTRUCT queries
   // formats the triples with `FastExportStreamFormatter` into strings of about
   // 64 KiB (`formatTriplesAsTurtleInBatches`) instead of building a
