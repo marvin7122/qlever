@@ -1,0 +1,97 @@
+name: Fork bench build
+# Builds ONLY the qlever-server Release binary on GitHub-hosted runners and
+# uploads it as an artifact for the Ural benchmark loop. Fork-local by design:
+# does nothing on any repository but marvin7122/qlever, so it can never spend
+# upstream minutes or pollute upstream PRs if the branch is ever proposed
+# there. Unit-test and sanitizer signal stays with the label-gated
+# native-build / wolga-native legs; this workflow is a bench-binary factory.
+on:
+  push:
+    branches: ['perf/**']
+  workflow_dispatch:
+    inputs:
+      code-ref:
+        description: 'Git ref to build instead of the workflow branch head (e.g. a base SHA for fair before/after arms)'
+        required: false
+        default: ''
+
+concurrency:
+  group: 'fork-bench-build @ ${{ github.ref }}'
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write  # ccache cache write-back
+
+jobs:
+  build:
+    if: github.repository == 'marvin7122/qlever'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/../.ccache-bench
+      CCACHE_MAXSIZE: 8G
+    steps:
+      - name: Checkout code under test
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.code-ref || github.ref }}
+
+      - name: Record built commit
+        id: commit
+        run: echo "sha=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        uses: ./.github/workflows/install-dependencies-ubuntu
+        with:
+          install-third-party-libraries: 'true'
+          boost-version: 'latest'
+
+      - name: Install liburing and ccache
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y liburing-dev ccache mold
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: bench-ccache-gcc13-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            bench-ccache-gcc13-${{ github.ref }}-
+            bench-ccache-gcc13-
+
+      - name: Configure CMake
+        run: |
+          cmake -B "${{ github.workspace }}/build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            "-DCMAKE_TOOLCHAIN_FILE=$(pwd)/toolchains/gcc13.cmake" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DUSE_PARALLEL=true \
+            -DUSE_IO_URING=ON \
+            -DRUN_EXPENSIVE_TESTS=false \
+            -DENABLE_EXPENSIVE_CHECKS=true \
+            -DBUILD_SHARED_LIBS=ON \
+            -DADDITIONAL_LINKER_FLAGS="-B /usr/bin/mold" 2>&1 | tee configure.log
+          grep -q "Found liburing, enabling io_uring support" configure.log \
+            || { echo "FATAL: io_uring not enabled, bench binary would be incomparable"; exit 1; }
+
+      - name: Build qlever-server
+        run: |
+          ccache -z || true
+          cmake --build "${{ github.workspace }}/build" --config Release \
+            --target qlever-server -- -j "$(nproc)"
+          ccache -s || true
+
+      - name: Smoke check binary
+        run: |
+          ./build/qlever-server --version
+          nm -D ./build/qlever-server 2>/dev/null | grep -c io_uring || true
+
+      - name: Upload bench binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: qlever-server-${{ steps.commit.outputs.sha }}
+          path: build/qlever-server
+          retention-days: 7
