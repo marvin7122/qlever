@@ -47,6 +47,8 @@ using LiteralOrIriView = ad_utility::triple_component::LiteralOrIriView;
 using Iri = ad_utility::triple_component::Iri;
 using IriView = ad_utility::triple_component::IriView;
 using Literal = ad_utility::triple_component::Literal;
+// Split-phase vocabulary lookup handles live in `ad_utility::vocabulary`.
+using ad_utility::vocabulary::VocabLookupHandleBase;
 
 // Convert the `id` to a `Literal`. Datatypes are always stripped, so for
 // literals (this includes IDs that directly store their value, like Doubles)
