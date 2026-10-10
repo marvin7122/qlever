@@ -16,53 +16,47 @@
 
 #include "backports/concepts.h"
 #include "util/Exception.h"
+#include "util/TypeTraits.h"
 
 namespace ql {
 
-// Provide a C++17-compatible backport of C++23's
-// `std::basic_string::resize_and_overwrite` as a free function that takes the
-// string as the first parameter. Deliberate deviation: the standard leaves a
-// returned size above `count` as undefined behavior, while this backport
-// enforces the same bound with `AD_CONTRACT_CHECK` on both branches, so a
-// violating operation fails loudly instead of corrupting the string.
+// C++17-compatible backport of C++23's
+// `std::basic_string::resize_and_overwrite` as a free function taking the
+// string first. Like the standard, `op` is taken by value, called once as an
+// rvalue with `(data, count)`, must write at most `count` bytes, must not
+// throw, and returns the new size. Unlike the standard (a result larger than
+// `count` is UB), the result is checked with `AD_CONTRACT_CHECK` after the
+// call. Before C++23 there is no performance benefit: the fallback
+// zero-fills all `count` bytes with `resize` first.
 CPP_template(typename CharT, typename Traits, typename Allocator,
              typename Operation)(
-    requires ql::concepts::invocable<Operation, CharT*, size_t>&&
-        ql::concepts::convertible_to<
-            decltype(std::declval<Operation>()(std::declval<CharT*>(),
-                                               std::declval<size_t>())),
-            size_t>) void resize_and_overwrite(std::basic_string<CharT, Traits,
-                                                                 Allocator>&
-                                                   str,
-                                               size_t count, Operation&& op) {
-  // `__cpp_lib_string_resize_and_overwrite` is the standard feature-test
-  // macro for `std::basic_string::resize_and_overwrite` (C++23, P1072R10);
-  // `202110L` is the value of the adopted version. If the standard library
-  // provides the member, forward to it: it leaves the new characters
-  // uninitialized, so `op` writes each of them exactly once. Otherwise (the
-  // C++17 and C++20 standard libraries QLever builds with) fall back to
-  // `resize`, which zero-fills the new characters first, let `op` overwrite
-  // them, and shrink to the size it returns. Both paths leave `str` in the
-  // same state; only the fallback pays for the extra fill.
+    requires ad_utility::InvocableWithConvertibleReturnType<
+        Operation, size_t, CharT*,
+        size_t>) void resize_and_overwrite(std::basic_string<CharT, Traits,
+                                                             Allocator>& str,
+                                           size_t count, Operation op) {
+  // Forward to the standard member when `__cpp_lib_string_resize_and_overwrite
+  // >= 202110L` (C++23, P1072R10); otherwise `resize` (zero-fills), overwrite,
+  // then shrink.
   // P1072R10 (basic_string::resize_and_overwrite):
   // https://web.archive.org/web/20260102024635/https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2021/p1072r10.html
   // Feature-test macro value 202110L in [version.syn] of the C++ draft:
   // https://web.archive.org/web/20251223023007/http://eel.is/c++draft/version.syn
 #if defined(__cpp_lib_string_resize_and_overwrite) && \
     __cpp_lib_string_resize_and_overwrite >= 202110L
-  // Move `op` into the lambda like the standard, which takes its operation
-  // by value and invokes it as `std::move(op)(p, count)`. Capturing the
-  // forwarding reference by reference would dangle for move-only rvalue
-  // callables. The lambda is `mutable` so mutable callables keep working.
-  str.resize_and_overwrite(count, [op = std::forward<Operation>(op), count](
-                                      CharT* data, size_t n) mutable {
-    const size_t newSize = std::move(op)(data, n);
-    AD_CONTRACT_CHECK(newSize <= count);
-    return newSize;
-  });
+  // Throwing inside the operation passed to the standard member is UB, so the
+  // result is only recorded there (and clamped to a valid size) and checked
+  // after the call returns.
+  size_t newSize = 0;
+  str.resize_and_overwrite(
+      count, [&newSize, op = std::move(op)](CharT* data, size_t n) mutable {
+        newSize = std::move(op)(data, n);
+        return newSize <= n ? newSize : size_t{0};
+      });
+  AD_CONTRACT_CHECK(newSize <= count);
 #else
   str.resize(count);
-  const size_t newSize = std::forward<Operation>(op)(str.data(), count);
+  const size_t newSize = std::move(op)(str.data(), count);
   AD_CONTRACT_CHECK(newSize <= count);
   str.resize(newSize);
 #endif
