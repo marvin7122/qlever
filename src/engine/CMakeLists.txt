@@ -16,11 +16,13 @@ add_library(engine
         CountConnectedSubgraphs.cpp PathSearch.cpp ExecuteUpdate.cpp
         Describe.cpp GraphStoreProtocol.cpp SpatialJoinParser.cpp SpatialJoinCachedIndex.cpp
         QueryExecutionContext.cpp ExistsJoin.cpp SparqlProtocol.cpp ParsedRequestBuilder.cpp
-        NeutralOptional.cpp Load.cpp StripColumns.cpp NamedResultCache.cpp
+        NeutralOptional.cpp Load.cpp StripColumns.cpp NamedResultCache.cpp EmptyPath.cpp
         ExplicitIdTableOperation.cpp StringMapping.cpp MaterializedViews.cpp
         PermutationSelector.cpp ConstructTripleGenerator.cpp
         ConstructTemplatePreprocessor.cpp ConstructTripleInstantiator.cpp ConstructBatchEvaluator.cpp
-        ConstructDeduplicator.cpp MaterializedViewsQueryAnalysis.cpp UpdateMetadata.cpp ExternalValues.cpp)
+        ConstructDeduplicator.cpp MaterializedViewsQueryAnalysis.cpp
+        MaterializedViewsPatternMatcher.cpp UpdateMetadata.cpp ExternalValues.cpp
+        DistinctGraphs.cpp)
 if (QLEVER_ENABLE_EXPORT_V2)
     target_sources(engine PRIVATE export_v2/ElasticExportScheduler.cpp export_v2/ExportEngineV2.cpp export_v2/ConstructRowSerializer.cpp)
 endif ()
