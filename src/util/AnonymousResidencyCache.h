@@ -16,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "util/Exception.h"
