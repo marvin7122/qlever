@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <memory_resource>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,9 +43,11 @@ namespace {
 
 // Escape `input` for CSV/TSV. Uses SimdEscapeClassifier as a fast reject filter
 // before falling back to the legacy RdfEscaping path (required for CSV
-// quoting).
-template <RowFormat Format>
-std::string escapeCell(std::string input) {
+// quoting). Templated on the cell string type so arena-backed (`pmr`) windows
+// keep their pointer-bump allocation; only the rare escape path materializes
+// a temporary `std::string`.
+template <RowFormat Format, typename String>
+String escapeCell(String input) {
   if (input.empty()) {
     return input;
   }
@@ -53,26 +56,43 @@ std::string escapeCell(std::string input) {
         std::string_view::npos) {
       return input;
     }
-    return RdfEscaping::escapeForCsv(std::move(input));
+    return String{RdfEscaping::escapeForCsv(std::string{input})};
   } else {
     static_assert(Format == RowFormat::Tsv);
     if (SimdEscapeClassifier::findFirstEscapeSimd<EscapeFormat::Tsv>(input) ==
         std::string_view::npos) {
       return input;
     }
-    return RdfEscaping::escapeForTsv(std::move(input));
+    return String{RdfEscaping::escapeForTsv(std::string{input})};
   }
 }
 
 using ResolvedCell = std::optional<std::pair<std::string, const char*>>;
 
+// Arena-backed cell strings for a serialization window: one monotonic buffer
+// per window (charged to the query allocator, freed in one go) replaces the
+// per-cell heap allocations. The buffer outlives `resolved` by declaration
+// order in `appendSerializedRows`; nothing escapes the window.
+using PmrResolvedCell =
+    std::optional<std::pair<std::pmr::string, const char*>>;
+
+struct PmrCellMaker {
+  std::pmr::memory_resource* resource_;
+  std::pmr::string operator()(std::string_view sv) const {
+    return std::pmr::string{sv, resource_};
+  }
+};
+
 template <RowFormat Format>
-std::vector<ResolvedCell> resolveColumn(const Index& index,
-                                        ql::span<const Id> ids,
-                                        const LocalVocab& localVocab) {
+std::vector<PmrResolvedCell> resolveColumn(
+    const Index& index, ql::span<const Id> ids, const LocalVocab& localVocab,
+    std::pmr::memory_resource* cellResource) {
   constexpr bool removeQuotes = Format == RowFormat::Csv;
-  return ql::exportIds::idsToStringAndType<removeQuotes>(index, ids, localVocab,
-                                                         escapeCell<Format>);
+  auto escape = [](std::pmr::string s) {
+    return escapeCell<Format, std::pmr::string>(std::move(s));
+  };
+  return ql::exportIds::idsToStringAndType<removeQuotes>(
+      index, ids, localVocab, escape, PmrCellMaker{cellResource});
 }
 
 std::string makeHeaderLine(const parsedQuery::SelectClause& selectClause,
@@ -371,7 +391,14 @@ void ExportEngineV2::appendSerializedRows(
            d == SecondaryVocabIndex || d == WordVocabIndex ||
            d == TextRecordIndex || d == EncodedVal;
   };
-  std::vector<std::vector<ResolvedCell>> resolved(numOutputCols);
+  std::vector<std::vector<PmrResolvedCell>> resolved(numOutputCols);
+  // Window-scoped cell arena: declared before `resolved` so it outlives every
+  // cell string. Charged to the query allocator (same tracker as the vocab
+  // batch arenas, so runaway windows still hit the memory limit), freed in
+  // one go when the window is serialized.
+  ad_utility::vocabulary::AllocatorAsMemoryResource cellUpstream{
+      index.getImpl().allocator().as<std::byte>()};
+  ql::pmr::monotonic_buffer_resource cellArena{&cellUpstream};
   for (size_t outCol = 0; outCol < numOutputCols; ++outCol) {
     const auto col = columnAt(outCol);
     if (!col.has_value()) {
@@ -409,13 +436,23 @@ void ExportEngineV2::appendSerializedRows(
     if (uniformEncoded) {
       resolved[outCol].resize(n);
       for (size_t i = 0; i < n; ++i) {
-        resolved[outCol][i] =
-            ql::exportIds::idToStringAndTypeForEncodedValue(ids[i]);
+        // Encoded values are short (numbers, dates): one arena bump each, no
+        // heap allocation. The source pair keeps its own storage; only the
+        // bytes travel.
+        auto encoded = ql::exportIds::idToStringAndTypeForEncodedValue(ids[i]);
+        if (encoded.has_value()) {
+          resolved[outCol][i] = std::pair{
+              std::pmr::string{std::string_view{encoded.value().first},
+                               &cellArena},
+              encoded.value().second};
+        }
       }
     } else if (format == RowFormat::Csv) {
-      resolved[outCol] = resolveColumn<RowFormat::Csv>(index, ids, localVocab);
+      resolved[outCol] =
+          resolveColumn<RowFormat::Csv>(index, ids, localVocab, &cellArena);
     } else {
-      resolved[outCol] = resolveColumn<RowFormat::Tsv>(index, ids, localVocab);
+      resolved[outCol] =
+          resolveColumn<RowFormat::Tsv>(index, ids, localVocab, &cellArena);
     }
     AD_CORRECTNESS_CHECK(resolved[outCol].size() == n);
   }
@@ -437,7 +474,7 @@ void ExportEngineV2::appendSerializedRows(
       }
       auto& cell = resolved[outCol][i];
       if (cell.has_value()) {
-        out.append(std::move(cell.value().first));
+        out.append(std::string_view{cell.value().first});
       }
     }
     out.push_back('\n');
