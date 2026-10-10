@@ -1,0 +1,83 @@
+name: Fork perf review
+# Applies the vendored `algorithmica-perf-review` skill to every push on
+# perf branches: the PR diff (added/changed lines only) plus the skill text
+# go to a model, findings come back as a PR comment in the skill's output
+# contract. Review-only: it never commits, and it never benchmarks (benches
+# need controlled hardware; see fork-bench-build for the binary factory).
+# Fork-local by the same repository guard, so it can never spend upstream
+# minutes. Uses GitHub Models with GITHUB_TOKEN (permission `models: read`,
+# free tier) — no API keys to manage.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: 'fork-perf-review @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  models: read
+
+jobs:
+  review:
+    if: github.repository == 'marvin7122/qlever' && startsWith(github.head_ref, 'perf/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Collect PR diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
+            -H "Accept: application/vnd.github.v3.diff" > /tmp/pr.diff
+          wc -c /tmp/pr.diff
+          # Model context guard: 100 KiB of diff is plenty for added-line review.
+          head -c 102400 /tmp/pr.diff > /tmp/pr-trunc.diff
+          if [ "$(wc -c < /tmp/pr.diff)" -gt 102400 ]; then
+            echo "(diff truncated to 100 KiB for review)" >> /tmp/pr-trunc.diff
+          fi
+
+      - name: Run skill review via GitHub Models
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SYSTEM=$(cat .github/skills/algorithmica-perf-review/SKILL.md)
+          DIFF=$(cat /tmp/pr-trunc.diff)
+          jq -n --arg sys "$SYSTEM" --arg diff "$DIFF" '{
+            model: "openai/gpt-4o-mini",
+            temperature: 0,
+            messages: [
+              {role: "system", content: $sys},
+              {role: "user", content:
+                ("Review this QLever PR diff under the skill. Emit one line per finding in the output contract, or exactly NONE.\n\n```diff\n" + $diff + "\n```")}
+            ]
+          }' > /tmp/req.json
+          curl -sS -X POST https://models.github.ai/inference/chat/completions \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d @/tmp/req.json > /tmp/resp.json
+          jq -r '.choices[0].message.content // "NONE"' /tmp/resp.json > /tmp/findings.txt
+          cat /tmp/findings.txt
+
+      - name: Comment findings
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "## Algorithmica perf review (bot, \`perf/**\`)"
+            echo
+            echo "Skill: \`.github/skills/algorithmica-perf-review/SKILL.md\`, model: \`openai/gpt-4o-mini\`, scope: added/changed lines only."
+            echo
+            echo '```'
+            cat /tmp/findings.txt
+            echo '```'
+          } > /tmp/comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" -F /tmp/comment.md

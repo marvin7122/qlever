@@ -14,8 +14,11 @@
 #define QLEVER_SRC_INDEX_EXPORTIDS_H
 
 #include <array>
+#include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -131,38 +134,51 @@ idToStringAndTypeForEncodedValue(Id id);
 // IRI via the `EncodedIriManager` in the index.
 LiteralOrIri encodedIdToLiteralOrIri(Id id, const IndexImpl& index);
 
+// Default cell-string factory: owning copy. Export paths that resolve whole
+// column windows (export v2) pass an arena-backed factory instead, so the
+// millions of per-cell strings become pointer bumps into one per-window
+// buffer rather than individual heap allocations.
+struct DefaultStringMaker {
+  std::string operator()(std::string_view sv) const {
+    return std::string{sv};
+  }
+};
+
 // Format a `LiteralOrIri` as a (string, XSD-type) pair applying the template
 // options and `escapeFunction`. Return `std::nullopt` when `returnOnlyLiterals`
 // is true and `word` is not a literal.
 CPP_template(bool removeQuotesAndAngleBrackets = false,
              bool returnOnlyLiterals = false,
              typename LiteralOrIriType = LiteralOrIri,
-             typename EscapeFunction = ql::identity)(
+             typename EscapeFunction = ql::identity,
+             typename MakeString = DefaultStringMaker)(
     requires ad_utility::SameAsAny<LiteralOrIriType, LiteralOrIri,
-                                   LiteralOrIriView>) std::
-    optional<std::pair<std::string, const char*>> literalOrIriToStringAndType(
-        const LiteralOrIriType& word,
-        EscapeFunction&& escapeFunction = EscapeFunction{}) {
+                                   LiteralOrIriView>) auto
+literalOrIriToStringAndType(const LiteralOrIriType& word,
+                            EscapeFunction&& escapeFunction = EscapeFunction{},
+                            MakeString&& makeString = MakeString{}) {
+  using String = std::invoke_result_t<MakeString, std::string_view>;
+  using Result = std::optional<std::pair<String, const char*>>;
   if constexpr (returnOnlyLiterals) {
     if (!word.isLiteral()) {
-      return std::nullopt;
+      return Result{std::nullopt};
     }
   }
   if (word.isIri()) {
     if (auto blankNodeString = blankNodeIriToString(word.getIri())) {
-      return std::pair{std::string{blankNodeString.value()}, nullptr};
+      return Result{std::pair{makeString(blankNodeString.value()), nullptr}};
     }
   }
   if constexpr (removeQuotesAndAngleBrackets) {
     // TODO<joka921> Can we get rid of the string copying here?
-    return std::pair{
-        escapeFunction(std::string{asStringViewUnsafe(word.getContent())}),
-        nullptr};
+    return Result{std::pair{
+        escapeFunction(makeString(asStringViewUnsafe(word.getContent()))),
+        nullptr}};
   }
   // TODO<ms2144>: we unconditionally always materialize a string here, which
   // is wasteful and should be mitigated in the future.
-  return std::pair{escapeFunction(std::string{word.toStringRepresentation()}),
-                   nullptr};
+  return Result{std::pair{
+      escapeFunction(makeString(word.toStringRepresentation())), nullptr}};
 }
 
 // Convert the `id` to a human-readable string. The `index` is used to resolve
@@ -181,10 +197,13 @@ CPP_template(bool removeQuotesAndAngleBrackets = false,
 // holds the `Undefined` value, then `std::nullopt` is returned.
 template <bool removeQuotesAndAngleBrackets = false,
           bool returnOnlyLiterals = false,
-          typename EscapeFunction = ql::identity>
-std::optional<std::pair<std::string, const char*>> idToStringAndType(
-    const Index& index, Id id, const LocalVocab& localVocab,
-    EscapeFunction&& escapeFunction = EscapeFunction{}) {
+          typename EscapeFunction = ql::identity,
+          typename MakeString = DefaultStringMaker>
+auto idToStringAndType(const Index& index, Id id, const LocalVocab& localVocab,
+                       EscapeFunction&& escapeFunction = EscapeFunction{},
+                       MakeString&& makeString = MakeString{}) {
+  using String = std::invoke_result_t<MakeString, std::string_view>;
+  using Result = std::optional<std::pair<String, const char*>>;
   using enum Datatype;
   auto datatype = id.getDatatype();
   if constexpr (returnOnlyLiterals) {
@@ -198,20 +217,21 @@ std::optional<std::pair<std::string, const char*>> idToStringAndType(
     static constexpr std::array stringVocabDatatypes{
         VocabIndex, LocalVocabIndex, SecondaryVocabIndex};
     if (!ad_utility::contains(stringVocabDatatypes, datatype)) {
-      return std::nullopt;
+      return Result{std::nullopt};
     }
   }
 
-  auto formatLiteralOrIri = [&escapeFunction](const auto& word) {
+  auto formatLiteralOrIri = [&escapeFunction,
+                             &makeString](const auto& word) {
     return literalOrIriToStringAndType<removeQuotesAndAngleBrackets,
-                                       returnOnlyLiterals>(word,
-                                                           escapeFunction);
+                                       returnOnlyLiterals>(
+        word, escapeFunction, makeString);
   };
 
   switch (id.getDatatype()) {
     case WordVocabIndex: {
       std::string_view entity = index.indexToString(id.getWordVocabIndex());
-      return std::pair{escapeFunction(std::string{entity}), nullptr};
+      return Result{std::pair{escapeFunction(makeString(entity)), nullptr}};
     }
     case VocabIndex:
     case LocalVocabIndex:
@@ -220,12 +240,26 @@ std::optional<std::pair<std::string, const char*>> idToStringAndType(
           getLiteralOrIriFromVocabIndex(index.getImpl(), id, localVocab));
     case EncodedVal:
       return formatLiteralOrIri(encodedIdToLiteralOrIri(id, index.getImpl()));
-    case TextRecordIndex:
-      return std::pair{
-          escapeFunction(index.getTextExcerpt(id.getTextRecordIndex())),
-          nullptr};
-    default:
-      return idToStringAndTypeForEncodedValue(id);
+    case TextRecordIndex: {
+      // `getTextExcerpt` returns an owning string; copy its bytes into the
+      // caller-provided storage (arena bump for the pmr instantiation,
+      // short-string or single heap alloc for the default one).
+      auto excerpt = index.getTextExcerpt(id.getTextRecordIndex());
+      return Result{std::pair{
+          escapeFunction(makeString(std::string_view{excerpt})), nullptr}};
+    }
+    default: {
+      // Encoded values are tiny (numbers, dates); materialize them with the
+      // default maker and copy the bytes into the caller's storage. The copy
+      // is a short `memcpy`, never a heap allocation for the arena case.
+      auto encoded = idToStringAndTypeForEncodedValue(id);
+      if (!encoded.has_value()) {
+        return Result{std::nullopt};
+      }
+      return Result{std::pair{
+          makeString(std::string_view{encoded.value().first}),
+          encoded.value().second}};
+    }
   }
 }
 
@@ -248,31 +282,38 @@ PartitionedIdPositions partitionIdPositions(ql::span<const Id> ids);
 // `results`. These values are either encoded in the id bits or stored in the
 // in-memory `LocalVocab`.
 template <bool removeQuotesAndAngleBrackets, bool returnOnlyLiterals,
-          typename EscapeFunction>
+          typename EscapeFunction, typename MakeString = DefaultStringMaker>
 void resolveNonVocabIndexIds(
     const Index& index, ql::span<const Id> ids, const LocalVocab& localVocab,
     ql::span<const size_t> positions,
-    ql::span<std::optional<std::pair<std::string, const char*>>> results,
-    const EscapeFunction& escapeFunction) {
+    ql::span<std::optional<std::pair<
+        std::invoke_result_t<MakeString, std::string_view>, const char*>>>
+        results,
+    const EscapeFunction& escapeFunction,
+    const MakeString& makeString = MakeString{}) {
   AD_EXPENSIVE_CHECK(ql::ranges::all_of(positions, [&ids](size_t i) {
     return ids[i].getDatatype() != Datatype::VocabIndex;
   }));
   ql::ranges::for_each(positions, [&](size_t i) {
     results[i] =
         idToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
-            index, ids[i], localVocab, escapeFunction);
+            index, ids[i], localVocab, escapeFunction, makeString);
   });
 }
 
 // Resolve the `VocabIndex` IDs at `positions` in a single batched vocabulary
 // lookup, writing each result into its slot in `results`.
 template <bool removeQuotesAndAngleBrackets, bool returnOnlyLiterals,
-          typename EscapeFunction>
+          typename EscapeFunction,
+          typename MakeString = DefaultStringMaker>
 void resolveVocabIndexIds(
     const Index& index, ql::span<const Id> ids,
     ql::span<const size_t> positions,
-    ql::span<std::optional<std::pair<std::string, const char*>>> results,
-    const EscapeFunction& escapeFunction) {
+    ql::span<std::optional<std::pair<
+        std::invoke_result_t<MakeString, std::string_view>, const char*>>>
+        results,
+    const EscapeFunction& escapeFunction,
+    const MakeString& makeString = MakeString{}) {
   if (positions.empty()) {
     return;
   }
@@ -298,7 +339,8 @@ void resolveVocabIndexIds(
   for (auto&& [sv, i] : ::ranges::views::zip(vocabStrings, positions)) {
     results[i] = literalOrIriToStringAndType<removeQuotesAndAngleBrackets,
                                              returnOnlyLiterals>(
-        LiteralOrIriView::fromStringRepresentation(sv), escapeFunction);
+        LiteralOrIriView::fromStringRepresentation(sv), escapeFunction,
+        makeString);
   }
 }
 
@@ -309,21 +351,24 @@ void resolveVocabIndexIds(
 // positions.
 template <bool removeQuotesAndAngleBrackets = false,
           bool returnOnlyLiterals = false,
-          typename EscapeFunction = ql::identity>
-std::vector<std::optional<std::pair<std::string, const char*>>>
-idsToStringAndType(const Index& index, ql::span<const Id> ids,
-                   const LocalVocab& localVocab,
-                   const EscapeFunction& escapeFunction = EscapeFunction{}) {
-  std::vector<std::optional<std::pair<std::string, const char*>>> results(
+          typename EscapeFunction = ql::identity,
+          typename MakeString = DefaultStringMaker>
+auto idsToStringAndType(const Index& index, ql::span<const Id> ids,
+                        const LocalVocab& localVocab,
+                        const EscapeFunction& escapeFunction = EscapeFunction{},
+                        const MakeString& makeString = MakeString{}) {
+  using String = std::invoke_result_t<MakeString, std::string_view>;
+  std::vector<std::optional<std::pair<String, const char*>>> results(
       ids.size());
 
   PartitionedIdPositions positions = partitionIdPositions(ids);
 
   resolveNonVocabIndexIds<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
       index, ids, localVocab, positions.nonVocabIndexIndices_, results,
-      escapeFunction);
+      escapeFunction, makeString);
   resolveVocabIndexIds<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
-      index, ids, positions.vocabIndexIndices_, results, escapeFunction);
+      index, ids, positions.vocabIndexIndices_, results, escapeFunction,
+      makeString);
 
   return results;
 }

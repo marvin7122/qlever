@@ -186,9 +186,13 @@ inline void adCorrectnessCheckImpl(bool condition, std::string_view message,
 }
 }  // namespace ad_utility::detail
 #define AD_CORRECTNESS_CHECK(condition, ...)                 \
-  ad_utility::detail::adCorrectnessCheckImpl(                \
-      static_cast<bool>(condition), AD_STRINGIFY(condition), \
-      AD_CURRENT_SOURCE_LOC() __VA_OPT__(, ) __VA_ARGS__)
+  do {                                                        \
+    if (!(condition)) [[unlikely]] {                          \
+      ad_utility::detail::adCorrectnessCheckImpl(            \
+          false, AD_STRINGIFY(condition),                     \
+          AD_CURRENT_SOURCE_LOC() __VA_OPT__(, ) __VA_ARGS__); \
+    }                                                         \
+  } while (0)
 
 // This check is similar to `AD_CORRECTNESS_CHECK` (see above), but the check is
 // only compiled and executed when either the `NDEBUG` constant is NOT defined

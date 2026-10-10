@@ -5,6 +5,7 @@
 #ifndef QLEVER_RDFESCAPING_H
 #define QLEVER_RDFESCAPING_H
 
+#include <memory_resource>
 #include <sstream>
 #include <string>
 
@@ -137,6 +138,15 @@ std::string unescapePrefixedIri(std::string_view literal);
 std::string escapeForCsv(std::string input);
 
 /**
+ * Sink overloads of `escapeForCsv`/`escapeForTsv` for the export path: escape
+ * `input` directly into caller-provided storage (e.g. arena-backed strings),
+ * avoiding the owning temporary of the returning overloads. Results are
+ * byte-identical to the returning overloads.
+ */
+void escapeForCsvInto(std::string_view input, std::string& sink);
+void escapeForCsvInto(std::string_view input, std::pmr::string& sink);
+
+/**
  * Escape a string to be compatible with the IANA-TSV specification by
  * replacing tabs with spaces and newlines with '\n'.
  *
@@ -144,6 +154,10 @@ std::string escapeForCsv(std::string input);
  * for more information.
  */
 std::string escapeForTsv(std::string input);
+
+// Sink overloads, see `escapeForCsvInto` above.
+void escapeForTsvInto(std::string_view input, std::string& sink);
+void escapeForTsvInto(std::string_view input, std::pmr::string& sink);
 
 // Escape a string to be compatible with XML.
 std::string escapeForXml(std::string input);

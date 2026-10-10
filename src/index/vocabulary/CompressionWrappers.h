@@ -104,8 +104,13 @@ struct DecoderMultiplexer {
       : decoders_{std::move(decoders)} {}
   std::string decompress(std::string_view compressed,
                          size_t decoderIndex) const {
+    // Bounds-checked once here (not via `decoders_.at`): the batch path in
+    // `CompressedVocabulary::lookupBatch` already verifies the index, and a
+    // failed `AD_CORRECTNESS_CHECK` throws a QLever exception with the
+    // offending condition instead of a bare `std::out_of_range`.
+    AD_CORRECTNESS_CHECK(decoderIndex < decoders_.size());
     DISABLE_CLANG_UNUSED_RESULT_WARNING
-    return decoders_.at(decoderIndex).decompress(compressed);
+    return decoders_[decoderIndex].decompress(compressed);
     ENABLE_CLANG_WARNINGS
   }
 
@@ -114,8 +119,9 @@ struct DecoderMultiplexer {
   // `compressed` with `decoderIndex`.
   [[nodiscard]] size_t maxDecompressedSize(std::string_view compressed,
                                            size_t decoderIndex) const {
+    AD_CORRECTNESS_CHECK(decoderIndex < decoders_.size());
     const size_t bound =
-        decoders_.at(decoderIndex).maxDecompressedSize(compressed);
+        decoders_[decoderIndex].maxDecompressedSize(compressed);
     return bound;
   }
 
@@ -129,7 +135,8 @@ struct DecoderMultiplexer {
                                       std::string& scratch) const {
     AD_CORRECTNESS_CHECK(!out.empty() || compressed.empty());
     DISABLE_CLANG_UNUSED_RESULT_WARNING
-    auto& decoder = decoders_.at(decoderIndex);
+    AD_CORRECTNESS_CHECK(decoderIndex < decoders_.size());
+    auto& decoder = decoders_[decoderIndex];
     size_t decompressedSize;
     if constexpr (RequiresScratchDecompressInto<Decoder>) {
       decompressedSize = decoder.decompressInto(compressed, out, scratch);

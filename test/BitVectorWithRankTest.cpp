@@ -118,6 +118,24 @@ TEST(BitVectorWithRank, BlockAndWordBoundaries) {
 }
 
 // _____________________________________________________________________________
+TEST(BitVectorWithRank, MiddleAnchorBoundaries) {
+  // Values around the middle anchor (bit 224 of each block, counted down to
+  // from below and up to from above), around the word that holds the anchor
+  // (bits 192-255), and the same pattern shifted into later blocks.
+  for (uint64_t blockBase : {0ULL, 448ULL, 896ULL}) {
+    for (uint64_t delta :
+         {0ULL, 63ULL, 64ULL, 127ULL, 191ULL, 192ULL, 223ULL, 224ULL, 225ULL,
+          255ULL, 256ULL, 319ULL, 383ULL, 384ULL, 447ULL}) {
+      const uint64_t value = blockBase + delta;
+      expectRanksMatchDefinition({value}, value + 1);
+    }
+    expectRanksMatchDefinition(
+        {blockBase + 223, blockBase + 224, blockBase + 225},
+        blockBase + 226);
+  }
+}
+
+// _____________________________________________________________________________
 TEST(BitVectorWithRank, RandomSparseAndDense) {
   for (double density : {0.001, 0.05, 0.5, 0.95, 1.0}) {
     for (uint64_t seed : {1ULL, 2ULL, 3ULL}) {

@@ -299,12 +299,78 @@ std::string escapeForCsv(std::string input) {
   return absl::StrCat("\"", absl::StrReplaceAll(input, {{"\"", "\"\""}}), "\"");
 }
 
+// Sink shared implementation: the caller selects the concrete string type,
+// the bytes are identical to `escapeForCsv`.
+template <typename Sink>
+void escapeForCsvIntoImpl(std::string_view input, Sink& sink) {
+  sink.clear();
+  if (!ctre::search<detail::csvSpecialCharsRegex>(input)) [[likely]] {
+    sink.assign(input);
+    return;
+  }
+  sink.reserve(2 * input.size() + 2);
+  sink.push_back('"');
+  size_t runStart = 0;
+  for (size_t i = 0; i < input.size(); ++i) {
+    if (input[i] == '"') {
+      sink.append(input.data() + runStart, i - runStart);
+      sink.append("\"\"");
+      runStart = i + 1;
+    }
+  }
+  sink.append(input.data() + runStart, input.size() - runStart);
+  sink.push_back('"');
+}
+
+void escapeForCsvInto(std::string_view input, std::string& sink) {
+  escapeForCsvIntoImpl(input, sink);
+}
+void escapeForCsvInto(std::string_view input, std::pmr::string& sink) {
+  escapeForCsvIntoImpl(input, sink);
+}
+
 // __________________________________________________________________________
 std::string escapeForTsv(std::string input) {
   if (ctre::search<detail::tsvSpecialCharsRegex>(input)) [[unlikely]] {
     absl::StrReplaceAll({{"\t", " "}, {"\n", "\\n"}}, &input);
   }
   return input;
+}
+
+// Sink shared implementation, byte-identical to `escapeForTsv`: only '\t'
+// (→ ' ') and '\n' (→ backslash + 'n') are replaced, all other bytes travel
+// verbatim (this matches the `tsvSpecialCharsRegex` trigger set `[\n\t]`).
+template <typename Sink>
+void escapeForTsvIntoImpl(std::string_view input, Sink& sink) {
+  sink.clear();
+  if (!ctre::search<detail::tsvSpecialCharsRegex>(input)) [[likely]] {
+    sink.assign(input);
+    return;
+  }
+  sink.reserve(input.size());
+  size_t runStart = 0;
+  auto flushRun = [&](size_t end) {
+    sink.append(input.data() + runStart, end - runStart);
+  };
+  for (size_t i = 0; i < input.size(); ++i) {
+    if (input[i] == '\t') {
+      flushRun(i);
+      sink.push_back(' ');
+      runStart = i + 1;
+    } else if (input[i] == '\n') {
+      flushRun(i);
+      sink.append("\\n");
+      runStart = i + 1;
+    }
+  }
+  flushRun(input.size());
+}
+
+void escapeForTsvInto(std::string_view input, std::string& sink) {
+  escapeForTsvIntoImpl(input, sink);
+}
+void escapeForTsvInto(std::string_view input, std::pmr::string& sink) {
+  escapeForTsvIntoImpl(input, sink);
 }
 
 // __________________________________________________________________________
