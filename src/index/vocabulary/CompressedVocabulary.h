@@ -33,6 +33,7 @@
 #include "util/Serializer/Serializer.h"
 #include "util/TaskQueue.h"
 
+namespace ad_utility::vocabulary {
 namespace detail {
 
 template <typename Vocabulary, typename Iterator>
@@ -738,5 +739,7 @@ CPP_template(typename UnderlyingVocabulary,
     return {std::move(decompressedWord), wordAndIndex.index()};
   }
 };
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H

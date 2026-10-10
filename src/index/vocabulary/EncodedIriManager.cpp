@@ -16,6 +16,8 @@
 
 #include "util/Algorithm.h"
 
+namespace ad_utility::vocabulary {
+
 namespace {
 // The JSON keys, see `detail::patternsToJson`.
 constexpr std::string_view jsonKeyPrefixes =
@@ -164,3 +166,4 @@ std::vector<encodedIri::Pattern> detail::patternsFromJson(
   checkNumberOfPatterns(patterns.size(), maxNumPatterns);
   return patterns;
 }
+}  // namespace ad_utility::vocabulary

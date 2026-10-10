@@ -123,7 +123,7 @@ class IndexImpl {
   nlohmann::json configurationJson_;
   Index::Vocab vocab_;
   Index::TextVocab textVocab_;
-  EncodedIriManager encodedIriManager_;
+  ad_utility::vocabulary::EncodedIriManager encodedIriManager_;
   ScoreData scoreData_;
 
   TextMetaData textMeta_;
@@ -225,7 +225,8 @@ class IndexImpl {
   bool wasLoadedFromDisk_ = false;
 
   // The secondary vocabulary, see `secondaryVocab()`.
-  std::shared_ptr<const SecondaryVocabulary> secondaryVocab_;
+  std::shared_ptr<const ad_utility::vocabulary::SecondaryVocabulary>
+      secondaryVocab_;
 
   // The implementation of the `LocalVocabContext` interface for this index.
   // NOTE: `IndexImpl` deliberately does not implement that interface itself, so
@@ -312,8 +313,19 @@ class IndexImpl {
   // in a follow-up change). It has to be set before the first query is
   // answered (in particular, before any `LocalVocabEntry` computes its position
   // in the vocabulary, see `positionInVocab()`), and is immutable afterwards.
-  const SecondaryVocabulary* secondaryVocab() const {
+  const ad_utility::vocabulary::SecondaryVocabulary* secondaryVocab() const {
     return secondaryVocab_.get();
+  }
+
+  // Set the secondary vocabulary, see above. NOTE: Tests that need an index
+  // with a secondary vocabulary should not call this directly, but set
+  // `TestIndexConfig::secondaryVocabWords` (see
+  // `test/util/IndexTestHelpers.h`), such that the vocabulary is part of the
+  // index right from its creation.
+  void setSecondaryVocabForTesting(
+      std::shared_ptr<const ad_utility::vocabulary::SecondaryVocabulary>
+          secondaryVocab) {
+    setSecondaryVocab(std::move(secondaryVocab));
   }
 
   // Set the secondary vocabulary, see above. PRECONDITION: Must only be called
@@ -323,7 +335,8 @@ class IndexImpl {
   // only tests currently call it, because it is about to get a non-test caller
   // (see above).
   void setSecondaryVocab(
-      std::shared_ptr<const SecondaryVocabulary> secondaryVocab) {
+      std::shared_ptr<const ad_utility::vocabulary::SecondaryVocabulary>
+          secondaryVocab) {
     secondaryVocab_ = std::move(secondaryVocab);
   }
 
@@ -440,10 +453,12 @@ class IndexImpl {
   NumNormalAndInternal numDistinctCol0(Permutation::Enum permutation) const;
 
   // ___________________________________________________________________________
-  RdfsVocabulary::AccessReturnType indexToString(VocabIndex id) const;
+  ad_utility::vocabulary::RdfsVocabulary::AccessReturnType indexToString(
+      VocabIndex id) const;
 
   // ___________________________________________________________________________
-  TextVocabulary::AccessReturnType indexToString(WordVocabIndex id) const;
+  ad_utility::vocabulary::TextVocabulary::AccessReturnType indexToString(
+      WordVocabIndex id) const;
 
  public:
   // ___________________________________________________________________________
@@ -475,12 +490,12 @@ class IndexImpl {
   struct TextBlockMetadataAndWordInfo {
     TextBlockMetadataAndWordInfo(
         const TextBlockMetaData& tbmd,
-        const IdRange<WordVocabIndex>& includingIdRange)
+        const ad_utility::vocabulary::IdRange<WordVocabIndex>& includingIdRange)
         : tbmd_{tbmd},
-          optIdRange_{
-              computeHasToBeFiltered(includingIdRange)
-                  ? std::optional<IdRange<WordVocabIndex>>{includingIdRange}
-                  : std::nullopt} {}
+          optIdRange_{computeHasToBeFiltered(includingIdRange)
+                          ? std::optional<ad_utility::vocabulary::IdRange<
+                                WordVocabIndex>>{includingIdRange}
+                          : std::nullopt} {}
     // The TextBlockMetaData has the information on where the blocks boundaries
     // and internal boundaries are. It is necessary to retrieve either the
     // context list or entity list of a text block.
@@ -495,12 +510,14 @@ class IndexImpl {
     // construction.
     // Note: This range is inclusive so it is [lowerId, upperId],
     // NOT [lowerId, upperId)
-    const std::optional<IdRange<WordVocabIndex>> optIdRange_;
+    const std::optional<ad_utility::vocabulary::IdRange<WordVocabIndex>>
+        optIdRange_;
 
     // Returns true if the text block contains entries outside of the requested
     // range
     bool computeHasToBeFiltered(
-        const IdRange<WordVocabIndex>& includingIdRange) const {
+        const ad_utility::vocabulary::IdRange<WordVocabIndex>& includingIdRange)
+        const {
       return !(tbmd_._firstWordId >= includingIdRange.first().get() &&
                tbmd_._lastWordId <= includingIdRange.last().get());
     }

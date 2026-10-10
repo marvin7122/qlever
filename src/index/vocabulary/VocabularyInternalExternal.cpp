@@ -22,6 +22,8 @@
 #include "global/RuntimeParameters.h"
 #include "util/HugePages.h"
 
+namespace ad_utility::vocabulary {
+
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {
   auto fromInternal = internalVocab_[i];
@@ -177,3 +179,4 @@ void VocabularyInternalExternal::open(const std::string& filename) {
     }
   }
 }
+}  // namespace ad_utility::vocabulary

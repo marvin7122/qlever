@@ -53,7 +53,8 @@ void writeVocabWithHoles(VocabularyType::Enum vocabType,
     writer.finish();
   };
   if (vocabType == VocabularyType::Enum::InMemoryUncompressedWithHoles) {
-    VocabularyInMemoryBinSearch::WordWriter writer{filename};
+    ad_utility::vocabulary::VocabularyInMemoryBinSearch::WordWriter writer{
+        filename};
     writeWords(writer);
   } else {
     ASSERT_EQ(vocabType, VocabularyType::Enum::InMemoryCompressedWithHoles);
@@ -75,12 +76,13 @@ void testForVocabTypeWithHoles(VocabularyType::Enum vocabType) {
   // The `WordWriterBase` interface cannot express the explicit indices that a
   // vocabulary with holes requires.
   AD_EXPECT_THROW_WITH_MESSAGE(
-      PolymorphicVocabulary::makeDiskWriterPtr(filename, type),
+      ad_utility::vocabulary::PolymorphicVocabulary::makeDiskWriterPtr(filename,
+                                                                       type),
       ::testing::HasSubstr("cannot be built word by word"));
 
   std::vector<uint64_t> indices{0, 2, 4, 6};
   writeVocabWithHoles(vocabType, filename, indices);
-  PolymorphicVocabulary vocab;
+  ad_utility::vocabulary::PolymorphicVocabulary vocab;
   vocab.open(filename, type);
   EXPECT_EQ(vocab.size(), 4);
 
@@ -132,14 +134,16 @@ void testForVocabType(VocabularyType::Enum vocabType) {
       absl::StrCat("polymorphicVocabularyTest.", type.toString(), ".vocab");
   auto cleanup = getFileCleanup(type, filename);
 
-  auto writerPtr = PolymorphicVocabulary::makeDiskWriterPtr(filename, type);
+  auto writerPtr =
+      ad_utility::vocabulary::PolymorphicVocabulary::makeDiskWriterPtr(filename,
+                                                                       type);
   auto& writer = *writerPtr;
   writer("alpha", false);
   writer("beta", true);
   writer("gamma", false);
   writer.finish();
 
-  PolymorphicVocabulary vocab;
+  ad_utility::vocabulary::PolymorphicVocabulary vocab;
   vocab.open(filename, type);
   EXPECT_EQ(vocab.size(), 3);
 
@@ -171,7 +175,8 @@ void testForVocabType(VocabularyType::Enum vocabType) {
   // a generic fallback). Here all words are in the main vocabulary, so the
   // indices are simply `0, 1, 2`.
   std::vector<std::pair<uint64_t, std::string>> scanned;
-  for (const IndexAndWord& indexAndWord : vocab.scanAll()) {
+  for (const ad_utility::vocabulary::IndexAndWord& indexAndWord :
+       vocab.scanAll()) {
     scanned.emplace_back(indexAndWord.index_, std::string{indexAndWord.word_});
   }
   EXPECT_THAT(scanned, ::testing::ElementsAre(std::pair{uint64_t{0}, "alpha"},
@@ -182,15 +187,17 @@ void testForVocabType(VocabularyType::Enum vocabType) {
 // Write a small vocabulary of the given `vocabType` to `filename` and open it
 // into `vocab`. The exact words don't matter (they only have to be sorted, as
 // the underlying vocabularies require sorted input at write time).
-void setupVocab(PolymorphicVocabulary& vocab, VocabularyType::Enum vocabType,
-                const std::string& filename) {
+void setupVocab(ad_utility::vocabulary::PolymorphicVocabulary& vocab,
+                VocabularyType::Enum vocabType, const std::string& filename) {
   VocabularyType type{vocabType};
   if (isWithHoles(vocabType)) {
     // For the vocabularies with holes, the indices `1` and `3` are the holes,
     // for which the lookups below have to report a placeholder.
     writeVocabWithHoles(vocabType, filename, {0, 2, 4, 6});
   } else {
-    auto writerPtr = PolymorphicVocabulary::makeDiskWriterPtr(filename, type);
+    auto writerPtr =
+        ad_utility::vocabulary::PolymorphicVocabulary::makeDiskWriterPtr(
+            filename, type);
     vocabulary_test::writeWordsAndFinish(*writerPtr);
   }
   vocab.open(filename, type);
@@ -271,8 +278,8 @@ TEST(PolymorphicVocabulary, lookupBatchesStreamedMatchesIndividualLookups) {
     // `VocabLookupInput` takes ownership of the batches, so keep a copy to
     // compare against.
     const auto expectedBatches = batches;
-    auto streamed =
-        vocab.lookupBatchesStreamed(VocabLookupInput{std::move(batches)});
+    auto streamed = vocab.lookupBatchesStreamed(
+        ad_utility::vocabulary::VocabLookupInput{std::move(batches)});
 
     vocabulary_test::assertStreamedLookupMatchesVocabularyAtIndices(
         vocab, streamed, expectedBatches);
@@ -300,7 +307,7 @@ TEST(PolymorphicVocabulary, geoCellGrid) {
 
 // Test a corner case in a `switch` statement.
 TEST(PolymorphicVocabulary, invalidVocabularyType) {
-  PolymorphicVocabulary vocab;
+  ad_utility::vocabulary::PolymorphicVocabulary vocab;
   auto invalidType = VocabularyType{static_cast<VocabularyType::Enum>(23401)};
   EXPECT_ANY_THROW(vocab.resetToType(invalidType));
 }

@@ -128,13 +128,14 @@ class RdfAsyncParallelParser : public AsyncRdfParserBase {
   // on `executor`. The constructor does not block and starts no asynchronous
   // operation, see the class comment above. The `settings` are applied to
   // every worker parser (see `RdfParserSettings`).
-  RdfAsyncParallelParser(const ql::any_io_executor& executor,
-                         const qlever::InputFileSpecification& spec,
-                         ad_utility::MemorySize blocksize,
-                         const EncodedIriManager* encodedIriManager,
-                         const TripleComponent& defaultGraphIri =
-                             qlever::specialIds().at(DEFAULT_GRAPH_IRI),
-                         RdfParserSettings settings = {});
+  RdfAsyncParallelParser(
+      const ql::any_io_executor& executor,
+      const qlever::InputFileSpecification& spec,
+      ad_utility::MemorySize blocksize,
+      const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
+      const TripleComponent& defaultGraphIri =
+          qlever::specialIds().at(DEFAULT_GRAPH_IRI),
+      RdfParserSettings settings = {});
 
  protected:
   // Implement `AsyncRdfParserBase::asyncGetBatchImpl` by simply `co_spawn`ing

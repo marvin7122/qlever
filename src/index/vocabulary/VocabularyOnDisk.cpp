@@ -26,6 +26,8 @@
 #include "util/StringUtils.h"
 #include "util/Views.h"
 
+namespace ad_utility::vocabulary {
+
 using OffsetAndSize = VocabularyOnDisk::OffsetAndSize;
 
 // ____________________________________________________________________________
@@ -456,3 +458,4 @@ void VocabularyOnDisk::open(const std::string& filename) {
     ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
   }
 }
+}  // namespace ad_utility::vocabulary
