@@ -57,6 +57,14 @@ struct FrameKeyHash {
 // evict each other's in-flight pages. Immutable files remove dirty-page
 // handling entirely: fills are byte copies, eviction just drops the buffer.
 //
+// Hot-page pinning (Idea 1b): a frame that is re-hit `kHotPinThreshold` times
+// while resident becomes hot-pinned and is exempt from CLOCK eviction, so the
+// hot working set survives scan-driven churn. The hot set is bounded at half
+// the pool (at least one frame); pinning beyond the bound demotes the coldest
+// hot frame (fewest hits, oldest first), which must then re-earn its pin.
+// Hit counts increment on resident hits only and reset on every replacement,
+// so a page touched once or twice and evicted never accumulates a pin.
+//
 // Fills go through the caller: `allocate` identifies who installed a pinned
 // loading frame. Only that caller reads the page (in production via the
 // existing io_uring `BatchManagerBase::addBatch`/`wait` path, see
@@ -73,10 +81,21 @@ class VocabFramePool {
     FrameState state = FrameState::Free;
     size_t pinCount = 0;
     bool referenceBit = false;
+    // Resident hits since install; reaching `kHotPinThreshold` hot-pins the
+    // frame. Reset on every replacement so cold pages never accumulate pins.
+    uint32_t hitCount = 0;
+    // Sticky hot pin: exempt from CLOCK eviction until `unpinHot` or
+    // coldest-first demotion under hot-cap pressure.
+    bool hotPinned = false;
+    // Pin order among hot frames; ties in `hitCount` demote the oldest first.
+    uint64_t hotSeq = 0;
     FrameKey key{};
     std::vector<char> data;
     Frame() : data(kPageSize, 0) {}
   };
+
+  // Resident re-hits while the page stays resident before it hot-pins.
+  static constexpr uint32_t kHotPinThreshold = 3;
 
   explicit VocabFramePool(size_t numFrames = 256);
   VocabFramePool(const VocabFramePool&) = delete;
@@ -92,8 +111,9 @@ class VocabFramePool {
   size_t capacity() const { return frames_.size(); }
 
   // Pin the resident frame for `key` on a hit: increments the pin count,
-  // sets the reference bit, and returns the frame. Returns nullptr on a
-  // miss. The caller must call `unpin` once the bytes are copied.
+  // sets the reference bit, records a resident hit toward hot-pinning, and
+  // returns the frame. Returns nullptr on a miss. The caller must call
+  // `unpin` once the bytes are copied.
   Frame* tryPin(const FrameKey& key);
 
   // Return the frame for `key`, allocating it on a miss: on a hit this pins
@@ -123,16 +143,39 @@ class VocabFramePool {
   size_t residentCount() const;
   size_t pinnedCount() const;
 
+  // Hot-page pinning introspection and release. `isHotPinned` reports whether
+  // `key` is currently exempt from CLOCK eviction. `unpinHot` clears the pin
+  // (no-op when `key` is missing or not hot) and resets the hit count, so a
+  // demoted page must re-earn its pin from zero. Counts reset on replacement
+  // either way, so evicted cold pages never come back pinned.
+  bool isHotPinned(const FrameKey& key) const;
+  size_t hotPinnedCount() const;
+  void unpinHot(const FrameKey& key);
+
+  // Bound on concurrently hot-pinned frames: half the pool, at least one.
+  size_t maxHotPinned() const {
+    const size_t half = frames_.size() / 2;
+    return half > 0 ? half : 1;
+  }
+
  private:
-  // CLOCK victim index among unpinned frames, or `frames_.size()` when every
-  // frame is pinned. Caller must hold `mutex_`.
+  // CLOCK victim index among unpinned, non-hot frames, or `frames_.size()`
+  // when every frame is pinned or hot-pinned. Caller must hold `mutex_`.
   size_t clockVictimLocked();
   Frame* findLocked(const FrameKey& key);
+  // Record one resident hit on `frame`, hot-pinning at `kHotPinThreshold`
+  // and demoting the coldest hot frame when the bound is exceeded. Caller
+  // must hold `mutex_`.
+  void noteResidentHitLocked(Frame& frame);
+  // Demote coldest-first (fewest hits, oldest pin) down to `maxHotPinned()`.
+  // Caller must hold `mutex_`.
+  void enforceHotCapLocked();
 
   std::vector<Frame> frames_;
   std::unordered_map<FrameKey, size_t, FrameKeyHash> index_;
   mutable std::mutex mutex_;
   size_t hand_ = 0;
+  uint64_t hotSeqCounter_ = 0;
 };
 
 // Confined ring buffers for single-pass scan traffic (Postgres discipline):

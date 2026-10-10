@@ -611,6 +611,151 @@ TEST(ResidentFileMapping, noEvictWhilePinned) {
 }
 
 // _____________________________________________________________________________
+// Hot-page pinning: `kHotPinThreshold` resident re-hits exempt a page from
+// CLOCK eviction; the hot set is bounded (coldest demoted first, explicit
+// `unpinHot` releases); cold pages evicted below the threshold come back
+// cold and must re-earn a pin.
+TEST(ResidentFileMapping, hotPagesPinExemptFromClockEviction) {
+  constexpr size_t P = ResidentFileMapping::pageSize;
+  const std::string filename = "residentFileMappingHotPin.dat";
+  std::string contents(8 * P, 'x');
+  for (size_t i = 0; i < contents.size(); ++i) {
+    contents[i] = static_cast<char>('a' + (i / P) % 26);
+  }
+  auto file = writeAndOpen(filename, contents);
+  ResidentFileMapping mapping(file.fd(), contents.size());
+  if (!mapping.isMapped()) {
+    ad_utility::deleteFile(filename);
+    return;
+  }
+  auto preadReader = [&](char* dst, uint64_t fileOffset,
+                         size_t numBytes) -> bool {
+    return file.read(dst, numBytes, static_cast<off_t>(fileOffset)) ==
+           static_cast<ssize_t>(numBytes);
+  };
+  // One transient resident hit: pin, then release.
+  auto hit = [&](const FrameKey& key) {
+    auto pool = mapping.framePool();
+    ASSERT_NE(pool, nullptr);
+    ASSERT_NE(pool->tryPin(key), nullptr);
+    pool->unpin(key);
+  };
+
+  // Repeated hits pin the page hot; forced evictions then skip it.
+  mapping.enableFramePool(4, 5);
+  auto pool = mapping.framePool();
+  ASSERT_NE(pool, nullptr);
+  EXPECT_EQ(pool->maxHotPinned(), 2);
+  for (size_t page = 0; page < 4; ++page) {
+    ASSERT_TRUE(mapping.fillFrameFromFile(page, preadReader));
+  }
+  const FrameKey hot{5, 0};
+  EXPECT_FALSE(pool->isHotPinned(hot));
+  for (uint32_t i = 0; i < VocabFramePool::kHotPinThreshold - 1; ++i) {
+    hit(hot);
+    EXPECT_FALSE(pool->isHotPinned(hot));
+  }
+  hit(hot);
+  EXPECT_TRUE(pool->isHotPinned(hot));
+  EXPECT_EQ(pool->hotPinnedCount(), 1);
+  for (size_t page = 4; page < 7; ++page) {
+    ASSERT_TRUE(mapping.fillFrameFromFile(page, preadReader));
+  }
+  char byte = 'X';
+  EXPECT_TRUE(pool->copyPinned(hot, 0, 1, &byte));
+  EXPECT_EQ(byte, contents[0]);
+  EXPECT_NE(pool->tryPin(hot), nullptr);
+  pool->unpin(hot);
+  EXPECT_EQ(pool->pinnedCount(), 0);
+
+  // A pool whose only frame is hot refuses allocation instead of evicting.
+  mapping.enableFramePool(1, 6);
+  ASSERT_TRUE(mapping.fillFrameFromFile(0, preadReader));
+  pool = mapping.framePool();
+  ASSERT_NE(pool, nullptr);
+  const FrameKey only{6, 0};
+  for (uint32_t i = 0; i < VocabFramePool::kHotPinThreshold; ++i) {
+    hit(only);
+  }
+  EXPECT_TRUE(pool->isHotPinned(only));
+  EXPECT_FALSE(mapping.fillFrameFromFile(1, preadReader));
+  auto [unavailable, installed] = pool->allocate(FrameKey{6, 1});
+  EXPECT_EQ(unavailable, nullptr);
+  EXPECT_FALSE(installed);
+  // Explicit release keeps the bytes but makes the page evictable again.
+  pool->unpinHot(only);
+  EXPECT_FALSE(pool->isHotPinned(only));
+  EXPECT_EQ(pool->hotPinnedCount(), 0);
+  EXPECT_TRUE(pool->copyPinned(only, 0, 0, nullptr));
+  EXPECT_TRUE(mapping.fillFrameFromFile(1, preadReader));
+  EXPECT_EQ(pool->tryPin(only), nullptr);
+  // Releasing a missing or cold key is a no-op.
+  pool->unpinHot(only);
+  pool->unpinHot(FrameKey{6, 42});
+
+  // The hot set is bounded: pinning beyond the cap demotes the coldest page.
+  mapping.enableFramePool(4, 7);
+  pool = mapping.framePool();
+  ASSERT_NE(pool, nullptr);
+  for (size_t page = 0; page < 4; ++page) {
+    ASSERT_TRUE(mapping.fillFrameFromFile(page, preadReader));
+  }
+  const FrameKey cold{7, 0}, warm{7, 1}, fresh{7, 2};
+  for (uint32_t i = 0; i < VocabFramePool::kHotPinThreshold; ++i) {
+    hit(cold);
+  }
+  for (uint32_t i = 0; i < VocabFramePool::kHotPinThreshold + 2; ++i) {
+    hit(warm);
+  }
+  EXPECT_TRUE(pool->isHotPinned(cold));
+  EXPECT_TRUE(pool->isHotPinned(warm));
+  for (uint32_t i = 0; i < VocabFramePool::kHotPinThreshold; ++i) {
+    hit(fresh);
+  }
+  // Three hot pages exceed the bound of two: `cold` (fewer hits than `warm`,
+  // older than `fresh` at equal hits) is demoted.
+  EXPECT_EQ(pool->hotPinnedCount(), 2);
+  EXPECT_FALSE(pool->isHotPinned(cold));
+  EXPECT_TRUE(pool->isHotPinned(warm));
+  EXPECT_TRUE(pool->isHotPinned(fresh));
+  // A demoted page must re-earn its pin: partial hits do not re-pin it, and
+  // re-pinning past the bound demotes the now-coldest page (`fresh`).
+  for (uint32_t i = 0; i < VocabFramePool::kHotPinThreshold - 1; ++i) {
+    hit(cold);
+  }
+  EXPECT_FALSE(pool->isHotPinned(cold));
+  hit(cold);
+  EXPECT_TRUE(pool->isHotPinned(cold));
+  EXPECT_EQ(pool->hotPinnedCount(), 2);
+  EXPECT_FALSE(pool->isHotPinned(fresh));
+  EXPECT_TRUE(pool->isHotPinned(warm));
+
+  // Cold pages never accumulate pins: hits below the threshold are forgotten
+  // when the page is replaced.
+  mapping.enableFramePool(2, 9);
+  pool = mapping.framePool();
+  ASSERT_NE(pool, nullptr);
+  ASSERT_TRUE(mapping.fillFrameFromFile(0, preadReader));
+  ASSERT_TRUE(mapping.fillFrameFromFile(1, preadReader));
+  const FrameKey lukewarm{9, 0};
+  for (uint32_t i = 0; i < VocabFramePool::kHotPinThreshold - 1; ++i) {
+    hit(lukewarm);
+  }
+  EXPECT_FALSE(pool->isHotPinned(lukewarm));
+  // Pressure evicts the twice-touched page without ever pinning it ...
+  ASSERT_TRUE(mapping.fillFrameFromFile(2, preadReader));
+  EXPECT_EQ(pool->tryPin(lukewarm), nullptr);
+  EXPECT_EQ(pool->hotPinnedCount(), 0);
+  // ... and after a reload a single touch still does not pin it.
+  ASSERT_TRUE(mapping.fillFrameFromFile(0, preadReader));
+  hit(lukewarm);
+  EXPECT_FALSE(pool->isHotPinned(lukewarm));
+  EXPECT_EQ(pool->hotPinnedCount(), 0);
+  EXPECT_EQ(pool->pinnedCount(), 0);
+  ad_utility::deleteFile(filename);
+}
+
+// _____________________________________________________________________________
 // Eviction race (fault injection): concurrent fills, pins, and pooled reads
 // never produce a use-after-unpin; every served read is byte-identical.
 TEST(ResidentFileMapping, pooledReadsStayByteIdenticalUnderEvictionRace) {

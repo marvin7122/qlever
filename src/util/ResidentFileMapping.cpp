@@ -42,7 +42,48 @@ VocabFramePool::Frame* VocabFramePool::tryPin(const FrameKey& key) {
   }
   frame->pinCount += 1;
   frame->referenceBit = true;
+  noteResidentHitLocked(*frame);
   return frame;
+}
+
+// _____________________________________________________________________________
+void VocabFramePool::noteResidentHitLocked(Frame& frame) {
+  frame.hitCount += 1;
+  if (frame.hitCount < kHotPinThreshold || frame.hotPinned) {
+    return;
+  }
+  frame.hotPinned = true;
+  frame.hotSeq = hotSeqCounter_++;
+  enforceHotCapLocked();
+}
+
+// _____________________________________________________________________________
+// Demote coldest-first: the hot frame with the fewest resident hits goes
+// first, with the oldest pin breaking ties. Demotion resets the hit count,
+// so a demoted page must re-earn its pin from zero instead of flapping.
+void VocabFramePool::enforceHotCapLocked() {
+  const size_t maxHot = maxHotPinned();
+  while (true) {
+    size_t hot = 0;
+    size_t victim = frames_.size();
+    for (size_t i = 0; i < frames_.size(); ++i) {
+      if (!frames_[i].hotPinned) {
+        continue;
+      }
+      ++hot;
+      if (victim == frames_.size() ||
+          frames_[i].hitCount < frames_[victim].hitCount ||
+          (frames_[i].hitCount == frames_[victim].hitCount &&
+           frames_[i].hotSeq < frames_[victim].hotSeq)) {
+        victim = i;
+      }
+    }
+    if (hot <= maxHot) {
+      return;
+    }
+    frames_[victim].hotPinned = false;
+    frames_[victim].hitCount = 0;
+  }
 }
 
 // _____________________________________________________________________________
@@ -54,15 +95,16 @@ size_t VocabFramePool::clockVictimLocked() {
       return i;
     }
   }
-  // CLOCK over unpinned frames only: clear set reference bits for a second
-  // chance, evict the first unpinned frame whose bit is already clear.
-  // Loading frames are always pinned, so they are never victims.
+  // CLOCK over unpinned, non-hot frames only: clear set reference bits for
+  // a second chance, evict the first unpinned frame whose bit is already
+  // clear. Loading frames are always pinned, so they are never victims, and
+  // hot-pinned frames are exempt until `unpinHot` or cap demotion.
   for (size_t revolution = 0; revolution < 2; ++revolution) {
     for (size_t examined = 0; examined < n; ++examined) {
       size_t i = hand_;
       hand_ = (hand_ + 1) % n;
       Frame& frame = frames_[i];
-      if (frame.pinCount > 0) {
+      if (frame.pinCount > 0 || frame.hotPinned) {
         continue;
       }
       if (frame.referenceBit) {
@@ -80,14 +122,19 @@ std::pair<VocabFramePool::Frame*, bool> VocabFramePool::allocate(
     const FrameKey& key) {
   std::lock_guard<std::mutex> lock{mutex_};
   if (Frame* hit = findLocked(key)) {
-    // Pin existing frames, but leave filling to the installing caller.
+    // Pin existing frames, but leave filling to the installing caller. Only
+    // resident hits count toward hot-pinning; concurrent observers of a
+    // loading frame must not heat it.
     hit->pinCount += 1;
     hit->referenceBit = true;
+    if (hit->state == FrameState::Resident) {
+      noteResidentHitLocked(*hit);
+    }
     return {hit, false};
   }
   const size_t victim = clockVictimLocked();
   if (victim == frames_.size()) {
-    // Every frame is pinned: never evict-while-pinned.
+    // Every frame is pinned or hot-pinned: never evict-while-pinned.
     return {nullptr, false};
   }
   Frame& frame = frames_[victim];
@@ -98,6 +145,10 @@ std::pair<VocabFramePool::Frame*, bool> VocabFramePool::allocate(
   frame.state = FrameState::Loading;
   frame.pinCount = 1;
   frame.referenceBit = true;
+  // A replacement starts cold: hits accumulated by the evicted page do not
+  // transfer to the new one.
+  frame.hitCount = 0;
+  frame.hotPinned = false;
   index_[key] = victim;
   return {&frame, true};
 }
@@ -129,6 +180,8 @@ void VocabFramePool::abandon(const FrameKey& key) {
     index_.erase(it);
     frame.state = FrameState::Free;
     frame.referenceBit = false;
+    frame.hitCount = 0;
+    frame.hotPinned = false;
   }
 }
 
@@ -145,7 +198,38 @@ void VocabFramePool::unpin(const FrameKey& key) {
     index_.erase(key);
     frame->state = FrameState::Free;
     frame->referenceBit = false;
+    frame->hitCount = 0;
+    frame->hotPinned = false;
   }
+}
+
+// _____________________________________________________________________________
+bool VocabFramePool::isHotPinned(const FrameKey& key) const {
+  std::lock_guard<std::mutex> lock{mutex_};
+  auto it = index_.find(key);
+  return it != index_.end() && frames_[it->second].hotPinned;
+}
+
+// _____________________________________________________________________________
+size_t VocabFramePool::hotPinnedCount() const {
+  std::lock_guard<std::mutex> lock{mutex_};
+  size_t count = 0;
+  for (const auto& frame : frames_) {
+    count += frame.hotPinned ? 1 : 0;
+  }
+  return count;
+}
+
+// _____________________________________________________________________________
+void VocabFramePool::unpinHot(const FrameKey& key) {
+  std::lock_guard<std::mutex> lock{mutex_};
+  auto it = index_.find(key);
+  if (it == index_.end()) {
+    return;
+  }
+  Frame& frame = frames_[it->second];
+  frame.hotPinned = false;
+  frame.hitCount = 0;
 }
 
 // _____________________________________________________________________________
