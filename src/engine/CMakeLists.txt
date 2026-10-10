@@ -21,9 +21,6 @@ add_library(engine
         PermutationSelector.cpp ConstructTripleGenerator.cpp
         ConstructTemplatePreprocessor.cpp ConstructTripleInstantiator.cpp ConstructBatchEvaluator.cpp
         ConstructDeduplicator.cpp MaterializedViewsQueryAnalysis.cpp
-if (QLEVER_ENABLE_EXPORT_V2)
-    target_sources(engine PRIVATE export_v2/ElasticExportScheduler.cpp export_v2/ExportEngineV2.cpp)
-endif ()
         MaterializedViewsPatternMatcher.cpp UpdateMetadata.cpp ExternalValues.cpp
         DistinctGraphs.cpp)
 if (QLEVER_ENABLE_EXPORT_V2)
