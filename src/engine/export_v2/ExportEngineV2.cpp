@@ -463,7 +463,23 @@ void ExportEngineV2::appendSerializedRows(
   // per window keeps segments per morsel in the single digits; the extra
   // coalescing copy is linear and far cheaper than that segment overhead.
   const char separator = format == RowFormat::Csv ? ',' : '\t';
+  // Exact reserve: every cell size is already materialized in `resolved`, so
+  // one cheap size pass replaces the repeated geometric reallocations (each
+  // copying the whole buffer) that an unreserved `out` pays on large windows.
+  size_t totalBytes = n * (numOutputCols);  // separators + newline per row
+  for (size_t outCol = 0; outCol < numOutputCols; ++outCol) {
+    if (resolved[outCol].empty()) {
+      continue;
+    }
+    for (size_t i = 0; i < n; ++i) {
+      const auto& cell = resolved[outCol][i];
+      if (cell.has_value()) {
+        totalBytes += cell.value().first.size();
+      }
+    }
+  }
   std::string out;
+  out.reserve(totalBytes);
   for (size_t i = 0; i < n; ++i) {
     for (size_t outCol = 0; outCol < numOutputCols; ++outCol) {
       if (outCol > 0) {
