@@ -581,3 +581,5 @@ ad_utility::BatchReadOptions VocabularyOnDisk::batchReadOptions(
   }
   return options;
 }
+
+}  // namespace ad_utility::vocabulary
