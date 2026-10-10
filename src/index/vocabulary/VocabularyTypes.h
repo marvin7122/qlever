@@ -828,7 +828,6 @@ struct EagerVocabLookupHandle : VocabLookupHandleBase {
 // used by all vocabularies that do not provide a specialized
 // implementation. They simply loop over the indices and issue the ordinary
 // single-word `operator[]` lookups one after another.
-namespace ad_utility::vocabulary {
 
 // Detection trait: whether `Vocab` provides a split-phase `beginLookup` member
 // callable with a `ql::span<const size_t>`. This is the C++17-compatible
