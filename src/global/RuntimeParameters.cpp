@@ -70,6 +70,7 @@ RuntimeParameters::RuntimeParameters() {
   add(disableCaching_);
   add(vocabAnonVmcacheEnabled_);
   add(vocabAnonVmcacheNumFrames_);
+  add(vocabAnonPinPages_);
   add(logLevel_);
   add(constructDeduplication_);
 

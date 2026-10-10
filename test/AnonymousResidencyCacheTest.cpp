@@ -31,8 +31,8 @@ std::vector<char> makeFileContent(size_t numBytes) {
     // Mix the page index into the stream so identical offsets in different
     // pages differ.
     content[i] = static_cast<char>(
-        (rng() >> ((i % 8) * 8)) ^ ((i / AnonymousResidencyCache::kPageSize) *
-                                    0x9E3779B9ull));
+        (rng() >> ((i % 8) * 8)) ^
+        ((i / AnonymousResidencyCache::kPageSize) * 0x9E3779B9ull));
   }
   return content;
 }
@@ -98,8 +98,8 @@ TEST(AnonymousResidencyCache, OutOfRangeAndEmptyReads) {
   EXPECT_FALSE(cache.fetch(tf.file_, 1).has_value());
   std::string buf(10, '\0');
   EXPECT_TRUE(cache.readThrough(tf.file_, 0, 0, buf.data()));
-  EXPECT_FALSE(cache.readThrough(tf.file_, 0, tf.content_.size() + 1,
-                                 buf.data()));
+  EXPECT_FALSE(
+      cache.readThrough(tf.file_, 0, tf.content_.size() + 1, buf.data()));
 }
 
 TEST(AnonymousResidencyCache, EvictionKeepsByteIdentity) {
@@ -182,6 +182,83 @@ TEST(AnonymousResidencyCache, ReadThroughSpansPages) {
   const size_t misses = cache.stats().misses_;
   EXPECT_TRUE(cache.readThrough(tf.file_, offset, n, buf.data()));
   EXPECT_EQ(cache.stats().misses_, misses);
+}
+
+TEST(AnonymousResidencyCache, PersistentPinsSurviveClockPressure) {
+  constexpr size_t kPage = AnonymousResidencyCache::kPageSize;
+  TestFile tf{"anonVmcacheHotSet.dat", 20 * kPage};
+  AnonymousResidencyCache cache{4, tf.content_.size()};
+  // Persistent hot set: hold guards for the first two pages, as
+  // `VocabularyOnDisk` does for `vocab-anon-pin-pages`.
+  std::vector<AnonymousResidencyCache::PinnedFrame> hotSet;
+  for (uint64_t page = 0; page < 2; ++page) {
+    auto pin = cache.fetch(tf.file_, page);
+    ASSERT_TRUE(pin.has_value()) << "page " << page;
+    hotSet.push_back(std::move(*pin));
+  }
+  // Streaming pressure over the remaining pages with only two free frames.
+  for (int round = 0; round < 3; ++round) {
+    for (uint64_t page = 2; page < 20; ++page) {
+      auto tmp = cache.fetch(tf.file_, page);
+      ASSERT_TRUE(tmp.has_value()) << "page " << page;
+    }
+  }
+  EXPECT_GE(cache.stats().evictions_, 1);
+  // The hot set was never evicted: the held guards still serve identical
+  // bytes, and re-fetching a hot page is a hit (no additional miss) that
+  // counts as a pinned hit.
+  for (uint64_t page = 0; page < 2; ++page) {
+    EXPECT_EQ(std::memcmp(hotSet[page].data(),
+                          tf.content_.data() + page * kPage, kPage),
+              0)
+        << "page " << page;
+  }
+  const size_t missesBefore = cache.stats().misses_;
+  const size_t pinnedBefore = cache.stats().pinned_;
+  for (uint64_t page = 0; page < 2; ++page) {
+    auto pin = cache.fetch(tf.file_, page);
+    ASSERT_TRUE(pin.has_value()) << "page " << page;
+  }
+  EXPECT_EQ(cache.stats().misses_, missesBefore);
+  EXPECT_EQ(cache.stats().pinned_, pinnedBefore + 2);
+}
+
+TEST(AnonymousResidencyCache, PinCountHonored) {
+  constexpr size_t kPage = AnonymousResidencyCache::kPageSize;
+  TestFile tf{"anonVmcachePinCount.dat", 4 * kPage};
+  AnonymousResidencyCache cache{2, tf.content_.size()};
+  // Two held pins consume both frames of the 2-frame cache ...
+  std::vector<AnonymousResidencyCache::PinnedFrame> pins;
+  for (uint64_t page = 0; page < 2; ++page) {
+    auto pin = cache.fetch(tf.file_, page);
+    ASSERT_TRUE(pin.has_value()) << "page " << page;
+    pins.push_back(std::move(*pin));
+  }
+  EXPECT_EQ(cache.residentCount(), 2);
+  // ... so a third page has no evictable frame left and falls back.
+  EXPECT_FALSE(cache.fetch(tf.file_, 2).has_value());
+  // Releasing one pin frees exactly one frame for the next page.
+  pins.pop_back();
+  auto pin = cache.fetch(tf.file_, 2);
+  ASSERT_TRUE(pin.has_value());
+  EXPECT_EQ(std::memcmp(pin->data(), tf.content_.data() + 2 * kPage, kPage), 0);
+}
+
+TEST(AnonymousResidencyCache, StatsCountPinnedHits) {
+  constexpr size_t kPage = AnonymousResidencyCache::kPageSize;
+  TestFile tf{"anonVmcachePinnedStats.dat", 2 * kPage};
+  AnonymousResidencyCache cache{2, tf.content_.size()};
+  // Plain sequential use never overlaps guards: a hit, but no pinned hit.
+  ASSERT_TRUE(cache.fetch(tf.file_, 0).has_value());
+  ASSERT_TRUE(cache.fetch(tf.file_, 0).has_value());
+  EXPECT_EQ(cache.stats().hits_, 1);
+  EXPECT_EQ(cache.stats().pinned_, 0);
+  // With a persistent guard held, re-fetching the same page is a pinned hit.
+  auto pin = cache.fetch(tf.file_, 1);
+  ASSERT_TRUE(pin.has_value());
+  ASSERT_TRUE(cache.fetch(tf.file_, 1).has_value());
+  EXPECT_EQ(cache.stats().hits_, 2);
+  EXPECT_EQ(cache.stats().pinned_, 1);
 }
 
 TEST(AnonymousResidencyCache, ConcurrentFetchesStayIdentical) {

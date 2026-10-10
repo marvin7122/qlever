@@ -79,6 +79,11 @@ class AnonymousResidencyCache {
     size_t misses_ = 0;
     size_t evictions_ = 0;
     size_t fallbacks_ = 0;
+    // Hits on frames that were already pinned (pin count > 0) when the
+    // fetch arrived. With a persistent hot set held by the owner (see
+    // `VocabularyOnDisk`), hot pages hit here; without one, only transient
+    // concurrent pins can produce such hits.
+    size_t pinned_ = 0;
   };
 
   // Reserve `numFrames` anonymous frames for a file of `fileSize` bytes.
@@ -139,6 +144,7 @@ class AnonymousResidencyCache {
   mutable std::atomic<size_t> misses_{0};
   mutable std::atomic<size_t> evictions_{0};
   mutable std::atomic<size_t> fallbacks_{0};
+  mutable std::atomic<size_t> pinned_{0};
 };
 
 }  // namespace ad_utility

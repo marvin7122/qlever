@@ -243,6 +243,13 @@ struct RuntimeParameters {
   // files each get their own cache of this size). Applied when the vocabulary
   // is opened; 0 disables the caches even when the flag above is set.
   SizeT vocabAnonVmcacheNumFrames_{4096, "vocab-anon-vmcache-num-frames"};
+  // Number of leading pages of each vocabulary file (words and offsets files
+  // each get their own hot set of this size) to pin persistently at `open()`.
+  // The guards are held in `VocabularyOnDisk` for the lifetime of the
+  // vocabulary, so the CLOCK replacement can never evict them. Default `0`:
+  // current behavior, no persistent pins. Clamped to the file's page count
+  // and the cache capacity; ignored unless the cache itself is enabled.
+  SizeT vocabAnonPinPages_{0, "vocab-anon-pin-pages"};
 
   // Configure how many blocks are compressed and written concurrently per
   // permutation. The blocks are compressed and written on the global thread

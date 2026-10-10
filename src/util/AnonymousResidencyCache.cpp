@@ -146,6 +146,11 @@ AnonymousResidencyCache::fetch(const File& file, uint64_t page) {
         fallbacks_.fetch_add(1, std::memory_order_relaxed);
         return std::nullopt;
       }
+      if (frame.pinCount_ > 0) {
+        // A guard (persistent hot-set pin or transient concurrent fetch)
+        // already holds this frame: a pinned hit.
+        pinned_.fetch_add(1, std::memory_order_relaxed);
+      }
       frame.pinCount_ += 1;
       frame.referenceBit_ = true;
       hits_.fetch_add(1, std::memory_order_relaxed);
@@ -224,15 +229,13 @@ bool AnonymousResidencyCache::readThrough(const File& file, uint64_t offset,
   for (uint64_t cur = offset; cur < end;) {
     const uint64_t page = cur / kPageSize;
     const size_t offsetInPage = static_cast<size_t>(cur % kPageSize);
-    const size_t bytesInPage =
-        static_cast<size_t>(std::min<uint64_t>(kPageSize - offsetInPage,
-                                               end - cur));
+    const size_t bytesInPage = static_cast<size_t>(
+        std::min<uint64_t>(kPageSize - offsetInPage, end - cur));
     if (auto pin = fetch(file, page)) {
       std::memcpy(target + written, pin->data() + offsetInPage, bytesInPage);
     } else {
       // Fallback: direct `pread`, same bytes the uncached path would read.
-      if (file.read(target + written, bytesInPage,
-                    static_cast<off_t>(cur)) !=
+      if (file.read(target + written, bytesInPage, static_cast<off_t>(cur)) !=
           static_cast<ssize_t>(bytesInPage)) {
         return false;
       }
@@ -260,7 +263,8 @@ AnonymousResidencyCache::Stats AnonymousResidencyCache::stats() const {
   return Stats{hits_.load(std::memory_order_relaxed),
                misses_.load(std::memory_order_relaxed),
                evictions_.load(std::memory_order_relaxed),
-               fallbacks_.load(std::memory_order_relaxed)};
+               fallbacks_.load(std::memory_order_relaxed),
+               pinned_.load(std::memory_order_relaxed)};
 }
 
 }  // namespace ad_utility

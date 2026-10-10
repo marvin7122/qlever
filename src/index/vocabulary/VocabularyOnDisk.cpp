@@ -24,8 +24,7 @@ using OffsetAndSize = VocabularyOnDisk::OffsetAndSize;
 // ____________________________________________________________________________
 bool VocabularyOnDisk::anonCacheActive() const {
   return wordsAnonCache_ != nullptr && offsetsAnonCache_ != nullptr &&
-         getRuntimeParameter<
-             &RuntimeParameters::vocabAnonVmcacheEnabled_>();
+         getRuntimeParameter<&RuntimeParameters::vocabAnonVmcacheEnabled_>();
 }
 
 // ____________________________________________________________________________
@@ -36,10 +35,10 @@ OffsetAndSize VocabularyOnDisk::getOffsetAndSize(uint64_t i) const {
   std::array<Offset, 2> offsets{};
   // Assert no unexpected padding.
   static_assert(sizeof(offsets) == sizeof(Offset) * 2);
-  if (anonCacheActive() && offsetsAnonCache_->readThrough(
-                               offsetsFile_, i * sizeof(Offset),
-                               sizeof(offsets),
-                               reinterpret_cast<char*>(offsets.data()))) {
+  if (anonCacheActive() &&
+      offsetsAnonCache_->readThrough(offsetsFile_, i * sizeof(Offset),
+                                     sizeof(offsets),
+                                     reinterpret_cast<char*>(offsets.data()))) {
     return {offsets[0], offsets[1] - offsets[0]};
   }
   offsetsFile_.read(offsets.data(), sizeof(offsets),
@@ -190,8 +189,7 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     for (size_t k = 0; k < numIndices; ++k) {
       AD_CONTRACT_CHECK(indices[k] < size());
       if (!offsetsAnonCache_->readThrough(
-              offsetsFile_, indices[k] * sizeof(uint64_t),
-              sizeof(OffsetPair),
+              offsetsFile_, indices[k] * sizeof(uint64_t), sizeof(OffsetPair),
               reinterpret_cast<char*>(&offsetPairs[k]))) {
         sizes.push_back(sizeof(OffsetPair));
         fileOffsets.push_back(indices[k] * sizeof(uint64_t));
@@ -341,19 +339,58 @@ void VocabularyOnDisk::open(const std::string& filename) {
   file_.open(filename, "r");
   offsetsFile_.open(filename + offsetSuffix_, "r");
 
+  // Release any hot-set guards from a previous `open()` before the caches
+  // below are replaced: a live guard must never outlive its cache.
+  wordsAnonHotPages_.clear();
+  offsetsAnonHotPages_.clear();
+
   // Create the anonymous residency caches when enabled (applied at `open()`:
   // enabling the flag later requires reopening the vocabulary). A zero frame
   // budget disables the caches even when the flag is set.
   if (getRuntimeParameter<&RuntimeParameters::vocabAnonVmcacheEnabled_>()) {
-    const size_t numFrames = getRuntimeParameter<
-        &RuntimeParameters::vocabAnonVmcacheNumFrames_>();
+    const size_t numFrames =
+        getRuntimeParameter<&RuntimeParameters::vocabAnonVmcacheNumFrames_>();
     if (numFrames > 0) {
       wordsAnonCache_ = std::make_unique<ad_utility::AnonymousResidencyCache>(
           numFrames, static_cast<uint64_t>(file_.sizeOfFile()));
-      offsetsAnonCache_ =
-          std::make_unique<ad_utility::AnonymousResidencyCache>(
-              numFrames, static_cast<uint64_t>(offsetsFile_.sizeOfFile()));
+      offsetsAnonCache_ = std::make_unique<ad_utility::AnonymousResidencyCache>(
+          numFrames, static_cast<uint64_t>(offsetsFile_.sizeOfFile()));
     }
+  }
+
+  // Populate the persistent hot sets when the caches are live: pin the first
+  // `vocab-anon-pin-pages` pages of each file. Each held guard keeps its
+  // frame unevictable for the lifetime of the vocabulary, so the CLOCK pool
+  // cannot lose these hot blocks under streaming pressure. `0` (the default)
+  // keeps the current behavior. The pin count is clamped to the file's page
+  // count and the cache capacity (pinning more than the capacity would fail
+  // once every frame is pinned).
+  if (wordsAnonCache_ != nullptr && offsetsAnonCache_ != nullptr) {
+    const size_t numPinPages =
+        getRuntimeParameter<&RuntimeParameters::vocabAnonPinPages_>();
+    auto pinLeadingPages = [numPinPages](const auto& cache, auto& file,
+                                         auto& hotPages) {
+      hotPages.clear();
+      if (numPinPages == 0 || cache == nullptr) {
+        return;
+      }
+      const uint64_t fileSize = static_cast<uint64_t>(file.sizeOfFile());
+      const uint64_t numPages =
+          (fileSize + ad_utility::AnonymousResidencyCache::kPageSize - 1) /
+          ad_utility::AnonymousResidencyCache::kPageSize;
+      const size_t numPins = std::min<size_t>(
+          {numPinPages, static_cast<size_t>(numPages), cache->capacity()});
+      hotPages.reserve(numPins);
+      for (uint64_t page = 0; page < numPins; ++page) {
+        if (auto pin = cache->fetch(file, page)) {
+          hotPages.push_back(std::move(*pin));
+        } else {
+          break;
+        }
+      }
+    };
+    pinLeadingPages(wordsAnonCache_, file_, wordsAnonHotPages_);
+    pinLeadingPages(offsetsAnonCache_, offsetsFile_, offsetsAnonHotPages_);
   }
 
   // Read the offset count from the `MmapVectorMetaData` trailer, which is

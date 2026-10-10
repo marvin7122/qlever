@@ -55,6 +55,17 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   mutable std::unique_ptr<ad_utility::AnonymousResidencyCache>
       offsetsAnonCache_;
 
+  // Persistent hot sets: one `PinnedFrame` guard per pinned leading page of
+  // each file, populated at `open()` from `vocab-anon-pin-pages` (empty when
+  // pinning is disabled). While a guard is alive its frame is unevictable, so
+  // the CLOCK pool cannot lose these hot blocks under streaming pressure.
+  // Declared after the caches so the guards are destroyed (unpinned) before
+  // the caches themselves.
+  mutable std::vector<ad_utility::AnonymousResidencyCache::PinnedFrame>
+      wordsAnonHotPages_;
+  mutable std::vector<ad_utility::AnonymousResidencyCache::PinnedFrame>
+      offsetsAnonHotPages_;
+
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
   static constexpr std::string_view offsetSuffix_ = ".offsets";
