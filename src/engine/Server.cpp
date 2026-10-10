@@ -1116,20 +1116,6 @@ cppcoro::generator<qlever::export_v2::ScatterGatherChunk> asScatterGatherBody(
 }
 }  // namespace
 
-// _____________________________________________________________________________
-namespace {
-// Own `range` in the coroutine frame (parameter, not a `[&]` capture). Used to
-// attach `runStreamAsync` *outside* `ExportEngineV2::computeResultChunks`: a
-// producer thread nested in that coroutine failed to compile (91a9a7845).
-template <typename Range>
-cppcoro::generator<qlever::export_v2::ScatterGatherChunk> asScatterGatherBody(
-    Range range) {
-  for (auto& chunk : range) {
-    co_yield std::move(chunk);
-  }
-}
-}  // namespace
-
 CPP_template_def(typename RequestT, typename SendT)(
     requires ad_utility::httpUtils::HttpRequest<RequestT>)
     Awaitable<void> Server::sendStreamableResponse(
