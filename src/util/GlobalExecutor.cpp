@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <boost/asio/thread_pool.hpp>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -25,18 +26,19 @@ namespace {
 // The configuration of the global thread pool. All its members are protected by
 // the `mutex_`.
 //
-// NOTE: Two atomics would not do instead of the mutex, because the creation of
-// the pool has to mark the configuration as final and read the number of
-// threads in one step. Otherwise a concurrent `setGlobalExecutorNumThreads`
-// could pass its check and change the number after the pool has read it, and
-// `globalExecutorNumThreads()` would then report a number that the pool does
-// not have.
+// NOTE: Two atomics would not do instead of the mutex, because reading the
+// number of threads, constructing the pool, and finalizing the configuration
+// only after successful construction must happen under the same lock. Setters
+// and readers are serialized through construction, so they cannot change or
+// report a number that differs from the pool's size. If construction throws,
+// the configuration remains changeable and static initialization can be
+// retried.
 struct GlobalExecutorConfig {
   std::mutex mutex_;
   // The number of threads that the pool has or will have.
   size_t numThreads_ = std::max<size_t>(1, std::thread::hardware_concurrency());
-  // Set as soon as the pool has been created, after which the `numThreads_` can
-  // no longer be changed.
+  // Set only after the pool has been successfully constructed, after which
+  // `numThreads_` can no longer be changed.
   bool poolWasCreated_ = false;
 };
 
@@ -82,16 +84,18 @@ size_t globalExecutorNumThreads() {
 
 // _____________________________________________________________________________
 ql::any_io_executor globalExecutor() {
-  // NOTE: The initialization of a function-local static is thread-safe, so the
-  // lambda (and with it the marking of the configuration as final) runs exactly
-  // once.
-  static boost::asio::thread_pool pool{[]() {
+  // NOTE: Function-local static initialization is thread-safe and is retried
+  // after an exception. Keep the configuration lock through construction and
+  // finalize it only after success, so a failed attempt allows reconfiguration.
+  static auto pool = []() {
     auto& conf = config();
     std::lock_guard lock{conf.mutex_};
+    auto ownedPool =
+        std::make_unique<boost::asio::thread_pool>(conf.numThreads_);
     conf.poolWasCreated_ = true;
-    return conf.numThreads_;
-  }()};
-  return pool.get_executor();
+    return ownedPool;
+  }();
+  return pool->get_executor();
 }
 
 }  // namespace ad_utility

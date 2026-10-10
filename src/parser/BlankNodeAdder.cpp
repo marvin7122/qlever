@@ -24,7 +24,9 @@ Id BlankNodeAdder::getBlankNodeIndexForLabelWithoutPrefix(
     std::string_view label) {
   // NOTE: The `map_` is a `std::unordered_map` (see `HashMapWithMemoryLimit`),
   // which has no heterogeneous lookup, so we have to materialize the `label`.
-  auto [it, isNew] = map_.try_emplace(std::string{label}, Id::makeUndefined());
+  Label ownedLabel{label, map_.get_allocator().template as<char>()};
+  auto [it, isNew] =
+      map_.try_emplace(std::move(ownedLabel), Id::makeUndefined());
   auto& id = it->second;
   if (isNew) {
     id = Id::makeFromBlankNodeIndex(

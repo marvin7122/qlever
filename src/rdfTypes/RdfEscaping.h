@@ -5,8 +5,10 @@
 #ifndef QLEVER_RDFESCAPING_H
 #define QLEVER_RDFESCAPING_H
 
+#include <cstddef>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "global/TypedIndex.h"
@@ -162,9 +164,17 @@ std::string escapeForXml(std::string input);
 // format, e.g. "Hello \' World" -> "Hello' World".
 void unescapeLiteral(std::string_view input, std::string& res);
 
+// Return the byte size of the decoded content using the same decoding and
+// validation as `unescapeLiteral`, without storing the entire decoded content.
+size_t unescapedLiteralSize(std::string_view input);
+
 // Like `unescapeLiteral`, but the `input` contains the surrounding quotation
 // marks (either one or three `"` or `'`), which are not appended to `res`.
 void unescapeLiteralWithQuotesRemoved(std::string_view input, std::string& res);
+
+// Like `unescapedLiteralSize`, but remove the surrounding quotation marks as in
+// `unescapeLiteralWithQuotesRemoved`.
+size_t unescapedLiteralSizeWithQuotesRemoved(std::string_view input);
 
 }  // namespace RdfEscaping
 

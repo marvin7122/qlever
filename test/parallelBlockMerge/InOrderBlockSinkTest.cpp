@@ -17,6 +17,7 @@
 
 #include <atomic>
 #include <boost/asio/as_tuple.hpp>
+#include <boost/asio/bind_executor.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/experimental/concurrent_channel.hpp>
@@ -265,6 +266,134 @@ net::awaitable<void> getOneBlockExpectingThrow(ControlledSink& sink,
   latch.try_send(boost::system::error_code{});
 }
 }  // namespace
+
+// _____________________________________________________________________________
+TEST(InOrderBlockSink, moveOnlyCallbacksUseFallbackExecutorOutsideStrand) {
+  net::io_context ioContext;
+  std::optional<Strand> strand;
+  Sink sink{ioContext.get_executor(), 1, [&](const Strand& sinkStrand) {
+              strand = sinkStrand;
+              return InMemoryBlockStorage<Block>{sinkStrand, 2};
+            }};
+  ASSERT_TRUE(strand.has_value());
+
+  bool pushed = false;
+  sink.asyncPush(
+      0, Block{3, 4},
+      [&, marker = std::make_unique<int>(42)](std::exception_ptr exception,
+                                              bool wasStored) {
+        EXPECT_EQ(*marker, 42);
+        EXPECT_TRUE(ioContext.get_executor().running_in_this_thread());
+        EXPECT_FALSE(strand->running_in_this_thread());
+        EXPECT_EQ(exception, nullptr);
+        EXPECT_TRUE(wasStored);
+        pushed = true;
+      });
+  EXPECT_FALSE(pushed);
+  ioContext.run();
+  EXPECT_TRUE(pushed);
+
+  ioContext.restart();
+  bool received = false;
+  sink.asyncGetNextBlock(
+      [&, expected = std::make_unique<Block>(Block{3, 4})](
+          std::exception_ptr exception, std::optional<Block> block) {
+        EXPECT_TRUE(ioContext.get_executor().running_in_this_thread());
+        EXPECT_FALSE(strand->running_in_this_thread());
+        EXPECT_EQ(exception, nullptr);
+        EXPECT_THAT(block, ::testing::Optional(*expected));
+        received = true;
+      });
+  EXPECT_FALSE(received);
+  ioContext.run();
+  EXPECT_TRUE(received);
+}
+
+// _____________________________________________________________________________
+TEST(InOrderBlockSink, moveOnlyCallbacksHonorAssociatedExecutorOutsideStrand) {
+  net::io_context sinkContext;
+  net::io_context completionContext;
+  std::optional<Strand> strand;
+  Sink sink{sinkContext.get_executor(), 1, [&](const Strand& sinkStrand) {
+              strand = sinkStrand;
+              return InMemoryBlockStorage<Block>{sinkStrand, 2};
+            }};
+  ASSERT_TRUE(strand.has_value());
+
+  bool pushed = false;
+  sink.asyncPush(
+      0, Block{7, 8},
+      net::bind_executor(
+          completionContext.get_executor(),
+          [&, marker = std::make_unique<int>(42)](std::exception_ptr exception,
+                                                  bool wasStored) {
+            EXPECT_EQ(*marker, 42);
+            EXPECT_TRUE(
+                completionContext.get_executor().running_in_this_thread());
+            EXPECT_FALSE(sinkContext.get_executor().running_in_this_thread());
+            EXPECT_FALSE(strand->running_in_this_thread());
+            EXPECT_EQ(exception, nullptr);
+            EXPECT_TRUE(wasStored);
+            pushed = true;
+          }));
+  EXPECT_FALSE(pushed);
+  sinkContext.run();
+  EXPECT_FALSE(pushed);
+  completionContext.run();
+  EXPECT_TRUE(pushed);
+
+  sinkContext.restart();
+  completionContext.restart();
+  bool received = false;
+  sink.asyncGetNextBlock(net::bind_executor(
+      completionContext.get_executor(),
+      [&, expected = std::make_unique<Block>(Block{7, 8})](
+          std::exception_ptr exception, std::optional<Block> block) {
+        EXPECT_TRUE(completionContext.get_executor().running_in_this_thread());
+        EXPECT_FALSE(sinkContext.get_executor().running_in_this_thread());
+        EXPECT_FALSE(strand->running_in_this_thread());
+        EXPECT_EQ(exception, nullptr);
+        EXPECT_THAT(block, ::testing::Optional(*expected));
+        received = true;
+      }));
+  EXPECT_FALSE(received);
+  sinkContext.run();
+  EXPECT_FALSE(received);
+  completionContext.run();
+  EXPECT_TRUE(received);
+
+  sinkContext.restart();
+  completionContext.restart();
+  sink.asyncPushException(
+      std::make_exception_ptr(std::runtime_error{"bound completion error"}),
+      net::detached);
+  sinkContext.run();
+  EXPECT_TRUE(sink.stopRequested());
+
+  sinkContext.restart();
+  bool receivedException = false;
+  sink.asyncGetNextBlock(net::bind_executor(
+      completionContext.get_executor(),
+      [&, expected = std::make_unique<std::string>("bound completion error")](
+          std::exception_ptr exception, std::optional<Block> block) {
+        EXPECT_TRUE(completionContext.get_executor().running_in_this_thread());
+        EXPECT_FALSE(sinkContext.get_executor().running_in_this_thread());
+        EXPECT_FALSE(strand->running_in_this_thread());
+        EXPECT_FALSE(block.has_value());
+        ASSERT_NE(exception, nullptr);
+        try {
+          std::rethrow_exception(exception);
+        } catch (const std::runtime_error& error) {
+          EXPECT_EQ(error.what(), *expected);
+          receivedException = true;
+        }
+      }));
+  EXPECT_FALSE(receivedException);
+  sinkContext.run();
+  EXPECT_FALSE(receivedException);
+  completionContext.run();
+  EXPECT_TRUE(receivedException);
+}
 
 // _____________________________________________________________________________
 ASYNC_TEST(InOrderBlockSink, inOrderAcrossChunks) {

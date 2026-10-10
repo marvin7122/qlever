@@ -7,9 +7,12 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 
+#include <algorithm>
 #include <charconv>
+#include <cstddef>
 #include <ctre-unicode.hpp>
 #include <string>
+#include <type_traits>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/shift.h"
@@ -47,6 +50,23 @@ std::string hexadecimalCharactersToUtf8Codepoint(std::string_view hex) {
   return res;
 }
 
+// Count the bytes emitted by the decoder without materializing its output.
+class LiteralSizeCounter {
+ public:
+  template <typename Iterator>
+  void append(Iterator begin, Iterator end) {
+    // A default-constructed string_view can have null begin/end iterators.
+    if (begin != end) {
+      size_ += static_cast<size_t>(end - begin);
+    }
+  }
+  void push_back(char) { ++size_; }
+  size_t size() const { return size_; }
+
+ private:
+  size_t size_ = 0;
+};
+
 /**
  * Internal helper function. Unescape all string escapes (e.g. "\\n"-> '\n') and
  * all numeric escapes (e.g. "\\u00E4" -> 'ä'). Using the template bools this
@@ -54,9 +74,9 @@ std::string hexadecimalCharactersToUtf8Codepoint(std::string_view hex) {
  * newlines and backslashes. It throws an exception if an escape sequence that
  * is not allowed is found.
  */
-template <bool acceptOnlyNumericEscapes, bool acceptOnlyBackslashAndNewline>
-void unescapeStringAndNumericEscapes(std::string_view input,
-                                     std::string& output) {
+template <bool acceptOnlyNumericEscapes, bool acceptOnlyBackslashAndNewline,
+          typename Output>
+void unescapeStringAndNumericEscapes(std::string_view input, Output& output) {
   static_assert(!(acceptOnlyNumericEscapes && acceptOnlyBackslashAndNewline));
   auto beginIterator = input.begin();
   auto endIterator = input.end();
@@ -97,8 +117,17 @@ void unescapeStringAndNumericEscapes(std::string_view input,
       // iterator directly: newer libc++ wraps the string-view iterator in
       // `__wrap_iter` and no longer converts it implicitly to `const char*`.
       // `length` is always positive here, so dereferencing is safe.
-      appendUtf8CodepointFromHexadecimalCharacters(
-          std::string_view(&*iterator, length), output);
+      const std::string_view hex{&*iterator, length};
+      if constexpr (std::is_same_v<Output, std::string>) {
+        appendUtf8CodepointFromHexadecimalCharacters(hex, output);
+      } else {
+        // Only one codepoint (at most four UTF-8 bytes) is materialized,
+        // sharing the existing validation and replacement of invalid scalar
+        // values.
+        std::string codepoint;
+        appendUtf8CodepointFromHexadecimalCharacters(hex, codepoint);
+        output.append(codepoint.begin(), codepoint.end());
+      }
     } else {
       (void)output;
       (void)endIterator;
@@ -164,6 +193,23 @@ void unescapeStringAndNumericEscapes(std::string_view input,
     beginIterator = nextBackslashIterator + numCharactersFromInput;
   }
 }
+
+// Remove and validate the supported single/triple quotation marks once for both
+// the decoding and size-counting wrappers.
+static std::string_view literalContentWithoutQuotes(std::string_view input) {
+  if (ql::starts_with(input, R"(""")") || ql::starts_with(input, R"(''')")) {
+    AD_CONTRACT_CHECK(ql::ends_with(input, input.substr(0, 3)));
+    input.remove_prefix(3);
+    input.remove_suffix(3);
+  } else {
+    AD_CONTRACT_CHECK(ql::starts_with(input, "\"") ||
+                      ql::starts_with(input, "'"));
+    AD_CONTRACT_CHECK(ql::ends_with(input, input[0]));
+    input.remove_prefix(1);
+    input.remove_suffix(1);
+  }
+  return input;
+}
 }  // namespace detail
 
 // _____________________________________________________________________________
@@ -185,21 +231,21 @@ void unescapeLiteral(std::string_view input, std::string& res) {
 }
 
 // ____________________________________________________________________________
+size_t unescapedLiteralSize(std::string_view input) {
+  detail::LiteralSizeCounter counter;
+  detail::unescapeStringAndNumericEscapes<false, false>(input, counter);
+  return counter.size();
+}
+
+// ____________________________________________________________________________
 void unescapeLiteralWithQuotesRemoved(std::string_view input,
                                       std::string& res) {
-  if (ql::starts_with(input, R"(""")") || ql::starts_with(input, R"(''')")) {
-    AD_CONTRACT_CHECK(ql::ends_with(input, input.substr(0, 3)));
-    input.remove_prefix(3);
-    input.remove_suffix(3);
-  } else {
-    AD_CONTRACT_CHECK(ql::starts_with(input, "\"") ||
-                      ql::starts_with(input, "'"));
-    AD_CONTRACT_CHECK(ql::ends_with(input, input[0]));
-    input.remove_prefix(1);
-    input.remove_suffix(1);
-  }
+  unescapeLiteral(detail::literalContentWithoutQuotes(input), res);
+}
 
-  unescapeLiteral(input, res);
+// ____________________________________________________________________________
+size_t unescapedLiteralSizeWithQuotesRemoved(std::string_view input) {
+  return unescapedLiteralSize(detail::literalContentWithoutQuotes(input));
 }
 
 // ________________________________________________________________________

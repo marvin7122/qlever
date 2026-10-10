@@ -30,7 +30,8 @@ struct QueueWord {
   // The word, its local ID, and the information whether it will be
   // externalized.
   TripleComponentWithIndex entry_;
-  size_t partialFileId_;  // from which partial vocabulary did this word come
+  // The partial vocabulary from which this word came.
+  size_t partialFileId_ = 0;
 
   [[nodiscard]] bool& isExternal() { return entry_.isExternal(); }
   // NOTE: The `const` overloads are needed because the first stage of the

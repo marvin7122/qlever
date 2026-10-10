@@ -127,6 +127,14 @@ TEST(BitUtils, alignUp) {
   static_assert(alignUp(1, 8) == 8);
   static_assert(alignUp(8, 8) == 8);
   static_assert(alignUp(9, 8) == 16);
+  constexpr auto max = std::numeric_limits<size_t>::max();
+  constexpr auto highestAlignment =
+      size_t{1} << (std::numeric_limits<size_t>::digits - 1);
+  static_assert(alignUp(max, 1) == max);
+  static_assert(alignUp(max - 7, 8) == max - 7);
+  static_assert(alignUp(highestAlignment, highestAlignment) ==
+                highestAlignment);
+  static_assert(alignUp(0, highestAlignment) == 0);
   // An alignment of one never pads.
   for (uint64_t offset : {uint64_t{0}, uint64_t{1}, uint64_t{12345}}) {
     EXPECT_EQ(alignUp(offset, 1), offset);
@@ -142,6 +150,31 @@ TEST(BitUtils, alignUp) {
                                    ::testing::HasSubstr("has_single_bit"));
     }
   }
+}
+
+// _____________________________________________________________________________
+TEST(BitUtils, alignUpOverflow) {
+  constexpr auto max = std::numeric_limits<size_t>::max();
+  for (int bit = 0; bit < std::numeric_limits<size_t>::digits; ++bit) {
+    const size_t alignment = size_t{1} << bit;
+    SCOPED_TRACE(alignment);
+    const auto finalAlignedOffset = max - (alignment - 1);
+    EXPECT_EQ(alignUp(finalAlignedOffset, alignment), finalAlignedOffset);
+    EXPECT_EQ(alignUp(0, alignment), 0);
+    EXPECT_EQ(alignUp(alignment, alignment), alignment);
+    if (alignment > 1) {
+      EXPECT_EQ(alignUp(finalAlignedOffset - 1, alignment), finalAlignedOffset);
+      AD_EXPECT_THROW_WITH_MESSAGE(
+          alignUp(finalAlignedOffset + 1, alignment),
+          ::testing::HasSubstr("aligned offset is not representable"));
+      AD_EXPECT_THROW_WITH_MESSAGE(
+          alignUp(max, alignment),
+          ::testing::HasSubstr("aligned offset is not representable"));
+    }
+  }
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      alignUp(max, 8),
+      ::testing::HasSubstr("aligned offset is not representable"));
 }
 
 }  // namespace

@@ -7,11 +7,15 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/cleanup/cleanup.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <future>
+#include <limits>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -19,6 +23,47 @@
 #include "util/Exception.h"
 #include "util/GTestHelpers.h"
 #include "util/GlobalExecutor.h"
+
+#if GTEST_HAS_DEATH_TEST
+// _____________________________________________________________________________
+TEST(GlobalExecutorDeathTest, failedConstructionAllowsReconfigurationAndRetry) {
+  const auto oldStyle = ::testing::FLAGS_gtest_death_test_style;
+  absl::Cleanup restoreStyle{
+      [oldStyle] { ::testing::FLAGS_gtest_death_test_style = oldStyle; }};
+  // Re-execute in a fresh process, independent of the singleton's state in the
+  // parent and the order in which the tests run.
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+  auto checkRetry = [] {
+    try {
+      ad_utility::setGlobalExecutorNumThreads(
+          std::numeric_limits<size_t>::max());
+      try {
+        // Boost rejects this size before creating any worker threads.
+        ad_utility::globalExecutor();
+        std::_Exit(1);
+      } catch (const std::out_of_range&) {
+      }
+      if (!ad_utility::trySetGlobalExecutorNumThreads(1)) {
+        std::_Exit(2);
+      }
+      auto executor = ad_utility::globalExecutor();
+      if (!static_cast<bool>(executor) ||
+          ad_utility::globalExecutorNumThreads() != 1) {
+        std::_Exit(3);
+      }
+      auto future = ad_utility::runFunctionOnExecutor(
+          executor, [] { return 42; }, ad_utility::net::use_future);
+      if (future.get() != 42) {
+        std::_Exit(4);
+      }
+    } catch (...) {
+      std::_Exit(5);
+    }
+    std::_Exit(0);
+  };
+  EXPECT_EXIT(checkRetry(), ::testing::ExitedWithCode(0), "");
+}
+#endif
 
 // NOTE: The global executor is a process-wide singleton, so none of the
 // following tests may assume that the pool doesn't exist yet. They are

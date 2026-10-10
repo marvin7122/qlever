@@ -9,6 +9,11 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <array>
+#include <cstdint>
+#include <limits>
+#include <stdexcept>
+
 #include "backports/span.h"
 #include "util/GTestHelpers.h"
 #include "util/MemorySize/MemorySize.h"
@@ -996,10 +1001,72 @@ TEST(ByteBufferWriteSerializer, serializeAtPositionOutOfRangeThrows) {
   // starts inside the data but reaches past its end.
   AD_EXPECT_THROW_WITH_MESSAGE(
       serializeAtPosition(writer, sizeof(uint32_t), char{0}),
-      ::testing::HasSubstr("position_ + numBytes <= data_.size()"));
+      ::testing::HasSubstr("numBytes <= data_.size() - position_"));
   AD_EXPECT_THROW_WITH_MESSAGE(
       serializeAtPosition(writer, 1, uint32_t{7}),
-      ::testing::HasSubstr("position_ + numBytes <= data_.size()"));
+      ::testing::HasSubstr("numBytes <= data_.size() - position_"));
+}
+
+namespace {
+struct RawBytesForOverwrite {
+  const char* data_;
+  size_t numBytes_;
+  AD_SERIALIZE_FRIEND_FUNCTION(RawBytesForOverwrite) {
+    serializer.serializeBytes(arg.data_, arg.numBytes_);
+  }
+};
+}  // namespace
+
+// _____________________________________________________________________________
+TEST(ByteBufferWriteSerializer, serializeAtPositionOverflowAndBoundaries) {
+  auto test = []<bool aligned>() {
+    serialization::ByteBufferWriteSerializerT<aligned> writer;
+    const std::array<char, 4> original{'a', 'b', 'c', 'd'};
+    writer.serializeBytes(original.data(), original.size());
+
+    auto expectFailure = [&](size_t position, const auto& element,
+                             const char* diagnostic) {
+      const auto previousData = writer.data();
+      const auto previousPosition = writer.getCurrentPosition();
+      AD_EXPECT_THROW_WITH_MESSAGE(
+          serializeAtPosition(writer, position, element),
+          ::testing::HasSubstr(diagnostic));
+      EXPECT_EQ(writer.data(), previousData);
+      EXPECT_EQ(writer.getCurrentPosition(), previousPosition);
+    };
+
+    const auto max = std::numeric_limits<size_t>::max();
+    expectFailure(max, char{'x'}, "position_ <= data_.size()");
+    expectFailure(max - 1, RawBytesForOverwrite{original.data(), 4},
+                  "position_ <= data_.size()");
+    const char byte = 'x';
+    // The count must be rejected before forming an impossible source range.
+    expectFailure(1, RawBytesForOverwrite{&byte, max},
+                  "numBytes <= data_.size() - position_");
+    expectFailure(writer.data().size() + 1, RawBytesForOverwrite{&byte, 0},
+                  "position_ <= data_.size()");
+
+    const auto previousData = writer.data();
+    const auto previousPosition = writer.getCurrentPosition();
+    EXPECT_NO_THROW(serializeAtPosition(writer, previousPosition,
+                                        RawBytesForOverwrite{&byte, 0}));
+    EXPECT_EQ(writer.data(), previousData);
+    EXPECT_EQ(writer.getCurrentPosition(), previousPosition);
+
+    // Both a full-buffer patch and one ending exactly at the boundary work.
+    const std::array<char, 4> replacement{'w', 'x', 'y', 'z'};
+    EXPECT_NO_THROW(serializeAtPosition(
+        writer, 0,
+        RawBytesForOverwrite{replacement.data(), replacement.size()}));
+    EXPECT_THAT(writer.data(), ::testing::ElementsAre('w', 'x', 'y', 'z'));
+    EXPECT_EQ(writer.getCurrentPosition(), previousPosition);
+    EXPECT_NO_THROW(serializeAtPosition(
+        writer, 1, RawBytesForOverwrite{original.data(), original.size() - 1}));
+    EXPECT_THAT(writer.data(), ::testing::ElementsAre('w', 'a', 'b', 'c'));
+    EXPECT_EQ(writer.getCurrentPosition(), previousPosition);
+  };
+  test.template operator()<false>();
+  test.template operator()<true>();
 }
 
 // _____________________________________________________________________________
@@ -1405,6 +1472,57 @@ TEST(BufferedWriteSerializer, SerializeAtPosition) {
     EXPECT_EQ(read, trailer) << "block size was " << blockSize;
     reader >> read;
     EXPECT_EQ(read, trailer) << "block size was " << blockSize;
+  }
+}
+
+// _____________________________________________________________________________
+namespace {
+struct WriteThenThrow {
+  uint32_t value_ = 42;
+  AD_SERIALIZE_FRIEND_FUNCTION(WriteThenThrow) {
+    serializer | arg.value_;
+    throw std::runtime_error{"serialization failed"};
+  }
+};
+
+template <typename Writer>
+void checkSerializeAtPositionRestoresAfterError(Writer& writer,
+                                                const std::string& filename) {
+  writer << uint32_t{0};
+  writer << uint32_t{12345};
+  const auto previousPosition = writer.getSerializationPosition();
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      serializeAtPosition(writer, 0, WriteThenThrow{}),
+      ::testing::StrEq("serialization failed"), std::runtime_error);
+  ASSERT_EQ(writer.getSerializationPosition(), previousPosition);
+  writer << uint32_t{67890};
+  writer.close();
+
+  FileReadSerializer reader{filename};
+  std::array<uint32_t, 3> values{};
+  reader >> values;
+  // The partial write remains, but neither the existing trailer nor the
+  // appended value is overwritten.
+  EXPECT_THAT(values, ::testing::ElementsAre(42, 12345, 67890));
+}
+}  // namespace
+
+// _____________________________________________________________________________
+TEST(FileWriteSerializer, SerializeAtPositionRestoresAfterError) {
+  const std::string filename = gtestCurrentTestName();
+  auto cleanup = absl::Cleanup{[&filename] { deleteFile(filename); }};
+  FileWriteSerializer writer{filename};
+  checkSerializeAtPositionRestoresAfterError(writer, filename);
+}
+
+// _____________________________________________________________________________
+TEST(BufferedWriteSerializer, SerializeAtPositionRestoresAfterError) {
+  const std::string filename = gtestCurrentTestName();
+  auto cleanup = absl::Cleanup{[&filename] { deleteFile(filename); }};
+  for (MemorySize blockSize : {1_B, 3_B, 64_B, 1024_B}) {
+    SCOPED_TRACE(absl::StrCat("block size: ", blockSize.getBytes()));
+    BufferedWriteSerializer writer{FileWriteSerializer{filename}, blockSize};
+    checkSerializeAtPositionRestoresAfterError(writer, filename);
   }
 }
 
