@@ -49,10 +49,11 @@ class VocabularyCreator {
 
   // Create and return a `VocabularyInternalExternal` from the given words.
   auto createVocabularyImpl(const std::vector<std::string>& words) {
-    VocabularyInternalExternal vocabulary;
+    ad_utility::vocabulary::VocabularyInternalExternal vocabulary;
     {
       auto writerPtr =
-          VocabularyInternalExternal::makeDiskWriterPtr(vocabFilename_);
+          ad_utility::vocabulary::VocabularyInternalExternal::makeDiskWriterPtr(
+              vocabFilename_);
       auto& writer = *writerPtr;
       for (const auto& [i, word] : ::ranges::views::enumerate(words)) {
         EXPECT_EQ(writer(word, i % 2 == 0), static_cast<uint64_t>(i));
@@ -74,7 +75,7 @@ class VocabularyCreator {
   // destroyed and re-initialized from disk before it is returned.
   auto createVocabularyFromDiskImpl(const std::vector<std::string>& words) {
     { createVocabularyImpl(words); }
-    VocabularyInternalExternal vocabulary;
+    ad_utility::vocabulary::VocabularyInternalExternal vocabulary;
     vocabulary.open(vocabFilename_);
     return vocabulary;
   }
@@ -184,6 +185,33 @@ TEST(VocabularyInternalExternal, BeginFinishLookupMatchesLookupBatch) {
   EXPECT_ANY_THROW(vocab.finishLookup(nullptr));
 }
 // _____________________________________________________________________________
+// Verify that `VocabBatchLookupResult` string_views remain valid after the
+// `VocabularyInternalExternal` is closed.
+TEST(VocabularyInternalExternal, LookupBatchResultOutlivesClose) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta"};
+  auto vocab = createVocabulary("LookupBatchOutlivesClose")(words);
+  const std::array<size_t, 4> indices{0, 1, 2, 3};
+  auto result = vocab.lookupBatch(indices);
+  vocab.close();
+
+  EXPECT_THAT(result,
+              ::testing::ElementsAre("alpha", "beta", "gamma", "delta"));
+}
+
+// _____________________________________________________________________________
+// Batch lookup results from `VocabularyInternalExternal` (both internal RAM
+// words and external disk words) must retain valid storage after `close()`.
+TEST(VocabularyInternalExternal, LookupBatchOutlivesClose) {
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta"};
+  auto vocab = createVocabulary("LookupBatchOutlivesClose")(words);
+  const std::array<size_t, 4> indices{0, 1, 2, 3};
+  auto result = vocab.lookupBatch(indices);
+  vocab.close();
+
+  EXPECT_THAT(result,
+              ::testing::ElementsAre("alpha", "beta", "gamma", "delta"));
+}
+
 // Words of the internal vocabulary are returned as views into it (two lookups
 // of the same word see the same bytes); words of the external vocabulary are
 // read into a buffer that each result owns.

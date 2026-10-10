@@ -15,6 +15,7 @@
 #include <fsst.h>
 
 #include <array>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <range/v3/view/iota.hpp>
@@ -221,13 +222,22 @@ class FsstRepeatedDecoder {
   // Decompress `str` into `out`. `out.size()` must be at least
   // `maxDecompressedSize(str)`. For `N >= 2`, grow `scratch` to the largest
   // intermediate bound and alternate writes so the final stage uses `out`.
-  // Return the number of bytes written.
+  // `out` must not alias `scratch`: `scratch.resize()` may reallocate
+  // (invalidating `out`) and the alternating stages would overwrite each
+  // other's input. Return the number of bytes written.
   [[nodiscard]] size_t decompressInto(std::string_view str, ql::span<char> out,
                                       std::string& scratch) const {
     AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(str));
     if constexpr (N == 1) {
       return decoders_[0].decompressInto(str, out);
     } else {
+      // Check before the `resize` below, which could otherwise invalidate an
+      // aliasing `out`. `std::less` gives a total order on unrelated pointers.
+      std::less<const char*> less;
+      AD_CONTRACT_CHECK(
+          !less(out.data(), scratch.data() + scratch.capacity()) ||
+              !less(scratch.data(), out.data() + out.size()),
+          "`out` must not alias `scratch`");
       const size_t scratchBound =
           maxDecompressedSize(str) / FsstDecoder::maxExpansionFactor;
       if (scratch.size() < scratchBound) {

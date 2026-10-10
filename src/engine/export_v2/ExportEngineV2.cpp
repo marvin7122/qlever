@@ -249,14 +249,20 @@ SelectedColumns selectedColumns(const ParsedQuery& parsedQuery,
 // (an index scan below `lazy-index-scan-max-size-materialization`, a cached
 // result) has no generator, so it is served as one block. The block is a copy
 // because morsels own their blocks and may outlive the caller's reference.
+// Ownership moves in here: the lazy range from `idTables()` is self-sustaining
+// (see `Result::idTables`), and the materialized path drops the original right
+// after cloning, so a fully materialized table is never held twice.
 Result::LazyResult resultBlocks(std::shared_ptr<const Result> result) {
   if (!result->isFullyMaterialized()) {
     return result->idTables();
   }
-  return Result::LazyResult{ad_utility::lazySingleValueRange([result]() {
-    return Result::IdTableVocabPair{result->cloneIdTable(),
-                                    result->localVocab().clone()};
-  })};
+  return Result::LazyResult{
+      ad_utility::lazySingleValueRange([result = std::move(result)]() mutable {
+        auto pair = Result::IdTableVocabPair{result->cloneIdTable(),
+                                             result->localVocab().clone()};
+        result.reset();
+        return pair;
+      })};
 }
 
 // Checkpoint interval for cooperative revocation: an in-flight morsel
@@ -287,13 +293,16 @@ struct CheckpointMorselRunner {
 
   absl::AnyInvocable<ScatterGatherChunkBuilder()> makeTask(
       ExportMorsel plan) const {
-    const uint64_t epoch = state_->currentEpoch();
-    return [*this, plan = std::move(plan), epoch]() mutable {
-      return run(std::move(plan), epoch);
+    return [*this, plan = std::move(plan)]() mutable {
+      return run(std::move(plan));
     };
   }
 
-  ScatterGatherChunkBuilder run(ExportMorsel plan, uint64_t epoch) const {
+  ScatterGatherChunkBuilder run(ExportMorsel plan) const {
+    // The epoch is sampled when the morsel starts, not when it is planned: a
+    // morsel that starts after a revocation already runs within the new
+    // quota and must not be split again.
+    const uint64_t epoch = state_->currentEpoch();
     ScatterGatherChunkBuilder builder;
     const size_t numSegments = plan.segments_.size();
     for (size_t s = 0; s < numSegments; ++s) {
@@ -362,6 +371,16 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   std::shared_ptr<const Result> result = qet.getResult(true);
   result->logResultSize();
 
+  // The root operation may already have applied LIMIT/OFFSET (e.g. an
+  // `IndexScan` handles it `FULL` while scanning, see
+  // `QueryPlanner::createExecutionTrees`). Compensate exactly like Legacy
+  // (`ExportQueryExecutionTrees::computeResult`) so `planExportMorsels`
+  // applies each exactly once; without this, OFFSET rows would be skipped a
+  // second time for such roots.
+  auto plannedLimitOffset = parsedQuery._limitOffset;
+  ExportQueryExecutionTrees::compensateForLimitOffsetClause(plannedLimitOffset,
+                                                            qet);
+
   constexpr uint64_t rowsPerMorsel = 8192;
   const bool adaptiveChunkSizing =
       getRuntimeParameter<&RuntimeParameters::exportV2AdaptiveChunkSizing_>();
@@ -376,7 +395,8 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
     // No session exists here, so nothing can revoke: serialize each plan
     // directly without checkpoints.
     for (auto&& plan :
-         planExportMorsels(resultBlocks(result), parsedQuery._limitOffset,
+         planExportMorsels(resultBlocks(std::move(result)),
+                           plannedLimitOffset,
                            std::function<uint64_t()>{rowsPerMorselFn})) {
       cancellationHandle->throwIfCancelled();
       ScatterGatherChunkBuilder builder;
@@ -400,7 +420,16 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
   AD_LOG_INFO << "ExportEngineV2 streaming lazy result blocks to morsels on "
                  "queryThreadPool_ (no extra V2 threads)"
               << std::endl;
-  auto session = scheduler->createSession<ScatterGatherChunkBuilder>();
+  const auto policy =
+      getRuntimeParameter<&RuntimeParameters::exportV2HelperPolicy_>() ==
+              "exclusive"
+          ? ad_utility::export_v2::HelperPolicy::Exclusive
+          : ad_utility::export_v2::HelperPolicy::Fair;
+  auto session = scheduler->createSession<ScatterGatherChunkBuilder>(policy);
+  // `ordered` deliberately uses the original clause: a query that was bounded
+  // (LIMIT and/or OFFSET) keeps deterministic slot order like Legacy V1, even
+  // when compensation above already zeroed the offset for a root that applied
+  // it. Only the planner consumes the compensated clause.
   const auto& limitOffset = parsedQuery._limitOffset;
   const bool ordered = limitOffset._limit.has_value() ||
                        limitOffset._offset != 0 ||
@@ -422,8 +451,42 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
                                       format,
                                       !ordered,
                                       monomorphicRows};
+  // Optional helper trace for concurrency measurements.
+  const auto logInterval = std::chrono::milliseconds{
+      getRuntimeParameter<&RuntimeParameters::exportV2HelperLogIntervalMs_>()};
+  auto nextLog = std::chrono::steady_clock::now();
+  auto logHelpers = [&session, logInterval, policy, &nextLog](bool force) {
+    if (logInterval.count() == 0) {
+      return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (!force && now < nextLog) {
+      return;
+    }
+    nextLog = now + logInterval;
+    AD_LOG_INFO << "ExportEngineV2 helpers job=" << session.jobId()
+                << " policy=" << ad_utility::export_v2::toString(policy)
+                << " active=" << session.activeHelpers()
+                << " quota=" << session.helperQuota()
+                << " state=" << ad_utility::export_v2::toString(session.state())
+                << " consumed=" << session.consumedSlots() << "/"
+                << session.totalSlots() << std::endl;
+  };
+  logHelpers(true);
+  // Keep a small window of work available to the pool without pulling the
+  // entire lazy result or retaining all serialized builders. Use the session
+  // counters so remainders submitted at revocation checkpoints also count.
+  const size_t maxInFlight = std::max(size_t{1}, 2 * scheduler->poolSize());
+  auto consume = [&]() {
+    cancellationHandle->throwIfCancelled();
+    auto builder = session.consumeNextResult();
+    cancellationHandle->throwIfCancelled();
+    logHelpers(false);
+    return builder;
+  };
   for (auto&& plan :
-       planExportMorsels(resultBlocks(result), parsedQuery._limitOffset,
+       planExportMorsels(resultBlocks(std::move(result)),
+                         plannedLimitOffset,
                          std::function<uint64_t()>{rowsPerMorselFn})) {
     cancellationHandle->throwIfCancelled();
     const uint64_t morselRows = plan.numRows_;
@@ -439,13 +502,20 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSerializedMorsels(
       adaptiveSizer.recordChunk(static_cast<size_t>(estimatedBytes),
                                 morselRows);
     }
+    while (session.totalSlots() - session.consumedSlots() >= maxInFlight) {
+      auto builder = consume();
+      if (!builder.empty()) {
+        co_yield std::move(builder);
+      }
+    }
   }
   while (session.hasMoreResults()) {
-    auto builder = session.consumeNextResult();
+    auto builder = consume();
     if (!builder.empty()) {
       co_yield std::move(builder);
     }
   }
+  logHelpers(true);
 }
 
 }  // namespace

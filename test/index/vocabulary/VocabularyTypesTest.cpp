@@ -41,7 +41,7 @@ class Caller {
 // _____________________________________________________________________________
 // A class inheriting from `WordWriterBase` that throws when initializing a
 // member.
-class WordWriterThrowing : public WordWriterBase {
+class WordWriterThrowing : public ad_utility::vocabulary::WordWriterBase {
  private:
   Caller caller_;
 
@@ -55,7 +55,7 @@ class WordWriterThrowing : public WordWriterBase {
 
 // _____________________________________________________________________________
 // A class inheriting from `WordWriterBase` that doesn't call finish.
-class WordWriterNoFinish : public WordWriterBase {
+class WordWriterNoFinish : public ad_utility::vocabulary::WordWriterBase {
  public:
   WordWriterNoFinish() {}
   uint64_t operator()(std::string_view, bool) override { return 0; }
@@ -209,6 +209,15 @@ TEST(VocabBatchLookupData, MultiSourceAssemblerDoesNotCopyBytes) {
   EXPECT_THAT(result, ::testing::ElementsAre("alpha", "gamma", "beta"));
   EXPECT_EQ(result[0].data(), alphaData);
   EXPECT_EQ(result[1].data(), gammaData);
+}
+
+// _____________________________________________________________________________
+TEST(VocabBatchLookupData, MultiSourceAssemblerRequiresStorageOwner) {
+  ad_utility::vocabulary::MultiSourceVocabBatchAssembler assembler(1);
+  assembler.assignWordAtPosition(0, "orphan");
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      (void)std::move(assembler).finalizeVocabBatchLookupResult(),
+      ::testing::HasSubstr("!storageOwners_.empty()"));
 }
 
 // _____________________________________________________________________________
@@ -699,7 +708,8 @@ TEST(VocabularyTypes, sequentialLookupBatchWithMissingWords) {
 
   // The vocabulary that has not opted in throws.
   AD_EXPECT_THROW_WITH_MESSAGE(
-      sequentialLookupBatch(VocabWithHolesThrowing{}, indices),
+      ad_utility::vocabulary::sequentialLookupBatch(VocabWithHolesThrowing{},
+                                                    indices),
       ::testing::HasSubstr("replaceOptionalByPlaceholderOnExport"));
 }
 

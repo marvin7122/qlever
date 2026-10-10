@@ -209,10 +209,12 @@ struct alignas(256) ItemMapManager {
   ItemMapAndBuffer map_;
   ad_utility::HashMap<Id, Id> specialIdMapping_;
   uint64_t minId_;
-  const TripleComponentComparator* comparator_;
+  const ad_utility::vocabulary::TripleComponentComparator* comparator_;
 
   // Construct with given minimum ID.
-  explicit ItemMapManager(uint64_t minId, const TripleComponentComparator* cmp)
+  explicit ItemMapManager(
+      uint64_t minId,
+      const ad_utility::vocabulary::TripleComponentComparator* cmp)
       : minId_(minId), comparator_(cmp) {
     addSpecialIds();
   }

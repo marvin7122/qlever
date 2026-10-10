@@ -62,7 +62,7 @@ template <typename Index>
 struct FirstPassSharedState {
   Index* index_;
   // The comparator for the `ItemMapManager`s of the task chains.
-  const TripleComponentComparator* comparator_;
+  const ad_utility::vocabulary::TripleComponentComparator* comparator_;
   size_t linesPerPartial_;
 
   // Show progress and statistics for the number of parsed input triples. The
