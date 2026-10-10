@@ -18,6 +18,10 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
+
+#include "global/RuntimeParameters.h"
+#include "util/HugePages.h"
 
 // _____________________________________________________________________________
 std::string VocabularyInternalExternal::operator[](uint64_t i) const {
@@ -43,19 +47,58 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyInternalExternal::beginLookup(
   // view into that vocabulary (no copy); all other indices are collected, with
   // their positions in `indices`, for one batched lookup in the external
   // vocabulary. The internal vocabulary has "holes", so each index needs one
-  // membership probe (an allocation-free binary search); indices at or past
-  // `internalVocab_.endIndex()` are known misses and skip the search.
+  // membership probe: one cache line with the rank directory (see
+  // `vocabulary-internal-rank-lookup`), else a binary search; indices at or
+  // past `internalVocab_.endIndex()` are known misses and skip the probe.
+  // Results do not depend on the prefetch distance.
   auto handle = std::unique_ptr<MixedLookupHandle>(
       new MixedLookupHandle(*this, indices.size()));
   const uint64_t internalEnd = internalVocab_.endIndex();
-  for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
-    auto internalWord = index < internalEnd ? internalVocab_[index]
-                                            : std::optional<std::string_view>{};
-    if (internalWord.has_value()) {
-      handle->assembler_.assignUnownedViewAtPosition(position,
-                                                     internalWord.value());
+  auto internalPositionOf = [&](size_t index) -> std::optional<size_t> {
+    return index < internalEnd ? internalVocab_.positionOfIndex(index)
+                               : std::nullopt;
+  };
+  auto placeWord = [&](size_t position, size_t index,
+                       std::optional<size_t> internalPosition) {
+    if (internalPosition.has_value()) {
+      handle->assembler_.assignUnownedViewAtPosition(
+          position, internalVocab_.wordAtPosition(internalPosition.value()));
     } else {
       handle->externalSlots_.addPair(index, position);
+    }
+  };
+  const size_t distance =
+      internalVocab_.hasIndexRankDirectory()
+          ? getRuntimeParameter<
+                &RuntimeParameters::vocabularyInternalRankPrefetchDistance_>()
+          : 0;
+  if (distance == 0) {
+    for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
+      placeWord(position, index, internalPositionOf(index));
+    }
+  } else {
+    // With the rank directory, each probe is one cache miss in the directory,
+    // and each in-RAM word one more in its offsets and one in its bytes. Issue
+    // these loads ahead (see `vocabulary-internal-rank-prefetch-distance`), so
+    // that they overlap instead of stalling one after another.
+    const size_t n = indices.size();
+    std::vector<std::optional<size_t>> internalPositions(n);
+    for (size_t i = 0; i < n; ++i) {
+      if (i + distance < n) {
+        internalVocab_.prefetchPositionOfIndex(indices[i + distance]);
+      }
+      internalPositions[i] = internalPositionOf(indices[i]);
+    }
+    for (size_t i = 0; i < n; ++i) {
+      if (i + 2 * distance < n && internalPositions[i + 2 * distance]) {
+        internalVocab_.prefetchWordOffsetsAtPosition(
+            internalPositions[i + 2 * distance].value());
+      }
+      if (i + distance < n && internalPositions[i + distance]) {
+        internalVocab_.prefetchWordAtPosition(
+            internalPositions[i + distance].value());
+      }
+      placeWord(i, indices[i], internalPositions[i]);
     }
   }
 
@@ -137,4 +180,26 @@ void VocabularyInternalExternal::open(const std::string& filename) {
   AD_LOG_INFO << "Number of words in internal vocabulary (these are also part "
                  "of the external vocabulary): "
               << internalVocab_.size() << std::endl;
+  if (getRuntimeParameter<
+          &RuntimeParameters::vocabularyInternalRankLookup_>()) {
+    const bool useHugePages = getRuntimeParameter<
+        &RuntimeParameters::vocabularyInternalRankHugePages_>();
+    internalVocab_.buildIndexRankDirectory(useHugePages);
+    AD_LOG_INFO << "Rank directory of the internal vocabulary: "
+                << internalVocab_.indexRankDirectoryNumBytes() << " bytes for "
+                << internalVocab_.endIndex() << " vocabulary indices"
+                << std::endl;
+    if (useHugePages) {
+      const auto [begin, size] = internalVocab_.indexRankDirectoryAllocation();
+      const auto hugeBytes = ad_utility::anonHugePageBytes(begin, size);
+      AD_LOG_INFO << "Huge pages for the rank directory requested "
+                  << "(transparent huge pages: "
+                  << ad_utility::transparentHugePagesMode() << "): "
+                  << (hugeBytes.has_value() ? std::to_string(hugeBytes.value())
+                                            : std::string{"unknown"})
+                  << " of " << size
+                  << " allocated bytes on huge pages (upper bound)"
+                  << std::endl;
+    }
+  }
 }
