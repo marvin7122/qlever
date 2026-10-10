@@ -245,6 +245,35 @@ class ScatterGatherChunkBuilder {
     totalBytes_ += bytes.size();
   }
 
+  // Append the bytes that `write(std::string& buffer)` appends to `buffer`,
+  // as if passed to `appendCopy`, but without a temporary string: the caller
+  // writes straight into the copy buffer. `expectedBytes` (the number of
+  // bytes `write` will append) is reserved first, so the buffer grows at most
+  // once. `write` must only append to `buffer`.
+  template <typename Writer>
+  void appendCopiedWith(size_t expectedBytes, Writer&& write) {
+    const size_t offset = copiedBytes_.size();
+    copiedBytes_.reserve(offset + expectedBytes);
+    std::forward<Writer>(write)(copiedBytes_);
+    AD_CORRECTNESS_CHECK(copiedBytes_.size() >= offset);
+    const size_t added = copiedBytes_.size() - offset;
+    if (added == 0) {
+      return;
+    }
+    if (!segments_.empty() && segments_.back().copied_) {
+      segments_.back().size_ += added;
+    } else {
+      segments_.push_back({nullptr, offset, added, true});
+    }
+    totalBytes_ += added;
+  }
+
+  // Grow the copy buffer to hold at least `bytes` bytes in total, e.g. the
+  // expected size of a whole morsel after its first window. Later
+  // `appendCopy`/`appendCopiedWith` calls then append without reallocating
+  // (and without copying the bytes already written again).
+  void reserveCopied(size_t bytes) { copiedBytes_.reserve(bytes); }
+
   void appendOwned(OwnedByteSpan bytes) {
     if (bytes.empty()) {
       return;

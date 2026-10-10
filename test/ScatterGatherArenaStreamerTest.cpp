@@ -59,7 +59,7 @@ TEST(ScatterGatherArenaStreamerTest, OwnsEveryReferencedAllocation) {
 
   EXPECT_EQ(chunk.toString(), "<23456>");
   EXPECT_EQ(chunk.size(), 7);
-  EXPECT_EQ(chunk.numSegments(), 3);
+  EXPECT_EQ(chunk.numSegments(), 3u);
 }
 
 TEST(ScatterGatherArenaStreamerTest, EmptyInputProducesEmptyChunk) {
@@ -217,6 +217,48 @@ TEST(ScatterGatherArenaStreamerTest, LimitsEachWritevBatch) {
 
   EXPECT_EQ(result.bytesWritten_, UIO_MAXIOV + 3);
   EXPECT_LE(maxBatch, UIO_MAXIOV);
+}
+
+// `appendCopiedWith` writes in place and must behave like `appendCopy` of
+// the same bytes: it extends a preceding copied segment, starts a new one
+// after a borrowed segment, and adds nothing for an empty write.
+TEST(ScatterGatherArenaStreamerTest, AppendCopiedWithMatchesAppendCopy) {
+  ImmutableByteBuffer arena{"XYZ"};
+  ScatterGatherChunkBuilder builder;
+  builder.appendCopy("ab");
+  builder.appendCopiedWith(3, [](std::string& out) { out.append("cde"); });
+  builder.appendCopiedWith(0, [](std::string&) {});
+  EXPECT_EQ(builder.size(), 5u);
+  builder.appendOwned(arena.slice(1, 2));
+  // A wrong (too small) size hint only costs a reallocation.
+  builder.appendCopiedWith(1, [](std::string& out) {
+    out.push_back('f');
+    out.append("gh");
+  });
+  EXPECT_EQ(builder.size(), 10u);
+  auto chunk = std::move(builder).finalize();
+  EXPECT_EQ(chunk.toString(), "abcdeYZfgh");
+  EXPECT_EQ(chunk.numSegments(), 3u);
+}
+
+// Only `appendCopiedWith` calls on an empty builder: no segment, no bytes.
+TEST(ScatterGatherArenaStreamerTest, AppendCopiedWithEmptyWrite) {
+  ScatterGatherChunkBuilder builder;
+  builder.appendCopiedWith(8, [](std::string&) {});
+  EXPECT_TRUE(builder.empty());
+  EXPECT_TRUE(std::move(builder).finalize().empty());
+}
+
+// `reserveCopied` only grows capacity: the content and the string returned by
+// `finalizeToString` (moved, not copied, for copy-only builders) are
+// unchanged.
+TEST(ScatterGatherArenaStreamerTest, ReserveCopiedKeepsContent) {
+  ScatterGatherChunkBuilder builder;
+  builder.appendCopy("row1\n");
+  builder.reserveCopied(1 << 16);
+  builder.appendCopiedWith(5, [](std::string& out) { out.append("row2\n"); });
+  builder.reserveCopied(1);  // Never shrinks.
+  EXPECT_EQ(std::move(builder).finalizeToString(), "row1\nrow2\n");
 }
 
 }  // namespace
