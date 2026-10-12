@@ -30,6 +30,12 @@ struct ExportMorselSegment {
   std::shared_ptr<Result::IdTableVocabPair> block_;
   uint64_t begin_ = 0;
   uint64_t end_ = 0;
+  // Rows exported from all earlier blocks (OFFSET-skipped rows excluded).
+  // The serializer adds the still-applied OFFSET (`rowOffset_`) and the row
+  // index in its block on top, so a blank-node label is `rowOffset_ +
+  // rowsExportedBeforeBlock_ + rowIndex`, exactly like Legacy (the LIMIT and
+  // OFFSET live tests assert byte equality).
+  uint64_t rowsExportedBeforeBlock_ = 0;
 };
 
 // Up to `rowsPerMorsel` export rows, gathered across lazy result blocks. Every
@@ -72,6 +78,7 @@ inline cppcoro::generator<ExportMorsel> planExportMorsels(
     co_return;
   }
   ExportMorsel morsel;
+  uint64_t rowsExported = 0;
   for (auto&& pair : idTables) {
     const uint64_t rows = pair.idTable_.numRows();
     if (offset >= rows) {
@@ -88,7 +95,8 @@ inline cppcoro::generator<ExportMorsel> planExportMorsels(
       while (remaining > 0) {
         const uint64_t take =
             std::min(remaining, rowsPerMorsel - morsel.numRows_);
-        morsel.segments_.push_back({block, cursor, cursor + take});
+        morsel.segments_.push_back(
+            {block, cursor, cursor + take, rowsExported});
         morsel.numRows_ += take;
         cursor += take;
         remaining -= take;
@@ -100,6 +108,7 @@ inline cppcoro::generator<ExportMorsel> planExportMorsels(
         }
       }
     }
+    rowsExported += exported;
     reduce(limit, counted);
     reduce(exportLimit, counted);
     if (limit == 0 && exportLimit == 0) {
