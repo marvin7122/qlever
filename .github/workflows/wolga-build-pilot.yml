@@ -45,8 +45,15 @@ jobs:
                 -DBUILD_SHARED_LIBS=ON -DQLEVER_ONE_TEST_CASE_PER_FILE=ON \
                 -DUSE_PRECOMPILED_HEADERS=OFF -DCHEAPER_COMPILATION=OFF \
                 -DQLEVER_ALLOCATOR_BACKEND=limit
-              if [ -n "${{ inputs.target }}" ]; then
-                TARGET_ARG="--target ${{ inputs.target }}"
+              TARGET='${{ inputs.target }}'
+              case "$TARGET" in
+                *[!A-Za-z0-9_+.-]*)
+                  echo "refusing target with unsafe characters" >&2
+                  exit 1
+                  ;;
+              esac
+              if [ -n "$TARGET" ]; then
+                TARGET_ARG="--target $TARGET"
               else
                 TARGET_ARG=""
               fi
