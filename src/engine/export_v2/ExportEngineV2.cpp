@@ -514,7 +514,7 @@ cppcoro::generator<ScatterGatherChunkBuilder> serializeMorsels(
   };
   if (scheduler == nullptr) {
     // No session exists here, so nothing can revoke: serialize each plan
-    // directly without checkpoints.
+    // directly, checking cancellation between row windows.
     for (auto&& plan :
          planExportMorsels(resultBlocks(std::move(result)), limitOffset,
                            std::function<uint64_t()>{rowsPerMorselFn})) {
@@ -523,11 +523,17 @@ cppcoro::generator<ScatterGatherChunkBuilder> serializeMorsels(
       uint64_t rowsDone = 0;
       bool reserved = false;
       for (const auto& segment : plan.segments_) {
-        cancellationHandle->throwIfCancelled();
-        (*serialize)(segment, segment.begin_, segment.end_, builder);
-        rowsDone += segment.end_ - segment.begin_;
-        if (!reserved) {
-          reserved = reserveForMorsel(builder, rowsDone, plan.numRows_);
+        uint64_t pos = segment.begin_;
+        while (pos < segment.end_) {
+          cancellationHandle->throwIfCancelled();
+          const uint64_t windowEnd =
+              pos + std::min(kRevocationCheckRows, segment.end_ - pos);
+          (*serialize)(segment, pos, windowEnd, builder);
+          rowsDone += windowEnd - pos;
+          if (!reserved) {
+            reserved = reserveForMorsel(builder, rowsDone, plan.numRows_);
+          }
+          pos = windowEnd;
         }
       }
       if (adaptiveChunkSizing) {
