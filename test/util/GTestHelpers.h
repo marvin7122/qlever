@@ -18,9 +18,11 @@
 #include <gmock/gmock.h>
 #include <re2/re2.h>
 
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <thread>
 #include <vector>
 
 #include "backports/algorithm.h"
@@ -372,6 +374,24 @@ inline std::string gtestCurrentTestSuiteName(
     AD_CORRECTNESS_CHECK(testSuite != nullptr);
   }
   return testSuite == nullptr ? "" : sanitizeGtestName(testSuite->name());
+}
+
+// _____________________________________________________________________________
+// Block until the `predicate` is true, polling it every millisecond, but at
+// most for the `timeout`. Return the final value of the `predicate`. Use this
+// to wait for the effect of work that runs on another thread, typically as
+// `ASSERT_TRUE(waitUntil(...))`.
+//
+// NOTE: The `timeout` is deliberately generous, because it is only waited for
+// in full when the awaited event never happens, which is a failing test anyway.
+template <typename Predicate>
+bool waitUntil(const Predicate& predicate,
+               std::chrono::milliseconds timeout = std::chrono::seconds{10}) {
+  auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (!predicate() && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  return predicate();
 }
 
 #endif  // QLEVER_TEST_UTIL_GTESTHELPERS_H

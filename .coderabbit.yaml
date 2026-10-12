@@ -1,0 +1,11 @@
+reviews:
+  profile: assertive
+  path_instructions:
+    - path: "src/**/*.{h,hpp,cpp,cc,cxx}"
+      instructions: |
+        Focus on architecture and system design.
+        Prioritize scalability and
+        long-term maintainability.
+
+tone_instructions: |
+  Be concise, direct, and constructive.
