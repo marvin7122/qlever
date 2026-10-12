@@ -192,6 +192,29 @@ void ConstructRowSerializer::appendRows(
     column.finish();
   }
 
+  auto isBound = [&](const Term& term, size_t row) {
+    return term.kind_ != Term::Kind::Variable ||
+           resolved[term.slot_]->isBound(row);
+  };
+  // Skip the reservation entirely when no row emits a triple (e.g. a large
+  // constant next to a variable that is UNDEF in every row): the estimate
+  // below is sized for the full window, but unbound rows are filtered out
+  // during serialization and would leave a large unused reservation behind.
+  bool anyRowEmits = false;
+  for (size_t row = 0; row < n && !anyRowEmits; ++row) {
+    anyRowEmits = true;
+    for (const auto& triple : triples_) {
+      if (!isBound(triple[0], row) || !isBound(triple[1], row) ||
+          !isBound(triple[2], row)) {
+        anyRowEmits = false;
+        break;
+      }
+    }
+  }
+  if (!anyRowEmits) {
+    return;
+  }
+
   // Size estimate (exact unless literals need escaping or rows are skipped):
   // the variable texts as often as the template uses them, the constants and
   // blank nodes once per row, and ` `, ` `, ` .\n` per triple.
@@ -213,10 +236,6 @@ void ConstructRowSerializer::appendRows(
 
   const uint64_t firstRowId = rowOffset_ + rowsExportedBeforeBlock + rowBegin;
   builder.appendCopiedWith(expectedBytes, [&](std::string& out) {
-    auto isBound = [&](const Term& term, size_t row) {
-      return term.kind_ != Term::Kind::Variable ||
-             resolved[term.slot_]->isBound(row);
-    };
     auto append = [&](const Term& term, size_t row, bool isObject) {
       switch (term.kind_) {
         case Term::Kind::Constant:
