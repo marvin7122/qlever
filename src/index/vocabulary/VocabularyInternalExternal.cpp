@@ -13,6 +13,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <memory>
+#include <new>
 #include <optional>
 #include <range/v3/view/enumerate.hpp>
 #include <string>
@@ -184,7 +185,18 @@ void VocabularyInternalExternal::open(const std::string& filename) {
           &RuntimeParameters::vocabularyInternalRankLookup_>()) {
     const bool useHugePages = getRuntimeParameter<
         &RuntimeParameters::vocabularyInternalRankHugePages_>();
-    internalVocab_.buildIndexRankDirectory(useHugePages);
+    try {
+      internalVocab_.buildIndexRankDirectory(useHugePages);
+    } catch (const std::bad_alloc&) {
+      // Stay usable without the directory: lookups transparently fall back
+      // to binary search. The directory spans the full index range
+      // (including words kept on disk), so on huge vocabularies it can be
+      // much larger than the words kept in RAM.
+      AD_LOG_WARN << "Rank directory of the internal vocabulary failed to "
+                     "allocate, falling back to binary search"
+                  << std::endl;
+      return;
+    }
     AD_LOG_INFO << "Rank directory of the internal vocabulary: "
                 << internalVocab_.indexRankDirectoryNumBytes() << " bytes for "
                 << internalVocab_.endIndex() << " vocabulary indices"

@@ -608,35 +608,80 @@ idsToStringAndTypeDepth2(
   if (numVocabIndices == 0) {
     return results;
   }
-  // Submit the first sub-batch's lookup, then walk the remaining sub-batches
-  // in a depth-2 pipeline: each iteration submits the next sub-batch's lookup
-  // before finishing the current one, so the next batch's reads are in flight
-  // while the current batch is consumed.
-  auto handle = beginResolveVocabIndexIds(
-      index, ids,
-      vocabPositions.subspan(
-          0, std::min(maxVocabIndicesPerSubBatch, numVocabIndices)));
-  size_t batchStart = 0;
-  size_t batchSize = std::min(maxVocabIndicesPerSubBatch, numVocabIndices);
-  while (handle) {
-    const size_t batchEnd = batchStart + batchSize;
-    std::unique_ptr<VocabLookupHandleBase> nextHandle;
-    if (batchEnd < numVocabIndices) {
-      nextHandle = beginResolveVocabIndexIds(
-          index, ids,
-          vocabPositions.subspan(batchEnd,
-                                 std::min(maxVocabIndicesPerSubBatch,
-                                          numVocabIndices - batchEnd)));
+  // Run the depth-2 pipeline over `batchPositions`: submit the first
+  // sub-batch's lookup, then walk the remaining sub-batches submitting the
+  // next sub-batch's lookup before finishing the current one, so the next
+  // batch's reads are in flight while the current batch is consumed.
+  const auto runSubBatches = [&](ql::span<const size_t> batchPositions) {
+    const size_t numPositions = batchPositions.size();
+    auto handle = beginResolveVocabIndexIds(
+        index, ids,
+        batchPositions.subspan(
+            0, std::min(maxVocabIndicesPerSubBatch, numPositions)));
+    size_t batchStart = 0;
+    size_t batchSize = std::min(maxVocabIndicesPerSubBatch, numPositions);
+    while (handle) {
+      const size_t batchEnd = batchStart + batchSize;
+      std::unique_ptr<VocabLookupHandleBase> nextHandle;
+      if (batchEnd < numPositions) {
+        nextHandle = beginResolveVocabIndexIds(
+            index, ids,
+            batchPositions.subspan(batchEnd,
+                                   std::min(maxVocabIndicesPerSubBatch,
+                                            numPositions - batchEnd)));
+      }
+      finishResolveVocabIndexIds<removeQuotesAndAngleBrackets,
+                                 returnOnlyLiterals>(
+          index, batchPositions.subspan(batchStart, batchSize),
+          std::move(handle), results, escapeFunction);
+      handle = std::move(nextHandle);
+      batchStart = batchEnd;
+      batchSize =
+          std::min(maxVocabIndicesPerSubBatch, numPositions - batchStart);
     }
-    finishResolveVocabIndexIds<removeQuotesAndAngleBrackets,
-                               returnOnlyLiterals>(
-        index, vocabPositions.subspan(batchStart, batchSize), std::move(handle),
-        results, escapeFunction);
-    handle = std::move(nextHandle);
-    batchStart = batchEnd;
-    batchSize =
-        std::min(maxVocabIndicesPerSubBatch, numVocabIndices - batchStart);
+  };
+  if (numVocabIndices > 1 &&
+      getRuntimeParameter<
+          &RuntimeParameters::vocabularyDeduplicateBatchLookup_>()) {
+    // Sort the batch positions by index and look each distinct index up only
+    // once, then scatter each result to all of its positions (the depth-2
+    // variant of the deduplication in `resolveVocabIndexIds`).
+    auto rawIndices = ::ranges::to_vector(
+        vocabPositions | ql::views::transform([&ids](size_t i) {
+          return static_cast<size_t>(ids[i].getVocabIndex().get());
+        }));
+    std::vector<size_t> order(numVocabIndices);
+    std::iota(order.begin(), order.end(), size_t{0});
+    std::sort(order.begin(), order.end(),
+              [&](size_t a, size_t b) { return rawIndices[a] < rawIndices[b]; });
+    std::vector<size_t> uniquePositions;
+    uniquePositions.reserve(numVocabIndices);
+    // `runEnd[k]` is the first `order` position after the run of equal
+    // indices that `uniquePositions[k]` was taken from.
+    std::vector<size_t> runEnd;
+    runEnd.reserve(numVocabIndices);
+    for (size_t begin = 0; begin < order.size();) {
+      size_t end = begin + 1;
+      while (end < order.size() &&
+             rawIndices[order[end]] == rawIndices[order[begin]]) {
+        ++end;
+      }
+      uniquePositions.push_back(vocabPositions[order[begin]]);
+      runEnd.push_back(end);
+      begin = end;
+    }
+    runSubBatches(uniquePositions);
+    size_t begin = 0;
+    for (size_t k = 0; k < uniquePositions.size(); ++k) {
+      const size_t end = runEnd[k];
+      for (size_t j = begin; j < end; ++j) {
+        results[vocabPositions[order[j]]] = results[uniquePositions[k]];
+      }
+      begin = end;
+    }
+    return results;
   }
+  runSubBatches(vocabPositions);
   return results;
 }
 
