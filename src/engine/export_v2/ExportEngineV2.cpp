@@ -620,7 +620,10 @@ cppcoro::generator<ScatterGatherChunkBuilder> serializeMorsels(
     }
   }
   while (session.hasMoreResults()) {
-    auto builder = session.consumeNextResult();
+    // Same cancellation checks and helper tracing as `consume()` in the
+    // planning loop above: a cancelled request must stop here instead of
+    // draining the remaining helpers.
+    auto builder = consume();
     if (!builder.empty()) {
       co_yield std::move(builder);
     }
@@ -933,10 +936,13 @@ cppcoro::generator<std::string> ExportEngineV2::computeResult(
 
   if (!canHandle(parsedQuery, qet, mediaType)) {
     // Backstop: the server routes op-unsupported plans to Legacy upfront, so
-    // reaching this branch means the gates disagree. Say so loudly instead of
-    // serving Legacy bytes under a V2 log line.
+    // reaching this branch means the gates disagree (unsupported operation
+    // or media type, or the `construct-deduplication` runtime parameter
+    // changed after routing). Say so loudly instead of serving Legacy bytes
+    // under a V2 log line.
     AD_LOG_INFO << "ExportEngineV2 falls back to Legacy V1 "
-                   "(operation tree not supported)"
+                   "(unsupported operation, media type, or changed runtime "
+                   "setting since routing)"
                 << std::endl;
     for (auto& chunk : ExportQueryExecutionTrees::computeResult(
              parsedQuery, qet, mediaType, timer,
@@ -965,7 +971,8 @@ cppcoro::generator<ScatterGatherChunk> ExportEngineV2::computeResultChunks(
     // must fall back to Legacy instead of tripping a contract check. Each
     // Legacy string becomes one owned chunk.
     AD_LOG_INFO << "ExportEngineV2 falls back to Legacy V1 "
-                   "(operation tree not supported)"
+                   "(unsupported operation, media type, or changed runtime "
+                   "setting since routing)"
                 << std::endl;
     ad_utility::Timer timer{ad_utility::Timer::Started};
     for (auto& chunk : ExportQueryExecutionTrees::computeResult(
