@@ -256,6 +256,42 @@ struct RuntimeParameters {
   // reads take the paths above.
   Bool vocabularyMmapResidentReads_{true, "vocabulary-mmap-resident-reads"};
 
+  // If set to true, loading a vocabulary that keeps some of its words in RAM
+  // (`VocabularyInternalExternal`) also builds a bit vector with one bit per
+  // vocabulary index plus rank counters (see `ad_utility::BitVectorWithRank`).
+  // Checking whether an index is in RAM, and finding its word there, then
+  // costs one cache line instead of a binary search over the sorted indices of
+  // the words in RAM. Costs 8/7 bits per vocabulary index of the full index
+  // range, which also spans the words that stay on disk, so the directory
+  // is much larger than the words kept in RAM. Read when the index
+  // is loaded; changing it later has no effect.
+  Bool vocabularyInternalRankLookup_{true, "vocabulary-internal-rank-lookup"};
+
+  // With the rank directory above, `VocabularyInternalExternal::lookupBatch`
+  // prefetches the rank directory block of the index this many positions ahead
+  // in the batch, and (in a second pass) the offsets and the first bytes of
+  // the in-RAM words that many and twice that many positions ahead. 0 turns
+  // prefetching off. The default 8 was the best of 4/8/16/32 on Wikidata.
+  SizeT vocabularyInternalRankPrefetchDistance_{
+      8, "vocabulary-internal-rank-prefetch-distance"};
+
+  // If set to true, batched vocabulary lookups first sort the batch indices
+  // and look each distinct index up only once, scattering the word to all of
+  // its positions. Off by default: sorting costs O(n log n) per batch, so it
+  // only pays when batches contain many repeated indices.
+  Bool vocabularyDeduplicateBatchLookup_{false,
+                                         "vocabulary-deduplicate-batch-lookup"};
+
+  // If set to true, the rank directory above is allocated 2 MiB-aligned and
+  // marked for transparent huge pages (`madvise(MADV_HUGEPAGE)`), so that a
+  // lookup costs one cache miss instead of one cache miss plus one TLB miss.
+  // The 2 MiB alignment rounds the allocation up even when transparent huge
+  // pages are disabled, so enabling this always costs up to 2 MiB of slack;
+  // the huge-page benefit itself additionally requires transparent huge pages
+  // in "always" or "madvise" mode. Read when the index is loaded.
+  Bool vocabularyInternalRankHugePages_{false,
+                                        "vocabulary-internal-rank-hugepages"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.

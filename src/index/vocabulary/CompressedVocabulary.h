@@ -167,7 +167,9 @@ CPP_template(typename UnderlyingVocabulary,
           const auto& [index, word] = compressed;
           const size_t decoderIdx = getDecoderIdxFromPosition(position);
           ++position;
-          AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
+          // Per-word hot path (runs once per decoded word): an expensive
+          // check — active in debug/test builds, compiled out with NDEBUG.
+          AD_EXPENSIVE_CHECK(decoderIdx < compressionWrapper_.numDecoders());
           const size_t bound =
               compressionWrapper_.maxDecompressedSize(word, decoderIdx);
           if (buffer.size() < bound) {

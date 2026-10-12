@@ -369,6 +369,8 @@ addLinkAndDiscoverTestNoLibs(AsyncStreamTest)
 
 addLinkAndDiscoverTest(BitUtilsTest)
 
+addLinkAndDiscoverTestNoLibs(BitVectorWithRankTest qlever_util)
+
 addLinkAndDiscoverTest(NBitIntegerTest)
 
 addLinkAndDiscoverTestNoLibs(GeoPointTest rdfTypes)
