@@ -54,7 +54,7 @@ void appendObject(std::string& out, std::string_view text) {
 
 // Resolve the terms of one variable column for a window of rows, with the
 // text of Legacy `ConstructBatchEvaluator` + `formatTerm`. `VocabIndex` ids
-// go through one batched vocabulary lookup and are copied out of the decoded
+// go through one batched vocabulary lookup and become views into the decoded
 // batch. All other ids take Legacy's `idToStringAndType`; `Undefined` marks
 // the cell unbound.
 void resolveTermColumn(ResolvedColumn& column, const Index& index,
@@ -98,10 +98,11 @@ void resolveTermColumn(ResolvedColumn& column, const Index& index,
     if (literalOrIri.isIri()) {
       blankNode = ql::exportIds::blankNodeIriToString(literalOrIri.getIri());
     }
-    column.setCopy(row, blankNode.has_value()
+    column.setView(row, blankNode.has_value()
                             ? blankNode.value()
                             : literalOrIri.toStringRepresentation());
   }
+  column.keepAlive(std::move(words));
 }
 
 // Upper bound of the decimal digits of a blank-node row id plus the label
@@ -211,9 +212,7 @@ void ConstructRowSerializer::appendRows(
   }
 
   const uint64_t firstRowId = rowOffset_ + rowsExportedBeforeBlock + rowBegin;
-  std::string out;
-  out.reserve(expectedBytes);
-  {
+  builder.appendCopiedWith(expectedBytes, [&](std::string& out) {
     auto isBound = [&](const Term& term, size_t row) {
       return term.kind_ != Term::Kind::Variable ||
              resolved[term.slot_]->isBound(row);
@@ -252,8 +251,7 @@ void ConstructRowSerializer::appendRows(
         out.append(" .\n");
       }
     }
-  }
-  builder.appendCopy(out);
+  });
 }
 
 }  // namespace ql::engine::export_v2
