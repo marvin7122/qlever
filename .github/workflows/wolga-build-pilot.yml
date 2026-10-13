@@ -22,6 +22,9 @@ jobs:
     env:
       PODMAN_ROOT: /local/data-ssd/stoetzem/containers-storage
       PODMAN_TMP: /local/data-ssd/stoetzem/containers-tmp
+      # Passed via the environment (not interpolated into the script) so
+      # shell metacharacters in a dispatch input cannot execute.
+      WQ_TARGET: ${{ inputs.target }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -45,8 +48,14 @@ jobs:
                 -DBUILD_SHARED_LIBS=ON -DQLEVER_ONE_TEST_CASE_PER_FILE=ON \
                 -DUSE_PRECOMPILED_HEADERS=OFF -DCHEAPER_COMPILATION=OFF \
                 -DQLEVER_ALLOCATOR_BACKEND=limit
-              if [ -n "${{ inputs.target }}" ]; then
-                TARGET_ARG="--target ${{ inputs.target }}"
+              if [ -n "$WQ_TARGET" ]; then
+                case "$WQ_TARGET" in
+                  *[!A-Za-z0-9_+.-]*)
+                    echo "refusing target with unsafe characters" >&2
+                    exit 1
+                    ;;
+                esac
+                TARGET_ARG="--target $WQ_TARGET"
               else
                 TARGET_ARG=""
               fi

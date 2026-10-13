@@ -11,6 +11,7 @@
 #define QLEVER_SRC_BACKPORTS_STRING_H
 
 #include <cstddef>
+#include <exception>
 #include <string>
 #include <utility>
 
@@ -23,10 +24,11 @@ namespace ql {
 // C++17-compatible backport of C++23's
 // `std::basic_string::resize_and_overwrite` as a free function taking the
 // string first. Like the standard, `op` is taken by value, called once as an
-// rvalue with `(data, count)`, must write at most `count` bytes, must not
-// throw, and returns the new size. Unlike the standard (a result larger than
-// `count` is UB), the result is checked with `AD_CONTRACT_CHECK` after the
-// call. Before C++23 there is no performance benefit: the fallback
+// rvalue with `(data, count)`, must write at most `count` bytes, and returns
+// the new size. Unlike the standard (where a throwing `op` and a result
+// larger than `count` are both UB), a throwing `op` is rethrown after the
+// member returns and the result is checked with `AD_CONTRACT_CHECK` after
+// the call. Before C++23 there is no performance benefit: the fallback
 // zero-fills all `count` bytes with `resize` first.
 CPP_template(typename CharT, typename Traits, typename Allocator,
              typename Operation)(
@@ -44,15 +46,27 @@ CPP_template(typename CharT, typename Traits, typename Allocator,
   // https://web.archive.org/web/20251223023007/http://eel.is/c++draft/version.syn
 #if defined(__cpp_lib_string_resize_and_overwrite) && \
     __cpp_lib_string_resize_and_overwrite >= 202110L
-  // Throwing inside the operation passed to the standard member is UB, so the
-  // result is only recorded there (and clamped to a valid size) and checked
-  // after the call returns.
+  // Throwing inside the operation passed to the standard member is UB, so a
+  // throwing operation is captured via `std::exception_ptr` and rethrown
+  // after the call returns; the size is only recorded there (and clamped to
+  // a valid size) and checked after the call returns.
   size_t newSize = 0;
+  std::exception_ptr operationException;
   str.resize_and_overwrite(
-      count, [&newSize, op = std::move(op)](CharT* data, size_t n) mutable {
-        newSize = std::move(op)(data, n);
+      count,
+      [&newSize, &operationException, op = std::move(op)](CharT* data,
+                                                          size_t n) mutable {
+        try {
+          newSize = std::move(op)(data, n);
+        } catch (...) {
+          operationException = std::current_exception();
+          newSize = 0;
+        }
         return newSize <= n ? newSize : size_t{0};
       });
+  if (operationException) {
+    std::rethrow_exception(operationException);
+  }
   AD_CONTRACT_CHECK(newSize <= count);
 #else
   str.resize(count);
