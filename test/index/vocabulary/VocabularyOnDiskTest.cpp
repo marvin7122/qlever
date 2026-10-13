@@ -408,7 +408,7 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathWithDirectIo) {
   auto plain = vocab->lookupBatch(indices);
   absl::Cleanup reset{[]() {
     setRuntimeParameter<
-        &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(false);
+        &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(true);
     ad_utility::useRegisteredBuffersForVocabularyReads = false;
     ad_utility::useDirectIoForVocabularyReads = false;
   }};
@@ -439,6 +439,11 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheMissesGoThroughTheManager) {
     GTEST_SKIP() << "preadv2(RWF_NOWAIT) is not available";
   }
   using pageCacheReadTestHelpers::ScopedPageCacheRead;
+  // The resident mappings serve the words that an earlier lookup marked
+  // resident before the page-cache read is even tried, so the injected reads
+  // below would only be seen by the first lookup.
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyMmapResidentReads_>(false);
   auto vocab = createExampleVocabulary();
   // Runs of consecutive indices, reordered and duplicated indices.
   std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
