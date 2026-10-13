@@ -75,9 +75,8 @@ TEST(StringMapping, flushResolvesSecondaryVocabIds) {
   // because `setSecondaryVocab` must not leak into other tests.
   Index index = ad_utility::testing::makeTestIndex(gtestCurrentTestName(),
                                                    "<a> <b> <c> .");
-  index.getImpl().setSecondaryVocab(
-      std::make_shared<ad_utility::vocabulary::SecondaryVocabulary>(
-          std::vector<std::string>{"<d>", "<e>"}));
+  index.getImpl().setSecondaryVocab(std::make_shared<SecondaryVocabulary>(
+      std::vector<std::string>{"<d>", "<e>"}));
 
   StringMapping mapping;
   Id vocabId = Id::makeFromVocabIndex(VocabIndex::make(1));
