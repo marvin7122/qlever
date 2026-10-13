@@ -127,8 +127,10 @@ ConstructRowSerializer::ConstructRowSerializer(
     const VariableToColumnMap& variableColumns, const Index& index,
     ad_utility::MediaType mediaType, uint64_t rowOffset)
     : includeDataType_{mediaType == ad_utility::MediaType::ntriples},
-      escapeAllPositions_{getRuntimeParameter<
-          &RuntimeParameters::useFastExportStreamFormatter_>()},
+      escapeAllPositions_{
+          mediaType == ad_utility::MediaType::turtle &&
+          getRuntimeParameter<
+              &RuntimeParameters::useFastExportStreamFormatter_>()},
       rowOffset_{rowOffset} {
   AD_CONTRACT_CHECK(supportsMediaType(mediaType));
   using namespace qlever::constructExport;

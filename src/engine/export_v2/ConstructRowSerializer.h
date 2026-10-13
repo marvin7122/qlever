@@ -90,9 +90,10 @@ class ConstructRowSerializer {
   // How often each slot occurs in the template (for the size estimate).
   std::vector<size_t> slotUses_;
   bool includeDataType_;
-  // Like Legacy: with `use-fast-export-stream-formatter` (the default), every
-  // literal is escaped, also in subject and predicate position; without it,
-  // only the object (`formatTriple`).
+  // Like Legacy (`ConstructTripleGenerator::generateFormattedTriples`): Turtle
+  // with `use-fast-export-stream-formatter` (the default) escapes every
+  // literal, also in subject and predicate position; N-Triples, and Turtle
+  // without the flag, escape the object only (`formatTriple`).
   bool escapeAllPositions_;
   uint64_t rowOffset_;
 };
