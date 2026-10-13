@@ -20,6 +20,7 @@
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/export_v2/ResolvedColumn.h"
 #include "global/Id.h"
+#include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/Exception.h"
@@ -42,8 +43,10 @@ bool literalNeedsEscaping(std::string_view text) {
          text.find_first_of("\\\n\r") != std::string_view::npos;
 }
 
-// Append `text` in object position: like Legacy `formatTriple`, a literal
-// (text starting with `"`) is escaped, everything else is written as is.
+// Append `text` as an escaped term: like Legacy, a literal (text starting
+// with `"`) is escaped, everything else is written as is. Legacy escapes the
+// object only (`formatTriple`) or every position (fast formatter), see
+// `escapeAllPositions_`.
 void appendObject(std::string& out, std::string_view text) {
   if (ql::starts_with(text, '"') && literalNeedsEscaping(text)) {
     out.append(RdfEscaping::validRDFLiteralFromNormalized(text));
@@ -123,6 +126,8 @@ ConstructRowSerializer::ConstructRowSerializer(
     const VariableToColumnMap& variableColumns, const Index& index,
     ad_utility::MediaType mediaType, uint64_t rowOffset)
     : includeDataType_{mediaType == ad_utility::MediaType::ntriples},
+      escapeAllPositions_{getRuntimeParameter<
+          &RuntimeParameters::useFastExportStreamFormatter_>()},
       rowOffset_{rowOffset} {
   AD_CONTRACT_CHECK(supportsMediaType(mediaType));
   using namespace qlever::constructExport;
@@ -141,7 +146,7 @@ ConstructRowSerializer::ConstructRowSerializer(
               term.kind_ = Term::Kind::Constant;
               std::string text =
                   formatTerm(*t.evaluatedTerm_, includeDataType_);
-              if (pos == 2) {
+              if (pos == 2 || escapeAllPositions_) {
                 std::string object;
                 appendObject(object, text);
                 text = std::move(object);
@@ -225,7 +230,7 @@ void ConstructRowSerializer::appendRows(
           return;
         case Term::Kind::Variable: {
           const std::string_view text = (*resolved[term.slot_])[row];
-          if (isObject) {
+          if (isObject || escapeAllPositions_) {
             appendObject(out, text);
           } else {
             out.append(text);
