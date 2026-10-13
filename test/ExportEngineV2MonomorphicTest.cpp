@@ -252,16 +252,16 @@ TEST_F(ExportEngineV2Monomorphic, RuntimeParameterKeepsLegacyBytes) {
     if (!monomorphic.has_value()) {
       ad_utility::Timer timer{ad_utility::Timer::Started};
       for (const auto& block : ExportQueryExecutionTrees::computeResult(
-               pq, qet, mediaType, timer, std::move(handle))) {
+               pq, *qet, mediaType, timer, std::move(handle))) {
         result += block;
       }
       return result;
     }
     auto cleanup = setRuntimeParameterForTest<
         &RuntimeParameters::exportV2MonomorphicRows_>(monomorphic.value());
-    EXPECT_TRUE(ExportEngineV2::canHandle(pq, qet, mediaType));
+    EXPECT_TRUE(ExportEngineV2::canHandle(pq, *qet, mediaType));
     for (const auto& block :
-         ExportEngineV2::computeResult(pq, qet, mediaType, std::move(handle))) {
+         ExportEngineV2::computeResult(pq, *qet, mediaType, std::move(handle))) {
       result += block;
     }
     return result;
@@ -301,20 +301,21 @@ TEST_F(ExportEngineV2Monomorphic, OffsetIsAppliedExactlyOnce) {
       QueryPlanner qp{qec_,
                       std::make_shared<ad_utility::CancellationHandle<>>()};
       auto qet = qp.createExecutionTree(pq);
-      ASSERT_TRUE(qet.handlesLimitOffset() == LimitOffsetHandling::FULL);
-      EXPECT_TRUE(ExportEngineV2::canHandle(pq, qet, mediaType));
+      ASSERT_TRUE(qet->getRootOperation()->handlesLimitOffset() ==
+                    LimitOffsetHandling::FULL);
+      EXPECT_TRUE(ExportEngineV2::canHandle(pq, *qet, mediaType));
       std::string legacy;
       {
         ad_utility::Timer timer{ad_utility::Timer::Started};
         for (const auto& block : ExportQueryExecutionTrees::computeResult(
-                 pq, qet, mediaType, timer,
+                 pq, *qet, mediaType, timer,
                  std::make_shared<ad_utility::CancellationHandle<>>())) {
           legacy += block;
         }
       }
       std::string v2;
       for (const auto& block : ExportEngineV2::computeResult(
-               pq, qet, mediaType,
+               pq, *qet, mediaType,
                std::make_shared<ad_utility::CancellationHandle<>>())) {
         v2 += block;
       }
