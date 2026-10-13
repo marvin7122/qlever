@@ -319,3 +319,19 @@ TEST(QueryExecutionTree, constructorRequiresQecAndRootOperation) {
       QueryExecutionTree(qec, nullptr),
       ::testing::HasSubstr("Assertion `rootOperation_ != nullptr` failed."));
 }
+
+// Work that may outlive the context (export helper tasks) holds the index via
+// `getIndexSharedPtr`; it must alias `getIndex()` and share ownership.
+TEST(QueryExecutionContext, getIndexSharedPtrSharesOwnershipOfTheIndex) {
+  auto* qec = getQec();
+  const auto index = qec->getIndexSharedPtr();
+  ASSERT_NE(index, nullptr);
+  EXPECT_EQ(index.get(), &qec->getIndex());
+  const auto useCount = index.use_count();
+  {
+    const auto second = qec->getIndexSharedPtr();
+    EXPECT_EQ(second.get(), index.get());
+    EXPECT_EQ(index.use_count(), useCount + 1);
+  }
+  EXPECT_EQ(index.use_count(), useCount);
+}

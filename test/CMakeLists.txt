@@ -146,6 +146,8 @@ add_compile_definitions(QLEVER_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 add_subdirectory(engine)
 add_subdirectory(parser)
 add_subdirectory(index)
+
+addLinkAndDiscoverTestNoLibs(GTestHelpersTest)
 add_subdirectory(backports)
 add_subdirectory(rdfTypes)
 add_subdirectory(joinAlgorithms)
@@ -262,6 +264,17 @@ addLinkAndDiscoverTestNoLibs(RdfParserTest index)
 
 addLinkAndDiscoverTest(MultiColumnJoinTest engine)
 
+if (QLEVER_ENABLE_EXPORT_V2)
+    # The `server` library is not built for Emscripten (see
+    # `src/engine/CMakeLists.txt`); the scheduler test needs no `server`
+    # symbols, so link it only where the target exists.
+    if (TARGET server)
+        addLinkAndDiscoverTest(ElasticExportSchedulerTest engine server)
+    else ()
+        addLinkAndDiscoverTest(ElasticExportSchedulerTest engine)
+    endif ()
+endif ()
+
 addLinkAndDiscoverTest(IdTableTest qlever_util)
 
 addLinkAndDiscoverTest(TransitivePathTest engine)
@@ -327,6 +340,8 @@ addLinkAndDiscoverTest(SparqlExpressionTest sparqlExpressions index engine)
 addLinkAndDiscoverTest(SparqlExpressionMemberFunctionsTest sparqlExpressions index engine)
 
 addLinkAndDiscoverTest(StreamableBodyTest http)
+
+addLinkAndDiscoverTest(ScatterGatherHttpBodyTest http)
 
 addLinkAndDiscoverTest(StreamableGeneratorTest)
 
@@ -621,6 +636,9 @@ addLinkAndDiscoverTestNoLibs(ParallelExecutorTest)
 
 addLinkAndDiscoverTestNoLibs(IoUringManagerTest qlever_util)
 
+addLinkAndDiscoverTestNoLibs(VocabBlockCacheTest qlever_util)
+addLinkAndDiscoverTestNoLibs(ResidentFileMappingTest qlever_util)
+
 addLinkAndDiscoverTestNoLibs(VariantRangeFilterTest)
 
 addLinkAndDiscoverTest(ConstructTemplatePreprocessorTest engine)
@@ -630,7 +648,60 @@ addLinkAndDiscoverTest(ExternalValuesTest engine)
 
 addLinkAndDiscoverTest(ConstructBatchEvaluatorTest engine)
 
+addLinkAndDiscoverTest(FastExportStreamFormatterTest engine rdfEscaping)
+
 addLinkAndDiscoverTest(ExportIdsTest engine sparqlParser)
+
+addLinkAndDiscoverTest(ExportMorselPlannerTest engine)
+
+# Header-only util under export_v2; do not pull testUtil/index (cluster GCC
+# range-v3 needs -fpermissive for those translation units).
+addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
+# Serialize + pipeline smoke only; avoid engine/index (cluster GCC 11
+# range-v3 fails in IndexImpl / CompressedExternalIdTable). The standalone
+# `localVocab` lib (no `index` dependency) provides `LocalVocab::getWord`
+# used by the serialize path.
+# Requires the enabled pipeline (`PipelineMorselIntegration` pushes with
+# `runtimeEnabled_ = true` and expects `Accepted`).
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTestNoLibs(ExportEngineV2Test qlever_util global localVocab)
+    if (NOT SINGLE_TEST_BINARY)
+        target_compile_definitions(ExportEngineV2Test PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+    endif()
+endif ()
+
+# Byte identity of the V2 serializer with and without
+# `MonomorphicRowSerializer` against Legacy; needs a test index.
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(ExportEngineV2MonomorphicTest engine sparqlParser)
+endif ()
+
+addLinkAndDiscoverTest(ColumnLatticeTest engine sparqlParser)
+
+# The enabled-pipeline tests require `QLEVER_ENABLE_EXPORT_V2` (off in the
+# reduced C++17 feature set, which lacks `cppcoro::generator`): they
+# static-assert the compiled-in switch or expect accepted pushes.
+if (QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(AsyncChunkPipelineTest)
+    if (NOT SINGLE_TEST_BINARY)
+        target_compile_definitions(AsyncChunkPipelineTest PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+    else ()
+        target_compile_definitions(QLeverAllUnitTestsMain PRIVATE QLEVER_ENABLE_EXPORT_V2=1)
+    endif()
+endif ()
+# The disabled-pipeline test asserts the compile-time switch is off, which is
+# impossible when `QLEVER_ENABLE_EXPORT_V2` is enabled (in particular, the
+# `SINGLE_TEST_BINARY` build defines it on the shared test main for all
+# tests). Only build it in the disabled configuration.
+if (NOT QLEVER_ENABLE_EXPORT_V2)
+    addLinkAndDiscoverTest(AsyncChunkPipelineDisabledTest)
+endif ()
+
+addLinkAndDiscoverTest(ExportPipelineRouterTest engine sparqlParser)
+
+addLinkAndDiscoverTestNoLibs(MonomorphicSerializersTest)
+addLinkAndDiscoverTestNoLibs(SimdEscapeClassifierTest)
+addLinkAndDiscoverTest(VectorStreamSourceTest engine)
 
 addLinkAndDiscoverTestNoLibs(EnumWithStringsTest Boost::program_options)
 
@@ -651,3 +722,5 @@ addLinkAndDiscoverTest(MetricsTest metrics)
 addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
+
+addLinkAndDiscoverTestNoLibs(AdaptiveChunkSizerTest qlever_util)

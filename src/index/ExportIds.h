@@ -14,6 +14,7 @@
 #define QLEVER_SRC_INDEX_EXPORTIDS_H
 
 #include <array>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -26,10 +27,13 @@
 #include "index/Index.h"
 #include "index/IndexImpl.h"
 #include "index/LocalVocab.h"
+#include "index/vocabulary/VocabularyTypes.h"
 #include "parser/LiteralOrIri.h"
 #include "util/Algorithm.h"
 #include "util/CompilerExtensions.h"
 #include "util/Exception.h"
+#include "util/Log.h"
+#include "util/LruCacheWithStatistics.h"
 #include "util/ValueIdentity.h"
 
 namespace ql::exportIds {
@@ -229,6 +233,168 @@ std::optional<std::pair<std::string, const char*>> idToStringAndType(
   }
 }
 
+// Bounded cache for the SELECT export path that maps an `Id` to the result of
+// `idToStringAndType`. The cached strings are post-escaping, so one instance
+// serves a single call site (fixed template arguments and escape function).
+//
+// `Id`s of type `LocalVocabIndex` are never cached: they point into a
+// `LocalVocab` that can be destroyed while the export is still running (lazy
+// results free each block's vocabulary after it is exported), after which the
+// same address, and hence the same `Id`, can denote a different word. All
+// other `Id`s resolve identically for the whole export (the on-disk
+// vocabulary is static, the other datatypes are encoded in the `Id` bits).
+class IdToStringAndTypeCache {
+ public:
+  using Value = std::optional<std::pair<std::string, const char*>>;
+
+  // Default capacity: one cache per export call site shared by all columns.
+  // Bounds memory on distinct-heavy results while keeping frequent terms
+  // resident.
+  static constexpr size_t DEFAULT_CAPACITY = 1 << 16;
+  // Default admission window and threshold, see `Config`.
+  static constexpr size_t DEFAULT_WINDOW_SIZE = 1 << 13;
+  static constexpr double DEFAULT_MIN_HIT_RATE = 0.25;
+
+  // `capacity_ == 0` disables the cache: every lookup is computed directly.
+  // Otherwise the hit rate is checked after every `windowSize_` cached
+  // lookups. If the hit rate of that window is below `minHitRate_`, the cache
+  // is switched off for the rest of the export: on results with mostly
+  // distinct terms, the hash lookup, the LRU bookkeeping and the copy of every
+  // missed string into the cache cost more than the few hits save.
+  // `windowSize_ == 0` or `minHitRate_ <= 0` disables this check.
+  struct Config {
+    size_t capacity_ = DEFAULT_CAPACITY;
+    size_t windowSize_ = DEFAULT_WINDOW_SIZE;
+    double minHitRate_ = DEFAULT_MIN_HIT_RATE;
+  };
+
+ private:
+  // Empty iff the cache is disabled by `capacity_ == 0`.
+  std::optional<ad_utility::util::LRUCacheWithStatistics<Id, Value>> cache_;
+  size_t windowSize_;
+  double minHitRate_;
+  // False once a window's hit rate fell below `minHitRate_`.
+  bool enabled_;
+  // Number of hits at the start of the current window.
+  uint64_t hitsAtWindowStart_ = 0;
+  // Lookups computed directly because the cache is disabled (excludes the
+  // `LocalVocabIndex` `Id`s, which are never cached).
+  uint64_t bypassed_ = 0;
+  // Holds the result of every lookup that does not go through the cache, so
+  // that `cachedIdToStringAndType` can return a reference in every case. It is
+  // overwritten by the next such lookup.
+  Value uncached_;
+
+ public:
+  explicit IdToStringAndTypeCache(const Config& config)
+      : windowSize_{config.windowSize_},
+        minHitRate_{config.minHitRate_},
+        enabled_{config.capacity_ > 0} {
+    if (enabled_) {
+      cache_.emplace(config.capacity_);
+    }
+  }
+  explicit IdToStringAndTypeCache(size_t capacity)
+      : IdToStringAndTypeCache{Config{capacity, 0, 0.0}} {}
+
+  // Log the statistics of an export that used the cache.
+  ~IdToStringAndTypeCache() {
+    if (stats().totalLookups() + bypassed_ > 0) {
+      AD_LOG_INFO << "SELECT export term cache: capacity "
+                  << (cache_.has_value() ? cache_->capacity() : 0) << ", "
+                  << stats().hits_ << " hits, " << stats().misses_
+                  << " misses, " << bypassed_ << " bypassed, "
+                  << (enabled_ ? "enabled" : "disabled") << " at the end"
+                  << std::endl;
+    }
+  }
+
+  IdToStringAndTypeCache(const IdToStringAndTypeCache&) = delete;
+  IdToStringAndTypeCache& operator=(const IdToStringAndTypeCache&) = delete;
+
+  // Return the cached value for `id`, computing it with `compute()` on a miss.
+  // `LocalVocabIndex` `Id`s bypass the cache (see above), and so does every
+  // `Id` once the cache is disabled. The reference is valid until the next
+  // call.
+  template <typename Compute>
+  const Value& getOrCompute(Id id, const Compute& compute) {
+    if (id.getDatatype() == Datatype::LocalVocabIndex) {
+      uncached_ = compute();
+      return uncached_;
+    }
+    if (!enabled_) {
+      ++bypassed_;
+      uncached_ = compute();
+      return uncached_;
+    }
+    const Value& result =
+        cache_->getOrCompute(id, [&compute](const Id&) { return compute(); });
+    // Only the admission flag changes below, the cached entry and therefore
+    // `result` stay valid.
+    checkWindow();
+    return result;
+  }
+
+  // True while lookups go through the cache.
+  bool enabled() const { return enabled_; }
+
+  // Lookups computed directly because the cache was disabled.
+  uint64_t bypassed() const { return bypassed_; }
+
+  const ad_utility::util::LRUCacheStats& stats() const {
+    static constexpr ad_utility::util::LRUCacheStats noStats{};
+    return cache_.has_value() ? cache_->stats() : noStats;
+  }
+
+ private:
+  // At the end of each window of `windowSize_` cached lookups, disable the
+  // cache if the window's hit rate is below `minHitRate_`.
+  void checkWindow() {
+    if (windowSize_ == 0 || minHitRate_ <= 0.0) {
+      return;
+    }
+    const auto& s = cache_->stats();
+    if (s.totalLookups() % windowSize_ != 0) {
+      return;
+    }
+    auto windowHits = s.hits_ - hitsAtWindowStart_;
+    hitsAtWindowStart_ = s.hits_;
+    if (static_cast<double>(windowHits) <
+        minHitRate_ * static_cast<double>(windowSize_)) {
+      enabled_ = false;
+    }
+  }
+};
+
+// Cached variant of `idToStringAndType` for the SELECT export path. Returns a
+// reference that is valid until the next lookup in `cache`.
+template <bool removeQuotesAndAngleBrackets = false,
+          bool returnOnlyLiterals = false, typename EscapeFunction>
+const IdToStringAndTypeCache::Value& cachedIdToStringAndType(
+    IdToStringAndTypeCache& cache, const Index& index, Id id,
+    const LocalVocab& localVocab, const EscapeFunction& escapeFunction) {
+  return cache.getOrCompute(id, [&]() {
+    return idToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+        index, id, localVocab, escapeFunction);
+  });
+}
+
+// Overload without an escape function (identity escaping). It forwards to the
+// function above with a persistent identity instance: a default-constructed
+// temporary would bind to the `escapeFunction` const reference while the
+// function returns a reference into the cache, which GCC flags as
+// `-Wdangling-reference` under `-Werror`.
+template <bool removeQuotesAndAngleBrackets = false,
+          bool returnOnlyLiterals = false>
+const IdToStringAndTypeCache::Value& cachedIdToStringAndType(
+    IdToStringAndTypeCache& cache, const Index& index, Id id,
+    const LocalVocab& localVocab) {
+  static constexpr ql::identity noEscape{};
+  return cachedIdToStringAndType<removeQuotesAndAngleBrackets,
+                                 returnOnlyLiterals>(cache, index, id,
+                                                     localVocab, noEscape);
+}
+
 // Positions (indices into the `ids` span) split by datatype: `VocabIndex` ids
 // (`vocabIndexIndices_`) need an on-disk vocabulary lookup and are batched
 // together: all others (`nonVocabIndexIndices_`) are resolved from the id bits
@@ -264,6 +430,39 @@ void resolveNonVocabIndexIds(
   });
 }
 
+// Split-phase building blocks of `resolveVocabIndexIds`:
+// `beginResolveVocabIndexIds` submits the vocabulary lookup for the
+// `VocabIndex` IDs at `positions` without blocking, and
+// `finishResolveVocabIndexIds` waits for it and writes each result into its
+// slot in `results`.
+inline std::unique_ptr<VocabLookupHandleBase> beginResolveVocabIndexIds(
+    const Index& index, ql::span<const Id> ids,
+    ql::span<const size_t> positions) {
+  auto rawIndices = ::ranges::to_vector(
+      positions | ql::views::transform([&ids](size_t i) {
+        return static_cast<size_t>(ids[i].getVocabIndex().get());
+      }));
+  return index.getImpl().getVocab().beginLookup(rawIndices);
+}
+
+template <bool removeQuotesAndAngleBrackets, bool returnOnlyLiterals,
+          typename EscapeFunction>
+void finishResolveVocabIndexIds(
+    const Index& index, ql::span<const size_t> positions,
+    std::unique_ptr<VocabLookupHandleBase> handle,
+    ql::span<std::optional<std::pair<std::string, const char*>>> results,
+    const EscapeFunction& escapeFunction) {
+  auto vocabStrings =
+      index.getImpl().getVocab().finishLookup(std::move(handle));
+  // `vocabStrings` is in the same order as `positions`, so zip scatters each
+  // looked-up string back to the position it came from.
+  for (auto&& [sv, i] : ::ranges::views::zip(vocabStrings, positions)) {
+    results[i] = literalOrIriToStringAndType<removeQuotesAndAngleBrackets,
+                                             returnOnlyLiterals>(
+        LiteralOrIriView::fromStringRepresentation(sv), escapeFunction);
+  }
+}
+
 // Resolve the `VocabIndex` IDs at `positions` in a single batched vocabulary
 // lookup, writing each result into its slot in `results`.
 template <bool removeQuotesAndAngleBrackets, bool returnOnlyLiterals,
@@ -284,19 +483,9 @@ void resolveVocabIndexIds(
   // NOTE: The batch is deliberately not sorted by vocabulary position: the
   // io_uring backend reorders the reads anyway, and only the synchronous
   // fallback could profit from sequential file access.
-  auto rawIndices = ::ranges::to_vector(
-      positions | ql::views::transform([&ids](size_t i) {
-        return static_cast<size_t>(ids[i].getVocabIndex().get());
-      }));
-  auto vocabStrings = index.getImpl().getVocab().lookupBatch(rawIndices);
-
-  // `vocabStrings` is in the same order as `positions`, so zip scatters each
-  // looked-up string back to the position it came from.
-  for (auto&& [sv, i] : ::ranges::views::zip(*vocabStrings, positions)) {
-    results[i] = literalOrIriToStringAndType<removeQuotesAndAngleBrackets,
-                                             returnOnlyLiterals>(
-        LiteralOrIriView::fromStringRepresentation(sv), escapeFunction);
-  }
+  finishResolveVocabIndexIds<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+      index, positions, beginResolveVocabIndexIds(index, ids, positions),
+      results, escapeFunction);
 }
 
 // Batch variant of `idToStringAndType`. We cannot assume that the `VocabIndex`
@@ -322,6 +511,67 @@ idsToStringAndType(const Index& index, ql::span<const Id> ids,
   resolveVocabIndexIds<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
       index, ids, positions.vocabIndexIndices_, results, escapeFunction);
 
+  return results;
+}
+
+// Depth-2 pipeline over many vocab sub-batches: submit the next sub-batch's
+// lookup before consuming the current one, so its reads are in flight while
+// the current batch is consumed. Each sub-batch is at most 256 indices so
+// `beginLookup` stays non-blocking: `addBatch` drains once in-flight reads
+// reach the default ring size (256). Depth-2 uses two pooled managers, not
+// one 512-slot ring.
+constexpr size_t maxVocabIndicesPerSubBatch = 256;
+
+template <bool removeQuotesAndAngleBrackets = false,
+          bool returnOnlyLiterals = false,
+          typename EscapeFunction = ql::identity>
+std::vector<std::optional<std::pair<std::string, const char*>>>
+idsToStringAndTypeDepth2(
+    const Index& index, ql::span<const Id> ids, const LocalVocab& localVocab,
+    const EscapeFunction& escapeFunction = EscapeFunction{}) {
+  std::vector<std::optional<std::pair<std::string, const char*>>> results(
+      ids.size());
+
+  PartitionedIdPositions positions = partitionIdPositions(ids);
+  resolveNonVocabIndexIds<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+      index, ids, localVocab, positions.nonVocabIndexIndices_, results,
+      escapeFunction);
+
+  const auto vocabPositions =
+      ql::span<const size_t>{positions.vocabIndexIndices_};
+  const size_t numVocabIndices = vocabPositions.size();
+  if (numVocabIndices == 0) {
+    return results;
+  }
+  // Submit the first sub-batch's lookup, then walk the remaining sub-batches
+  // in a depth-2 pipeline: each iteration submits the next sub-batch's lookup
+  // before finishing the current one, so the next batch's reads are in flight
+  // while the current batch is consumed.
+  auto handle = beginResolveVocabIndexIds(
+      index, ids,
+      vocabPositions.subspan(
+          0, std::min(maxVocabIndicesPerSubBatch, numVocabIndices)));
+  size_t batchStart = 0;
+  size_t batchSize = std::min(maxVocabIndicesPerSubBatch, numVocabIndices);
+  while (handle) {
+    const size_t batchEnd = batchStart + batchSize;
+    std::unique_ptr<VocabLookupHandleBase> nextHandle;
+    if (batchEnd < numVocabIndices) {
+      nextHandle = beginResolveVocabIndexIds(
+          index, ids,
+          vocabPositions.subspan(batchEnd,
+                                 std::min(maxVocabIndicesPerSubBatch,
+                                          numVocabIndices - batchEnd)));
+    }
+    finishResolveVocabIndexIds<removeQuotesAndAngleBrackets,
+                               returnOnlyLiterals>(
+        index, vocabPositions.subspan(batchStart, batchSize), std::move(handle),
+        results, escapeFunction);
+    handle = std::move(nextHandle);
+    batchStart = batchEnd;
+    batchSize =
+        std::min(maxVocabIndicesPerSubBatch, numVocabIndices - batchStart);
+  }
   return results;
 }
 
