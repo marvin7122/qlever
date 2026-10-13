@@ -76,7 +76,7 @@ Exports runAllEngines(
     auto [qet, handle] = plan();
     ad_utility::Timer timer{ad_utility::Timer::Started};
     for (const auto& block : ExportQueryExecutionTrees::computeResult(
-             parsed, qet, mediaType, timer, handle)) {
+             parsed, *qet, mediaType, timer, handle)) {
       result.legacy_ += block;
     }
   }
@@ -85,16 +85,16 @@ Exports runAllEngines(
   // Legacy byte for byte below.
   {
     auto [qet, handle] = plan();
-    EXPECT_TRUE(ExportEngineV2::canHandle(parsed, qet, mediaType)) << query;
+    EXPECT_TRUE(ExportEngineV2::canHandle(parsed, *qet, mediaType)) << query;
     for (const auto& block : ExportEngineV2::computeResult(
-             parsed, qet, mediaType, handle, scheduler)) {
+             parsed, *qet, mediaType, handle, scheduler)) {
       result.v2String_ += block;
     }
   }
   {
     auto [qet, handle] = plan();
     for (const auto& chunk : ExportEngineV2::computeResultChunks(
-             parsed, qet, mediaType, handle, scheduler)) {
+             parsed, *qet, mediaType, handle, scheduler)) {
       result.v2Chunks_ += chunk.toString();
     }
   }
@@ -117,10 +117,10 @@ void expectUnsupportedFallsBackToLegacy(
     auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
     QueryPlanner qp{qec, handle};
     auto qet = qp.createExecutionTree(parsed);
-    EXPECT_FALSE(ExportEngineV2::canHandle(parsed, qet, mediaType)) << query;
+    EXPECT_FALSE(ExportEngineV2::canHandle(parsed, *qet, mediaType)) << query;
     ad_utility::Timer timer{ad_utility::Timer::Started};
     for (const auto& block : ExportQueryExecutionTrees::computeResult(
-             parsed, qet, mediaType, timer, handle)) {
+             parsed, *qet, mediaType, timer, handle)) {
       legacy += block;
     }
   }
@@ -129,7 +129,7 @@ void expectUnsupportedFallsBackToLegacy(
     QueryPlanner qp{qec, handle};
     auto qet = qp.createExecutionTree(parsed);
     for (const auto& block :
-         ExportEngineV2::computeResult(parsed, qet, mediaType, handle)) {
+         ExportEngineV2::computeResult(parsed, *qet, mediaType, handle)) {
       v2 += block;
     }
   }
@@ -139,8 +139,8 @@ void expectUnsupportedFallsBackToLegacy(
     QueryPlanner qp{qec, handle};
     auto qet = qp.createExecutionTree(parsed);
     std::string v2Chunks;
-    for (const auto& chunk :
-         ExportEngineV2::computeResultChunks(parsed, qet, mediaType, handle)) {
+    for (const auto& chunk : ExportEngineV2::computeResultChunks(
+             parsed, *qet, mediaType, handle)) {
       v2Chunks += chunk.toString();
     }
     EXPECT_EQ(v2Chunks, legacy)
