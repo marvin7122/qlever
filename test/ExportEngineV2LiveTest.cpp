@@ -179,6 +179,7 @@ const std::string kg = R"(
 <http://example.org/13> <http://example.org/label> "Ein ziemlich langes Literal, das die externe Vokabel trifft"@de .
 <http://example.org/14> <http://example.org/label> "short"@en .
 <http://example.org/15> <http://example.org/label> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> .
+<http://example.org/16> <http://example.org/label> <http://example.org/x,y> .
 <http://other.org/a> <http://example.org/label> "subject not encoded" .
 _:b2 <http://example.org/label> "blank subject" .
 )";
