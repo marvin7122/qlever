@@ -1,0 +1,42 @@
+name: Bot Autofix
+
+# CodeRabbit-style auto-fixer on our own runner: when the `autofix`
+# label is added, collect bot inline findings, fix with Qwen 3 Coder
+# via OpenRouter, verify the patches apply cleanly, and push one
+# commit to the PR branch. The label is removed after the run;
+# re-add it to run again. Internal PRs only (fork runs get no key).
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: autofix-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  fix:
+    if: >-
+      github.event.label.name == 'autofix' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Apply bot findings
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MAX_FINDINGS: "10"
+        run: python3 .github/scripts/autofix.py
