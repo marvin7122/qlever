@@ -624,6 +624,7 @@ addLinkAndDiscoverTestNoLibs(IoUringManagerTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(VocabBlockCacheTest qlever_util)
 addLinkAndDiscoverTestNoLibs(ResidentFileMappingTest qlever_util)
+addLinkAndDiscoverTestNoLibs(BufferPoolTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(VariantRangeFilterTest)
 
