@@ -193,17 +193,31 @@ VocabularyOnDisk::submitThroughManager(ad_utility::BatchManagerBase& manager,
 
 // _____________________________________________________________________________
 VocabularyOnDisk::BufferPools* VocabularyOnDisk::bufferPools(
-    size_t totalBudget) const {
-  if (totalBudget == 0 || bufferPools_ == nullptr || bufferPools_->failed_) {
+    size_t totalBudget, bool elastic, size_t reserve) const {
+  if ((totalBudget == 0 && !elastic) || bufferPools_ == nullptr ||
+      bufferPools_->failed_) {
     return nullptr;
   }
   auto& pools = *bufferPools_;
-  if (pools.budget_.load() == totalBudget) {
+  if (elastic) {
+    // The controller sets the budgets; keep its bounds current (cheap).
+    auto& controller = ad_utility::BufferPoolBudgetController::global();
+    controller.setExplicitCeiling(totalBudget);
+    controller.setReserve(reserve);
+    if (pools.elastic_.load()) {
+      return &pools;
+    }
+  } else if (!pools.elastic_.load() && pools.budget_.load() == totalBudget) {
     return &pools;
   }
   std::lock_guard lock{pools.mutex_};
   if (pools.failed_) {
     return nullptr;
+  }
+  if (elastic) {
+    // Start at the floor; the controller grows the budget while memory is
+    // free.
+    totalBudget = ad_utility::BufferPoolBudgetConfig{}.floorBytes;
   }
   const auto wordsSize =
       static_cast<size_t>(ql::filesystem::file_size(pools.filename_));
@@ -228,16 +242,31 @@ VocabularyOnDisk::BufferPools* VocabularyOnDisk::bufferPools(
       return nullptr;
     }
     AD_LOG_INFO << "Vocabulary buffer pools for " << pools.filename_ << ": "
-                << wordsBudget << " + " << offsetsBudget << " bytes, "
-                << (words->usesDirectIo() ? "O_DIRECT" : "page cache")
+                << wordsBudget << " + " << offsetsBudget << " bytes"
+                << (elastic ? " (elastic budget, starting at the floor)" : "")
+                << ", " << (words->usesDirectIo() ? "O_DIRECT" : "page cache")
                 << std::endl;
     pools.words_ = std::move(words);
     pools.offsets_ = std::move(offsets);
-  } else {
+  } else if (!elastic) {
+    // Switching from the elastic to a fixed budget: stop the controller from
+    // setting the budgets first.
+    pools.elasticRegistration_.reset();
+    pools.elastic_ = false;
     pools.words_->setBudget(wordsBudget);
     pools.offsets_->setBudget(offsetsBudget);
   }
-  pools.budget_ = totalBudget;
+  if (elastic) {
+    if (pools.elasticRegistration_ == nullptr) {
+      pools.elasticRegistration_ =
+          ad_utility::BufferPoolBudgetController::global().add(
+              {pools.words_.get(), pools.offsets_.get()});
+    }
+    pools.elastic_ = true;
+    pools.budget_ = 0;
+  } else {
+    pools.budget_ = totalBudget;
+  }
   return &pools;
 }
 
@@ -394,7 +423,9 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
   // hits from memory and loads the misses in one batch), so nothing is
   // submitted here.
   handle->bufferPools_ = bufferPools(
-      getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolSize_>());
+      getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolSize_>(),
+      getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolAuto_>(),
+      getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolReserve_>());
   if (handle->bufferPools_ != nullptr) {
     return handle;
   }
