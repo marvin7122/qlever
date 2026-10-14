@@ -64,11 +64,11 @@ def gh_paged(path):
         page += 1
 
 
-def sh(*args, check=True):
-    r = subprocess.run(args, capture_output=True, text=True)
+def git(*args, check=True):
+    r = subprocess.run(["git", *args], capture_output=True, text=True)
     if check and r.returncode != 0:
         print(r.stdout[-2000:], r.stderr[-2000:])
-        raise SystemExit(f"command failed: {args}")
+        raise SystemExit(f"git command failed: {args}")
     return r
 
 
@@ -165,11 +165,11 @@ def fix_one(path, line, body, allowed):
         return False
     with open("/tmp/autofix.patch", "w") as f:
         f.write(diff)
-    r = sh("git", "apply", "--check", "/tmp/autofix.patch", check=False)
+    r = git("apply", "--check", "/tmp/autofix.patch", check=False)
     if r.returncode != 0:
         print(f"skip {path}: patch does not apply cleanly")
         return False
-    sh("git", "apply", "/tmp/autofix.patch")
+    git("apply", "/tmp/autofix.patch")
     print(f"applied fix for {path}:{line}")
     return True
 
@@ -188,23 +188,23 @@ def main():
     for f in findings:
         ok = fix_one(f["path"], f["line"], f["body"], allowed)
         (applied if ok else skipped).append(f"{f['path']}:{f['line']}")
-    status = sh("git", "status", "--short").stdout.strip()
+    status = git("status", "--short").stdout.strip()
     if not status:
         summary = "Autofix: nothing applied, everything skipped."
     else:
-        r = sh("git", "diff", "--check", check=False)
+        r = git("diff", "--check", check=False)
         if r.returncode != 0:
             print("whitespace errors, aborting push")
-            sh("git", "checkout", "--", ".")
+            git("checkout", "--", ".")
             gh("POST", f"/repos/{REPO}/issues/{PR}/comments",
                {"body": "Autofix: patches failed the whitespace check, "
                         "nothing was pushed."})
             return
-        sh("git", "add", "-A")
-        sh("git", "-c", "user.name=autofix-bot",
-           "-c", "user.email=autofix-bot@users.noreply.github.com",
-           "commit", "-m", "autofix: apply bot review findings")
-        sh("git", "push", "origin", f"HEAD:{pr['head']['ref']}")
+        git("add", "-A")
+        git("-c", "user.name=autofix-bot",
+            "-c", "user.email=autofix-bot@users.noreply.github.com",
+            "commit", "-m", "autofix: apply bot review findings")
+        git("push", "origin", f"HEAD:refs/heads/{pr['head']['ref']}")
         summary = (
             f"Autofix applied {len(applied)} finding(s), "
             f"skipped {len(skipped)}.\n"
