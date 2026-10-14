@@ -8,6 +8,7 @@
 
 #include "util/ResidentFileMapping.h"
 
+#include <algorithm>
 #include <cstring>
 #include <utility>
 #include <vector>
@@ -126,11 +127,19 @@ void ResidentFileMapping::markResident(uint64_t offset, size_t numBytes) const {
 // _____________________________________________________________________________
 std::vector<size_t> ResidentFileMapping::tryReadAll(
     ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
-    ql::span<char*> buffers) const {
+    ql::span<char*> buffers, size_t prefetchDistance) const {
   AD_CONTRACT_CHECK(offsets.size() == numBytes.size() &&
                     buffers.size() == numBytes.size());
   std::vector<size_t> notServed;
-  for (size_t i = 0; i < numBytes.size(); ++i) {
+  const size_t n = numBytes.size();
+  // Warm-up: the first `prefetchDistance` reads.
+  for (size_t i = 0; i < std::min(prefetchDistance, n); ++i) {
+    prefetch(offsets[i], numBytes[i]);
+  }
+  for (size_t i = 0; i < n; ++i) {
+    if (prefetchDistance > 0 && i + prefetchDistance < n) {
+      prefetch(offsets[i + prefetchDistance], numBytes[i + prefetchDistance]);
+    }
     if (!tryRead(offsets[i], numBytes[i], buffers[i])) {
       notServed.push_back(i);
     }

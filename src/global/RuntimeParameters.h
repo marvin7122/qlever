@@ -256,6 +256,12 @@ struct RuntimeParameters {
   // reads take the paths above.
   Bool vocabularyMmapResidentReads_{true, "vocabulary-mmap-resident-reads"};
 
+  // How many reads ahead `vocabulary-mmap-resident-reads` prefetches the source
+  // bytes of a batch (see `ResidentFileMapping::tryReadAll`); 0 disables the
+  // prefetch.
+  SizeT vocabularyMmapPrefetchDistance_{16,
+                                        "vocabulary-mmap-prefetch-distance"};
+
   // If set to true, loading a vocabulary that keeps some of its words in RAM
   // (`VocabularyInternalExternal`) also builds a bit vector with one bit per
   // vocabulary index plus rank counters (see `ad_utility::BitVectorWithRank`).

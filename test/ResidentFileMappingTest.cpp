@@ -98,6 +98,17 @@ TEST(ResidentFileMapping, servesOnlyMarkedPages) {
     EXPECT_EQ(buffers[i], contents.substr(offsets[i], 4));
   }
 
+  // The prefetch distance does not change the result, also when it exceeds
+  // the number of reads.
+  for (size_t distance : {size_t{1}, size_t{2}, size_t{3}, size_t{100}}) {
+    std::vector<std::string> other(3, std::string(4, 'Y'));
+    std::vector<char*> otherTargets{other[0].data(), other[1].data(),
+                                    other[2].data()};
+    EXPECT_THAT(mapping.tryReadAll(numBytes, offsets, otherTargets, distance),
+                ::testing::IsEmpty());
+    EXPECT_EQ(other, buffers);
+  }
+
   // A moved-to mapping keeps the marks; the moved-from one serves nothing.
   ResidentFileMapping moved = std::move(mapping);
   EXPECT_TRUE(moved.tryRead(1, 4, target.data()));

@@ -216,7 +216,10 @@ std::vector<size_t> VocabularyOnDisk::readResidentOrPageCacheHits(
   }
   // The reads that the mapping could not serve, compacted (in order, so that
   // adjacent ranges are still coalesced by `readPageCacheHits`).
-  auto candidates = mapping->tryReadAll(numBytes, offsets, buffers);
+  auto candidates = mapping->tryReadAll(
+      numBytes, offsets, buffers,
+      getRuntimeParameter<
+          &RuntimeParameters::vocabularyMmapPrefetchDistance_>());
   if (candidates.empty()) {
     return candidates;
   }

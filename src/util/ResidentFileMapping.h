@@ -78,9 +78,16 @@ class ResidentFileMapping {
   // Serve every read `i` (`numBytes[i]` bytes at `offsets[i]` into
   // `buffers[i]`) whose pages are known resident via `tryRead`, and return the
   // indices (ascending) of the reads that were not served.
+  //
+  // With `prefetchDistance > 0`, while read `i` is served, the source bytes of
+  // read `i + prefetchDistance` are prefetched. The reads of a batch are
+  // scattered over a large mapping, so each copy otherwise waits for a cache
+  // miss and often a TLB miss (page walk); prefetching overlaps these waits.
+  // The result does not depend on `prefetchDistance`.
   std::vector<size_t> tryReadAll(ql::span<const size_t> numBytes,
                                  ql::span<const uint64_t> offsets,
-                                 ql::span<char*> buffers) const;
+                                 ql::span<char*> buffers,
+                                 size_t prefetchDistance = 0) const;
 
   // `markResident` for the reads at `positions`.
   void markAllResident(ql::span<const size_t> numBytes,
@@ -92,6 +99,18 @@ class ResidentFileMapping {
   size_t size_ = 0;
   size_t numBitWords_ = 0;
   std::unique_ptr<std::atomic<uint64_t>[]> residentBits_;
+
+  // Prefetch the first and the last cache line of the range `[offset, offset +
+  // numBytes)` if it lies within the mapping (a hint only: no effect on the
+  // result, and nothing happens for ranges outside the file).
+  void prefetch(uint64_t offset, size_t numBytes) const {
+    if (data_ == nullptr || numBytes == 0 || offset > size_ ||
+        numBytes > size_ - offset) {
+      return;
+    }
+    __builtin_prefetch(data_ + offset, 0, 3);
+    __builtin_prefetch(data_ + offset + numBytes - 1, 0, 3);
+  }
 
   // The pages `[firstPage, lastPage]` of a non-empty range within the file.
   std::pair<size_t, size_t> pagesOf(uint64_t offset, size_t numBytes) const {
