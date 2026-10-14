@@ -119,7 +119,7 @@ class RdfParserBase {
   // The settings of this parser, see `RdfParserSettings`.
   RdfParserSettings settings_;
 
-  const EncodedIriManager* encodedIriManager_;
+  const ad_utility::vocabulary::EncodedIriManager* encodedIriManager_;
 
   // The name of the input that this parser reads (typically a filename, see
   // `qlever::InputFileSpecification::filename`), used in error messages. It is
@@ -130,8 +130,9 @@ class RdfParserBase {
  public:
   virtual ~RdfParserBase() = default;
 
-  explicit RdfParserBase(const EncodedIriManager* encodedIriManager,
-                         RdfParserSettings settings = {})
+  explicit RdfParserBase(
+      const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
+      RdfParserSettings settings = {})
       : settings_{settings}, encodedIriManager_{encodedIriManager} {}
 
   // The settings of this parser, see `RdfParserSettings`.
@@ -214,7 +215,7 @@ class TurtleParser : public RdfParserBase {
   static TripleComponent literalAndDatatypeToTripleComponent(
       std::string_view normalizedLiteralContent,
       const TripleComponent::Iri& typeIri,
-      const EncodedIriManager& encodedIriManager);
+      const ad_utility::vocabulary::EncodedIriManager& encodedIriManager);
 
  private:
   // Impl of the method above, also used in rdfLiteral parsing. Stores the
@@ -311,12 +312,13 @@ class TurtleParser : public RdfParserBase {
   bool useSimplifiedGrammar_ = false;
 
  public:
-  explicit TurtleParser(const EncodedIriManager* encodedIriManager,
-                        RdfParserSettings settings = {})
+  explicit TurtleParser(
+      const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
+      RdfParserSettings settings = {})
       : RdfParserBase{encodedIriManager, settings} {}
-  explicit TurtleParser(const EncodedIriManager* encodedIriManager,
-                        TripleComponent defaultGraphIri,
-                        RdfParserSettings settings = {})
+  explicit TurtleParser(
+      const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
+      TripleComponent defaultGraphIri, RdfParserSettings settings = {})
       : RdfParserBase{encodedIriManager, settings},
         defaultGraphIri_{std::move(defaultGraphIri)} {}
   TurtleParser(TurtleParser&& rhs) noexcept = default;
@@ -501,10 +503,10 @@ class NQuadParser : public TurtleParser<Tokenizer_T> {
   using Base = TurtleParser<Tokenizer_T>;
 
  public:
-  explicit NQuadParser(const EncodedIriManager* ev,
+  explicit NQuadParser(const ad_utility::vocabulary::EncodedIriManager* ev,
                        RdfParserSettings settings = {})
       : Base{ev, settings} {}
-  explicit NQuadParser(const EncodedIriManager* ev,
+  explicit NQuadParser(const ad_utility::vocabulary::EncodedIriManager* ev,
                        TripleComponent defaultGraphId,
                        RdfParserSettings settings = {})
       : Base{ev, settings}, defaultGraphId_{std::move(defaultGraphId)} {}
@@ -530,12 +532,13 @@ CPP_template(typename Parser)(requires ql::concepts::derived_from<
  public:
   using Parser::baseIri;
   using Parser::prefixMap;
-  explicit RdfStringParser(const EncodedIriManager* encodedIriManager,
-                           RdfParserSettings settings = {})
+  explicit RdfStringParser(
+      const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
+      RdfParserSettings settings = {})
       : Parser{encodedIriManager, settings} {}
-  explicit RdfStringParser(const EncodedIriManager* encodedIriManager,
-                           TripleComponent defaultGraph,
-                           RdfParserSettings settings = {})
+  explicit RdfStringParser(
+      const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
+      TripleComponent defaultGraph, RdfParserSettings settings = {})
       : Parser{encodedIriManager, std::move(defaultGraph), settings} {}
   using Parser::getBatch;
   std::optional<std::vector<TurtleTriple>> getBatch(
@@ -571,7 +574,7 @@ CPP_template(typename Parser)(requires ql::concepts::derived_from<
   // Parse only a single object.
   static TripleComponent parseTripleObject(std::string_view objectString) {
     // TODO<joka921> Make it possible to use an optional here.
-    EncodedIriManager encodedIriManager;
+    ad_utility::vocabulary::EncodedIriManager encodedIriManager;
     RdfStringParser parser{&encodedIriManager};
     parser.setInputStream(objectString);
     parser.object();
@@ -663,7 +666,7 @@ class RdfStreamParser : public Parser {
   // `blocksize` parameter controls the size of the underlying I/O block buffer.
   explicit RdfStreamParser(const qlever::InputFileSpecification& spec,
                            ad_utility::MemorySize blocksize,
-                           const EncodedIriManager* ev,
+                           const ad_utility::vocabulary::EncodedIriManager* ev,
                            TripleComponent defaultGraphIri =
                                qlever::specialIds().at(DEFAULT_GRAPH_IRI),
                            RdfParserSettings settings = {})
@@ -722,7 +725,7 @@ class RdfStreamParser : public Parser {
 template <typename Parser>
 class RdfParallelParsingState {
  private:
-  const EncodedIriManager* encodedIriManager_;
+  const ad_utility::vocabulary::EncodedIriManager* encodedIriManager_;
   TripleComponent defaultGraphIri_;
 
   // The header of the input file, parsed once by `parseHeaderStep` and then set
@@ -756,10 +759,10 @@ class RdfParallelParsingState {
   std::string inputName_;
 
  public:
-  RdfParallelParsingState(const EncodedIriManager* encodedIriManager,
-                          TripleComponent defaultGraphIri,
-                          std::string inputName,
-                          RdfParserSettings settings = {})
+  RdfParallelParsingState(
+      const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
+      TripleComponent defaultGraphIri, std::string inputName,
+      RdfParserSettings settings = {})
       : encodedIriManager_{encodedIriManager},
         defaultGraphIri_{std::move(defaultGraphIri)},
         settings_{settings},
@@ -835,7 +838,7 @@ class RdfMultifileParser : public RdfParserBase {
   // construction.
   RdfMultifileParser(
       ad_utility::InputRangeTypeErased<qlever::InputFileSpecification> files,
-      const EncodedIriManager* encodedIriManager,
+      const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
       ad_utility::MemorySize bufferSize = DEFAULT_PARSER_BUFFER_SIZE,
       RdfParserSettings settings = {});
 

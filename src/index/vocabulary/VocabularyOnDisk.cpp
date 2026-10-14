@@ -27,6 +27,8 @@
 #include "util/StringUtils.h"
 #include "util/Views.h"
 
+namespace ad_utility::vocabulary {
+
 using OffsetAndSize = VocabularyOnDisk::OffsetAndSize;
 
 // ____________________________________________________________________________
@@ -579,3 +581,5 @@ ad_utility::BatchReadOptions VocabularyOnDisk::batchReadOptions(
   }
   return options;
 }
+
+}  // namespace ad_utility::vocabulary

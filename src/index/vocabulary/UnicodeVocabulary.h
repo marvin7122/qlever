@@ -12,10 +12,14 @@
 #define QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H
 
 #include <memory>
+#include <string_view>
+#include <type_traits>
 
 #include "index/vocabulary/PolymorphicVocabulary.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Exception.h"
+
+namespace ad_utility::vocabulary {
 
 /// Vocabulary with multi-level `UnicodeComparator` that allows comparison
 /// according to different Levels. Groups of words that are adjacent on a
@@ -183,5 +187,7 @@ class UnicodeVocabulary {
     // Note: _comparator is not serialized as it's stateless or reconstructed.
   }
 };
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_UNICODEVOCABULARY_H

@@ -47,6 +47,8 @@ using LiteralOrIriView = ad_utility::triple_component::LiteralOrIriView;
 using Iri = ad_utility::triple_component::Iri;
 using IriView = ad_utility::triple_component::IriView;
 using Literal = ad_utility::triple_component::Literal;
+// Split-phase vocabulary lookup handles live in `ad_utility::vocabulary`.
+using ad_utility::vocabulary::VocabLookupHandleBase;
 
 // Convert the `id` to a `Literal`. Datatypes are always stripped, so for
 // literals (this includes IDs that directly store their value, like Doubles)
@@ -539,7 +541,10 @@ void resolveVocabIndexIds(
       }
       return;
     }
-    auto vocabStrings = index.getImpl().getVocab().lookupBatch(rawIndices);
+    ad_utility::vocabulary::ArenaVocabBatchBuilder builder(
+        rawIndices.size(), index.getImpl().allocator());
+    index.getImpl().getVocab().lookupBatch(rawIndices, builder);
+    auto vocabStrings = std::move(builder).finalize();
 
     // `vocabStrings` is in the same order as `positions`, so zip scatters each
     // looked-up string back to the position it came from.

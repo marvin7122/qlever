@@ -1735,7 +1735,7 @@ TEST(ParserTest, propertyPathInCollection) {
   std::string query =
       "PREFIX : <http://example.org/>\n"
       "SELECT * { ?s ?p ([:p* 123] [^:r \"hello\"]) }";
-  EncodedIriManager encodedIriManager;
+  ad_utility::vocabulary::EncodedIriManager encodedIriManager;
   EXPECT_THAT(
       SparqlParser::parseQuery(&encodedIriManager, std::move(query)),
       m::SelectQuery(
@@ -1817,8 +1817,10 @@ TEST(SparqlParser, EncodedIriManagerUsage) {
   using namespace sparqlParserTestHelpers;
 
   // Create a parse function that uses an `EncodedIriManager`.
-  auto encodedIriManager = std::make_shared<EncodedIriManager>(
-      std::vector<std::string>{"http://example.org/", "http://test.com/id/"});
+  auto encodedIriManager =
+      std::make_shared<ad_utility::vocabulary::EncodedIriManager>(
+          std::vector<std::string>{"http://example.org/",
+                                   "http://test.com/id/"});
 
   auto parseWithEncoding = [&](const std::string& input) {
     static ad_utility::BlankNodeManager blankNodeManager;

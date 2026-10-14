@@ -38,6 +38,8 @@
 #include "util/TypeTraits.h"
 #include "util/Views.h"
 
+namespace ad_utility::vocabulary {
+
 // _____________________________________________________________________________
 // Frozen owner of a batch's `string_view`s. Builders allocate and write, then
 // move the populated views and the backing storage into a derived class;
@@ -826,7 +828,6 @@ struct EagerVocabLookupHandle : VocabLookupHandleBase {
 // used by all vocabularies that do not provide a specialized
 // implementation. They simply loop over the indices and issue the ordinary
 // single-word `operator[]` lookups one after another.
-namespace ad_utility::vocabulary {
 
 // Detection trait: whether `Vocab` provides a split-phase `beginLookup` member
 // callable with a `ql::span<const size_t>`. This is the C++17-compatible
@@ -968,8 +969,6 @@ VocabLookupOutput lookupBatchesStreamed(const Vocab& vocab,
                              return vocab.lookupBatch(indices);
                            })};
 }
-
-}  // namespace ad_utility::vocabulary
 
 // _____________________________________________________________________________
 // A word and its index in the vocabulary from which it was obtained. Also
@@ -1129,5 +1128,7 @@ class WordWriterBase {
   // The base classes have to implement the actual logic for `finish` here.
   virtual void finishImpl() = 0;
 };
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYTYPES_H

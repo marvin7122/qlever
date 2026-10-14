@@ -140,23 +140,28 @@ struct LiteralsTokenizationDelimiter {
 
 /**
  * @brief A function that can be used to tokenize and normalize a given text.
- * @warning Both params are const refs where the original objects have to be
- * kept alive during the usage of the returned object.
  * @param text The text to be tokenized and normalized.
  * @param localeManager The localeManager to be used for normalization.
  * @details This function can be used in the following way:
  * for (auto normalizedWord : tokenizeAndNormalizeText(text, localeManager)) {
  *  code;
  * }
+ * NOTE: the returned `std::vector<std::string>` owns its words, so neither
+ * `text` nor `localeManager` has to outlive the result.
  */
-inline auto tokenizeAndNormalizeText(std::string_view text,
-                                     const LocaleManager& localeManager) {
+inline std::vector<std::string> tokenizeAndNormalizeText(
+    std::string_view text,
+    const ad_utility::vocabulary::LocaleManager& localeManager) {
   std::vector<std::string_view> split{
       absl::StrSplit(text, LiteralsTokenizationDelimiter{}, absl::SkipEmpty{})};
-  return ql::views::transform(std::move(split),
-                              [&localeManager](const auto& str) {
-                                return localeManager.getLowercaseUtf8(str);
-                              });
+  // Eager vector: `ql::views::transform` on a temporary vector fails to
+  // instantiate on the cluster range-v3 / GCC toolchains.
+  std::vector<std::string> result;
+  result.reserve(split.size());
+  for (const auto& str : split) {
+    result.push_back(localeManager.getLowercaseUtf8(str));
+  }
+  return result;
 }
 
 // Strip the surrounding quotes (and, for a literal with a datatype like a
@@ -177,19 +182,22 @@ inline std::string_view stripQuotesAndDatatype(std::string_view literal) {
  */
 class WordsAndDocsFileParser {
  public:
-  explicit WordsAndDocsFileParser(const std::string& wordsOrDocsFile,
-                                  const LocaleManager& localeManager);
+  explicit WordsAndDocsFileParser(
+      const std::string& wordsOrDocsFile,
+      const ad_utility::vocabulary::LocaleManager& localeManager);
   explicit WordsAndDocsFileParser(const WordsAndDocsFileParser& other) = delete;
   WordsAndDocsFileParser& operator=(const WordsAndDocsFileParser& other) =
       delete;
 
  protected:
   std::ifstream& getInputStream() { return in_; }
-  const LocaleManager& getLocaleManager() const { return localeManager_; }
+  const ad_utility::vocabulary::LocaleManager& getLocaleManager() const {
+    return localeManager_;
+  }
 
  private:
   std::ifstream in_;
-  LocaleManager localeManager_;
+  ad_utility::vocabulary::LocaleManager localeManager_;
 };
 
 /**

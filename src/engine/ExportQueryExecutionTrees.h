@@ -89,14 +89,6 @@ class ExportQueryExecutionTrees {
 #endif
 
  private:
-  // Make sure that the offset is not applied again when exporting the
-  // result (it is already applied by the root operation in the query
-  // execution tree). Note that we don't need this for the limit because
-  // applying a fixed limit is idempotent. This only works because the query
-  // planner does the exact same `handlesLimitOffset()` check.
-  static void compensateForLimitOffsetClause(
-      LimitOffsetClause& limitOffsetClause, const QueryExecutionTree& qet);
-
   // Generate the bindings of the result of a SELECT or CONSTRUCT query in the
   // `application/qlever-results+json` format.
   //
@@ -194,6 +186,15 @@ class ExportQueryExecutionTrees {
   static ad_utility::InputRangeTypeErased<TableWithRange> getRowIndices(
       const LimitOffsetClause& limitOffset, const Result& result,
       uint64_t& resutSizeTotal, uint64_t resultSizeMultiplicator = 1);
+
+  // Make sure that the offset is not applied again when exporting the
+  // result (it is already applied by the root operation in the query
+  // execution tree). Note that we don't need this for the limit because
+  // applying a fixed limit is idempotent. This only works because the query
+  // planner does the exact same `handlesLimitOffset()` check. Public so that
+  // the V2 export engine applies exactly the same compensation.
+  static void compensateForLimitOffsetClause(
+      LimitOffsetClause& limitOffsetClause, const QueryExecutionTree& qet);
 
  private:
   FRIEND_TEST(ExportQueryExecutionTrees, getIdTablesReturnsSingletonIterator);

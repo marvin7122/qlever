@@ -118,7 +118,7 @@ class SecondaryVocabIndexTest : public ::testing::Test {
 
 // _____________________________________________________________________________
 TEST(SecondaryVocabulary, wordsAndLookup) {
-  SecondaryVocabulary vocab{secondaryVocabWords};
+  ad_utility::vocabulary::SecondaryVocabulary vocab{secondaryVocabWords};
   EXPECT_EQ(vocab.numWords(), secondaryVocabWords.size());
   // Each word is stored at its index and is found again by that index.
   expectWordsAndIdsMatch(vocab, secondaryVocabWords);
@@ -132,7 +132,7 @@ TEST(SecondaryVocabulary, wordsAndLookup) {
 
   // A default-constructed vocabulary is empty, which is how an index without a
   // secondary vocabulary behaves.
-  SecondaryVocabulary empty{};
+  ad_utility::vocabulary::SecondaryVocabulary empty{};
   EXPECT_EQ(empty.numWords(), 0);
   EXPECT_EQ(empty.getId("<b>"), std::nullopt);
 }
@@ -654,7 +654,7 @@ std::string runQuery(QueryExecutionContext* qec, const std::string& query) {
   // The updates below change the result of a query, so a cached result of an
   // earlier run of the same query must not be reused.
   qec->clearCacheUnpinnedOnly();
-  static const EncodedIriManager encodedIriManager;
+  static const ad_utility::vocabulary::EncodedIriManager encodedIriManager;
   auto cancellationHandle =
       std::make_shared<ad_utility::CancellationHandle<>>();
   auto parsedQuery = SparqlParser::parseQuery(&encodedIriManager, query);
@@ -686,7 +686,7 @@ std::vector<std::string> runQueryAndGetRows(QueryExecutionContext* qec,
 
 // Run the SPARQL `update` on `context`.
 void runUpdate(ContextWithSecondaryVocab& context, const std::string& update) {
-  static const EncodedIriManager encodedIriManager;
+  static const ad_utility::vocabulary::EncodedIriManager encodedIriManager;
   auto cancellationHandle =
       std::make_shared<ad_utility::CancellationHandle<>>();
   ad_utility::BlankNodeManager blankNodeManager;

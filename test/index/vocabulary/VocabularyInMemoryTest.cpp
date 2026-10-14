@@ -9,7 +9,7 @@
 #include "backports/algorithm.h"
 #include "index/vocabulary/VocabularyInMemory.h"
 #include "util/Serializer/ByteBufferSerializer.h"
-using Vocab = VocabularyInMemory;
+using Vocab = ad_utility::vocabulary::VocabularyInMemory;
 
 namespace {
 
@@ -147,7 +147,7 @@ TEST(VocabularyInMemory, WordWriterDestructorBehavior) {
   v.open(filename);
   { auto writerPtr = v.makeDiskWriterPtr(filename); };
   {
-    VocabularyInMemory vocab;
+    Vocab vocab;
     {
       auto wwPtr = vocab.makeDiskWriterPtr(filename);
       auto& ww = *wwPtr;
@@ -157,7 +157,7 @@ TEST(VocabularyInMemory, WordWriterDestructorBehavior) {
     EXPECT_EQ(vocab[0], "alpha");
   }
   {
-    VocabularyInMemory vocab;
+    Vocab vocab;
     auto wwPtr = vocab.makeDiskWriterPtr(filename);
     auto& ww = *wwPtr;
     ww("beta", false);

@@ -20,6 +20,8 @@
 #include "util/Log.h"
 #include "util/json.h"
 
+namespace ad_utility::vocabulary {
+
 namespace detail {
 // Sort the `prefixes` (which have to be specified without the enclosing angle
 // brackets) and remove duplicates. Throw if they are invalid, that is, if there
@@ -300,5 +302,7 @@ struct AlwaysOnPrefixes {
 };
 using EncodedIriManager =
     EncodedIriManagerImpl<Id::numDataBits, 8, AlwaysOnPrefixes>;
+
+}  // namespace ad_utility::vocabulary
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARY_ENCODEDIRIMANAGER_H

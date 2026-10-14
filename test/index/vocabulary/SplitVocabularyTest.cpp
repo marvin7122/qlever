@@ -24,11 +24,13 @@
 #include "index/vocabulary/SplitVocabularyImpl.h"
 #include "index/vocabulary/Vocabulary.h"
 #include "index/vocabulary/VocabularyType.h"
+#include "index/vocabulary/VocabularyTypes.h"
 
 namespace splitVocabTestHelpers {
 
-using SGV =
-    SplitGeoVocabulary<CompressedVocabulary<VocabularyInternalExternal>>;
+using SGV = ad_utility::vocabulary::SplitGeoVocabulary<
+    ad_utility::vocabulary::CompressedVocabulary<
+        ad_utility::vocabulary::VocabularyInternalExternal>>;
 
 [[maybe_unused]] auto testSplitTwoFunction = [](std::string_view s) -> uint8_t {
   return ql::starts_with(s, "\"a");
@@ -325,7 +327,7 @@ TEST(Vocabulary, SplitVocabularyItemAt) {
       "\"LINESTRING(1 2, 3 4)\""
       "^^<http://www.opengis.net/ont/geosparql#wktLiteral>");
 
-  RdfsVocabulary v;
+  ad_utility::vocabulary::RdfsVocabulary v;
   v.resetToType(geoSplitVocabType);
   const std::string filename = gtestCurrentTestName();
   auto cleanup = getFileCleanup(geoSplitVocabType, filename);
@@ -355,7 +357,7 @@ TEST(Vocabulary, SplitVocabularyWordWriterAndGetPosition) {
   // The word writer in the Vocabulary class runs the SplitGeoVocabulary word
   // writer. Its task is to split words to two different vocabularies for geo
   // and non-geo words. This split is tested here.
-  RdfsVocabulary vocabulary;
+  ad_utility::vocabulary::RdfsVocabulary vocabulary;
   vocabulary.resetToType(geoSplitVocabType);
   const std::string filename = gtestCurrentTestName();
   auto cleanup = getFileCleanup(geoSplitVocabType, filename);
@@ -481,7 +483,8 @@ TEST(Vocabulary, SplitVocabularyScanAll) {
   // their marker-encoded global index (main vocabulary first, then the second
   // one). Each yielded index must round-trip through `operator[]`.
   std::vector<std::pair<uint64_t, std::string>> scanned;
-  for (const IndexAndWord& indexAndWord : sv.scanAll()) {
+  for (const ad_utility::vocabulary::IndexAndWord& indexAndWord :
+       sv.scanAll()) {
     EXPECT_EQ(sv[indexAndWord.index_], indexAndWord.word_);
     scanned.emplace_back(indexAndWord.index_, std::string{indexAndWord.word_});
   }
@@ -762,6 +765,36 @@ TEST(Vocabulary, SplitVocabularyWordWriterDestructor) {
   wordWriter2->finish();
   ASSERT_TRUE(wordWriter2->finishWasCalled());
   wordWriter2.reset();
+}
+
+// _____________________________________________________________________________
+// Regression test: `lookupBatch(indices, builder)` through a delegating
+// vocabulary whose active underlying vocabulary has no batched leaf (here:
+// `RdfsVocabulary` over on-disk uncompressed) must populate the builder via
+// the sequential fallback. The delegating overloads finalize the builder
+// unconditionally, so returning the single-shot result without populating it
+// tripped the `finalize` precondition (`!views_.empty()`).
+TEST(Vocabulary, LookupBatchWithBuilderFallsBackSequentially) {
+  HashSet<std::string> s;
+  s.insert("a");
+  s.insert("ab");
+  s.insert("ba");
+  s.insert("car");
+
+  ad_utility::vocabulary::RdfsVocabulary vocabulary;
+  vocabulary.resetToType(
+      VocabularyType{VocabularyType::Enum::OnDiskUncompressed});
+  auto filename = "vocTestLookupBatchFallback.dat";
+  vocabulary.createFromSet(s, filename);
+  absl::Cleanup del = [&]() { deleteFile(filename); };
+
+  const std::array<size_t, 3> indices{3, 0, 2};
+  ad_utility::vocabulary::ArenaVocabBatchBuilder builder(indices.size());
+  const auto result = vocabulary.lookupBatch(indices, builder);
+  ASSERT_EQ(result.size(), indices.size());
+  for (size_t k = 0; k < indices.size(); ++k) {
+    EXPECT_EQ(result[k], vocabulary[VocabIndex::make(indices[k])]);
+  }
 }
 
 // Test that the indices of a `GeoVocabulary` with a geo cell grid (cell index

@@ -114,7 +114,7 @@ class RdfAsyncMultifileParser : public AsyncRdfParserBase {
     std::vector<std::shared_ptr<OpenFile>> openFiles_;
   };
 
-  const EncodedIriManager* encodedIriManager_;
+  const ad_utility::vocabulary::EncodedIriManager* encodedIriManager_;
   ad_utility::MemorySize bufferSize_;
   // The settings for the parser of every file (see `RdfParserSettings`).
   RdfParserSettings settings_;
@@ -138,7 +138,7 @@ class RdfAsyncMultifileParser : public AsyncRdfParserBase {
   RdfAsyncMultifileParser(
       const ql::any_io_executor& executor,
       ad_utility::InputRangeTypeErased<qlever::InputFileSpecification> files,
-      const EncodedIriManager* encodedIriManager,
+      const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
       ad_utility::MemorySize bufferSize = DEFAULT_PARSER_BUFFER_SIZE,
       RdfParserSettings settings = {});
 

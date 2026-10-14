@@ -90,7 +90,8 @@ void writeMetadataAndFilteredVocabulary(
   // The filtering is implemented for the `PolymorphicVocabulary`, which is the
   // vocabulary implementation that QLever is built with by default (see
   // `detail::UnderlyingVocabRdfsVocabulary`).
-  if constexpr (std::is_same_v<VocabularyImpl, PolymorphicVocabulary>) {
+  if constexpr (std::is_same_v<VocabularyImpl,
+                               ad_utility::vocabulary::PolymorphicVocabulary>) {
     // Use a unique temporary basename (next to the index, because the
     // intermediate on-disk vocabulary can become as large as the vocabulary
     // itself), so that concurrent calls do not interfere with each other.

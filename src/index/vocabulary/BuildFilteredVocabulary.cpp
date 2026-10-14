@@ -27,6 +27,10 @@
 #include "util/RegexSet.h"
 #include "util/TypeTraits.h"
 
+// The vocabulary headers declare their names in `ad_utility::vocabulary`;
+// this translation unit (added by the rank-side stack) uses them unqualified.
+using namespace ad_utility::vocabulary;
+
 namespace {
 
 // The number of entries that `writeSurvivingEntries` below has kept and

@@ -26,7 +26,7 @@ RdfAsyncParallelParser<Parser>::RdfAsyncParallelParser(
     const ql::any_io_executor& executor,
     const qlever::InputFileSpecification& spec,
     ad_utility::MemorySize blocksize,
-    const EncodedIriManager* encodedIriManager,
+    const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
     const TripleComponent& defaultGraphIri, RdfParserSettings settings)
     : AsyncRdfParserBase{executor},
       state_{encodedIriManager, defaultGraphIri, spec.filename(), settings},

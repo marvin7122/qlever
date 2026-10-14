@@ -30,7 +30,7 @@ namespace net = boost::asio;
 RdfAsyncMultifileParser::RdfAsyncMultifileParser(
     const ql::any_io_executor& executor,
     ad_utility::InputRangeTypeErased<qlever::InputFileSpecification> files,
-    const EncodedIriManager* encodedIriManager,
+    const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
     ad_utility::MemorySize bufferSize, RdfParserSettings settings)
     : AsyncRdfParserBase{executor},
       encodedIriManager_{encodedIriManager},
@@ -51,8 +51,8 @@ std::unique_ptr<AsyncRdfParserBase> makeFileParserForInnerParser(
     const ql::any_io_executor& executor,
     const qlever::InputFileSpecification& spec,
     ad_utility::MemorySize bufferSize,
-    const EncodedIriManager* encodedIriManager, TripleComponent graph,
-    RdfParserSettings settings) {
+    const ad_utility::vocabulary::EncodedIriManager* encodedIriManager,
+    TripleComponent graph, RdfParserSettings settings) {
   if (spec.parseInParallel_) {
     return std::make_unique<RdfAsyncParallelParser<InnerParser>>(
         executor, spec, bufferSize, encodedIriManager, graph, settings);

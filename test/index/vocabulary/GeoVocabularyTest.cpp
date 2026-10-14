@@ -19,13 +19,15 @@ namespace {
 
 using namespace geoInfoTestHelpers;
 using namespace ad_utility;
-using AnyGeoVocab = GeoVocabulary<VocabularyInMemory>;
+using AnyGeoVocab = ad_utility::vocabulary::GeoVocabulary<
+    ad_utility::vocabulary::VocabularyInMemory>;
 
 // Define a typed test suite to test the `GeoVocabulary` on different types of
 // underlying vocabularies.
 using GeoVocabularyUnderlyingVocabTypes =
-    ::testing::Types<VocabularyInMemory,
-                     CompressedVocabulary<VocabularyInternalExternal>>;
+    ::testing::Types<ad_utility::vocabulary::VocabularyInMemory,
+                     ad_utility::vocabulary::CompressedVocabulary<
+                         ad_utility::vocabulary::VocabularyInternalExternal>>;
 template <typename T>
 class GeoVocabularyUnderlyingVocabTypedTest : public ::testing::Test {
  public:
@@ -158,8 +160,8 @@ class GeoVocabularyUnderlyingVocabTypedTest : public ::testing::Test {
     // `VocabLookupInput` takes ownership of the batches, so keep a copy of the
     // indices to compare against.
     const auto expectedBatches = batches;
-    auto streamedResults =
-        geoVocab.lookupBatchesStreamed(VocabLookupInput{std::move(batches)});
+    auto streamedResults = geoVocab.lookupBatchesStreamed(
+        ad_utility::vocabulary::VocabLookupInput{std::move(batches)});
     vocabulary_test::assertStreamedLookupMatchesVocabularyAtIndices(
         geoVocab, streamedResults, expectedBatches);
   }

@@ -108,6 +108,8 @@ RuntimeParameters::RuntimeParameters() {
     ad_utility::vocabularyDirectIoBlockSize.store(blockSize,
                                                   std::memory_order_relaxed);
   });
+  add(exportV2HelperPolicy_);
+  add(exportV2HelperLogIntervalMs_);
   add(useFastExportStreamFormatter_);
   add(adaptiveExportChunkSize_);
   add(exportV2AdaptiveChunkSizing_);
@@ -143,6 +145,15 @@ RuntimeParameters::RuntimeParameters() {
   };
   defaultQueryTimeout_.setParameterConstraint(mustBeStrictlyPositive);
   lazyIndexScanNumThreads_.setParameterConstraint(mustBeStrictlyPositive);
+  exportV2HelperPolicy_.setParameterConstraint(
+      [](const std::string& value, std::string_view parameterName) {
+        if (!ad_utility::contains(
+                std::array<std::string_view, 2>{"fair", "exclusive"}, value)) {
+          throw std::runtime_error{absl::StrCat(
+              "Parameter ", parameterName,
+              " must be \"fair\" or \"exclusive\", was \"", value, "\"")};
+        }
+      });
 }
 
 // _____________________________________________________________________________

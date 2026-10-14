@@ -611,7 +611,9 @@ IndexBuilderDataAsExternalVector IndexImpl::passFileForVocabulary(
   ad_utility::vocabulary_merger::VocabularyMetaData mergeRes = [&]() {
     auto sortPred = [&cmp = vocab_.getCaseComparator()](std::string_view a,
                                                         std::string_view b) {
-      return cmp(a, b, TripleComponentComparator::Level::TOTAL);
+      return cmp(
+          a, b,
+          ad_utility::vocabulary::TripleComponentComparator::Level::TOTAL);
     };
     auto wordCallbackPtr = vocab_.makeWordWriterPtr(onDiskBase_ + VOCAB_SUFFIX);
     auto& wordCallback = *wordCallbackPtr;
@@ -1583,7 +1585,7 @@ void IndexImpl::applyConfiguration(const nlohmann::json& configuration) {
       std::make_unique<ad_utility::BlankNodeManager>(numBlankNodesTotal);
 
   loadDataMember("encoded-iri-prefixes", encodedIriManager_,
-                 EncodedIriManager{});
+                 ad_utility::vocabulary::EncodedIriManager{});
   loadDataMember("graphNameManager", graphNameManager_,
                  GraphNameManager(std::string(QLEVER_NEW_GRAPH_PREFIX), 1));
 }
@@ -1929,13 +1931,14 @@ Index::NumNormalAndInternal IndexImpl::numDistinctCol0(
 }
 
 // ___________________________________________________________________________
-RdfsVocabulary::AccessReturnType IndexImpl::indexToString(VocabIndex id) const {
+ad_utility::vocabulary::RdfsVocabulary::AccessReturnType
+IndexImpl::indexToString(VocabIndex id) const {
   return vocab_[id];
 }
 
 // ___________________________________________________________________________
-TextVocabulary::AccessReturnType IndexImpl::indexToString(
-    WordVocabIndex id) const {
+ad_utility::vocabulary::TextVocabulary::AccessReturnType
+IndexImpl::indexToString(WordVocabIndex id) const {
   return textVocab_[id];
 }
 
@@ -2009,24 +2012,28 @@ CPP_template_def(typename... NextSorter)(requires(
     AD_CORRECTNESS_CHECK(prefix.has_value());
     return std::move(prefix).value();
   }();
-  auto determineNextAvailableInternalGraph =
-      [&nextAvailableIndex, newGraphPrefixIdx](const auto& triple) mutable {
-        const auto& graph = triple[3];
-        if (graph.getDatatype() != Datatype::EncodedVal) {
-          return;
-        }
-        // NOTE: The payload may only be decoded after the prefix has been
-        // checked, because the payload of a general pattern is not a single
-        // decimal number (see `EncodedIriManager`).
-        auto [prefix, payload] =
-            EncodedIriManager::splitIntoPrefixIdxAndPayload(graph);
-        if (prefix != newGraphPrefixIdx) {
-          return;
-        }
-        nextAvailableIndex =
-            std::max(nextAvailableIndex,
-                     EncodedIriManager::decodeDecimalFrom64Bit(payload) + 1);
-      };
+  auto determineNextAvailableInternalGraph = [&nextAvailableIndex,
+                                              newGraphPrefixIdx](
+                                                 const auto& triple) mutable {
+    const auto& graph = triple[3];
+    if (graph.getDatatype() != Datatype::EncodedVal) {
+      return;
+    }
+    // NOTE: The payload may only be decoded after the prefix has been
+    // checked, because the payload of a general pattern is not a single
+    // decimal number (see `EncodedIriManager`).
+    auto [prefix, payload] =
+        ad_utility::vocabulary::EncodedIriManager::splitIntoPrefixIdxAndPayload(
+            graph);
+    if (prefix != newGraphPrefixIdx) {
+      return;
+    }
+    nextAvailableIndex = std::max(
+        nextAvailableIndex,
+        ad_utility::vocabulary::EncodedIriManager::decodeDecimalFrom64Bit(
+            payload) +
+            1);
+  };
   size_t numPredicates =
       createPermutationPair(numColumns, AD_FWD(sortedTriples), *pso_, *pos_,
                             nextSorter.makePushBlockCallback()..., countTriples,
@@ -2150,7 +2157,7 @@ ad_utility::BlankNodeManager* IndexImpl::getBlankNodeManager() const {
 void IndexImpl::setPrefixesForEncodedValues(
     std::vector<std::string> prefixesWithoutAngleBrackets,
     std::vector<encodedIri::Pattern> patterns) {
-  encodedIriManager_ = EncodedIriManager{
+  encodedIriManager_ = ad_utility::vocabulary::EncodedIriManager{
       std::move(prefixesWithoutAngleBrackets), std::move(patterns)};
 }
 
