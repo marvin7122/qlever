@@ -30,6 +30,7 @@
 
 namespace {
 using namespace vocabulary_test;
+using ad_utility::vocabulary::VocabularyOnDisk;
 
 // Store a `VocabularyOnDisk` and read it back from file. For each instance of
 // `VocabularyCreator` that exists at the same time, a different filename has to
