@@ -14,6 +14,8 @@
 #include <gmock/gmock.h>
 #include <unistd.h>
 
+#include <random>
+
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
 #include "../../util/PageCacheReadTestHelpers.h"
@@ -501,6 +503,49 @@ TEST(VocabularyOnDisk, ResidentReadsAreByteIdentical) {
     EXPECT_THAT(*result, ::testing::ElementsAreArray(withoutMapping));
     vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
         *vocab, *result, indices);
+  }
+}
+
+// _____________________________________________________________________________
+// With `vocabulary-buffer-pool-size`, both phases of a batch lookup read
+// through the buffer pools. Random batches return the same words as without
+// the pools, for a large budget (the second round of the same batches is
+// served from the pools), a budget of one page and a budget below one page
+// (the pools then keep nothing).
+TEST(VocabularyOnDisk, BufferPoolReadsAreByteIdentical) {
+  std::vector<std::string> words;
+  for (size_t i = 0; i < 3000; ++i) {
+    words.push_back(absl::StrCat("word", i, std::string(i % 17, 'x')));
+  }
+  words.push_back(std::string(9000, 'L'));
+  words.push_back("last");
+  VocabularyCreator creator{gtestCurrentTestName()};
+  auto vocab = creator.createVocabulary(words);
+  std::mt19937_64 random{42};
+  std::vector<std::vector<size_t>> batches;
+  for (size_t b = 0; b < 20; ++b) {
+    std::vector<size_t> indices;
+    const size_t batchSize = 1 + random() % 300;
+    for (size_t i = 0; i < batchSize; ++i) {
+      // Runs of consecutive indices and random ones.
+      indices.push_back(i % 5 == 0
+                            ? random() % words.size()
+                            : (indices.empty() ? 0 : indices.back() + 1) %
+                                  words.size());
+    }
+    batches.push_back(std::move(indices));
+  }
+  batches.push_back({words.size() - 2, words.size() - 1, 0});
+  for (size_t budget : {size_t{1} << 30, size_t{4096}, size_t{100}}) {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabularyBufferPoolSize_>(budget);
+    for (size_t rep = 0; rep < 2; ++rep) {
+      for (const auto& indices : batches) {
+        auto result = vocab.lookupBatch(indices);
+        vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+            vocab, result, indices);
+      }
+    }
   }
 }
 

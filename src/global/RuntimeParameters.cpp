@@ -116,6 +116,7 @@ RuntimeParameters::RuntimeParameters() {
   add(vocabularyIouringPageCacheFastPath_);
   add(vocabularyMmapResidentReads_);
   add(vocabularyMmapPrefetchDistance_);
+  add(vocabularyBufferPoolSize_);
   add(vocabularyInternalRankLookup_);
   add(vocabularyInternalRankPrefetchDistance_);
   add(vocabularyInternalRankHugePages_);
