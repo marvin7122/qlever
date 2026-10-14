@@ -32,6 +32,10 @@ inline void PrintTo(const ad_utility::vocabulary::WordAndIndex& wi,
 
 namespace vocabulary_test {
 
+// The vocabulary types (`FileSuffixes`, `WordAndIndex`, ...) live in
+// `ad_utility::vocabulary` since io/03-v2.
+using namespace ad_utility::vocabulary;
+
 // Can be used to compare arbitrary vocabularies to each other and to
 // `std::vector<string>`.
 inline auto assertThatRangesAreEqual = [](const auto& a, const auto& b) {
