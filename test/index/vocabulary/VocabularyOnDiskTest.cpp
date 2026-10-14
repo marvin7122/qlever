@@ -414,7 +414,7 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathWithDirectIo) {
   auto plain = vocab->lookupBatch(indices);
   absl::Cleanup reset{[]() {
     setRuntimeParameter<
-        &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(false);
+        &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(true);
     ad_utility::useRegisteredBuffersForVocabularyReads = false;
     ad_utility::useDirectIoForVocabularyReads = false;
   }};
