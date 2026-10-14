@@ -11,7 +11,9 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
 
+#include <cstdio>
 #include <memory>
+#include <mutex>
 #include <range/v3/view/zip.hpp>
 #include <string>
 #include <string_view>
@@ -60,6 +62,30 @@ CPP_template(typename UnderlyingVocabulary,
  private:
   UnderlyingVocabulary underlyingVocabulary_;
   CompressionWrapper compressionWrapper_;
+
+  // Measurement probe (idea 5): when the environment variable
+  // `QLEVER_DUMP_LOOKUP_IDS` holds a file path, append every looked-up index
+  // (raw `size_t` values, one batch call after the other) to that file.
+  // Both `lookupBatch` overloads and the split-phase `beginLookup` dump, so
+  // every decode path is covered (the CONSTRUCT export on this stack uses
+  // the split-phase `beginLookup`, never the builder `lookupBatch` overload).
+  // Offline analysis of total vs. unique indices decides between a decode
+  // cache and a cheaper decode. Zero overhead when unset (one predictable
+  // branch on a function-local static). Measurement only: this must not be
+  // merged into a performance branch.
+  static void dumpLookupIdsForProbe(ql::span<const size_t> indices) {
+    static FILE* dumpFile = []() -> FILE* {
+      const char* path = std::getenv("QLEVER_DUMP_LOOKUP_IDS");
+      return path != nullptr ? std::fopen(path, "ab") : nullptr;
+    }();
+    if (dumpFile == nullptr) {
+      return;
+    }
+    static std::mutex dumpMutex;
+    std::lock_guard<std::mutex> lock{dumpMutex};
+    std::fwrite(indices.data(), sizeof(size_t), indices.size(), dumpFile);
+    std::fflush(dumpFile);
+  }
 
   // Whether the underlying vocabulary has "holes", meaning that not every index
   // in `[0, endIndex())` has a word associated with it. This currently is the
@@ -207,6 +233,7 @@ CPP_template(typename UnderlyingVocabulary,
   void lookupBatch(ql::span<const size_t> indices,
                    ArenaVocabBatchBuilder& builder) const {
     AD_CONTRACT_CHECK(!indices.empty());
+    dumpLookupIdsForProbe(indices);
     appendDecodedWords(indices, underlyingVocabulary_.lookupBatch(indices),
                        builder);
   }
@@ -228,6 +255,7 @@ CPP_template(typename UnderlyingVocabulary,
   std::unique_ptr<VocabLookupHandleBase> beginLookup(
       ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
+    dumpLookupIdsForProbe(indices);
     auto handle = std::make_unique<CompressedLookupHandle>();
     handle->vocab_ = this;
     handle->indices_.assign(indices.begin(), indices.end());
