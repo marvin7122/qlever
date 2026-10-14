@@ -669,6 +669,17 @@ CPP_template(typename UnderlyingVocabulary,
                           const VocabBatchLookupResult& compressedWords,
                           ArenaVocabBatchBuilder& builder) const {
     AD_CORRECTNESS_CHECK(compressedWords.size() == indices.size());
+    if constexpr (!underlyingHasHoles) {
+      // Without holes, `getDecoderIdx(idx)` is `idx / NumWordsPerBlock`
+      // (pure arithmetic), so one batch check below implies the per-word
+      // decoder check for every word. The per-word check stays active in
+      // debug builds via `AD_EXPENSIVE_CHECK`.
+      if (!indices.empty()) {
+        const auto maxIdx = *std::max_element(indices.begin(), indices.end());
+        AD_CORRECTNESS_CHECK(maxIdx < compressionWrapper_.numDecoders() *
+                                          NumWordsPerBlock);
+      }
+    }
 
     std::string scratch;
     for (const auto& [idx, compressedWord] :
@@ -682,10 +693,11 @@ CPP_template(typename UnderlyingVocabulary,
           continue;
         }
         decoderIdx = getDecoderIdxFromPosition(position.value());
+        AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
       } else {
         decoderIdx = getDecoderIdx(idx);
+        AD_EXPENSIVE_CHECK(decoderIdx < compressionWrapper_.numDecoders());
       }
-      AD_CORRECTNESS_CHECK(decoderIdx < compressionWrapper_.numDecoders());
       builder.appendDecompressedWord(
           compressionWrapper_.maxDecompressedSize(compressedWord, decoderIdx),
           [&](ql::span<char> outSpan) {
