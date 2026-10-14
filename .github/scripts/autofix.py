@@ -47,6 +47,7 @@ def gh(method, path, data=None):
         headers={
             "Authorization": "Bearer " + GH_TOKEN,
             "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
         },
         method=method,
     )
