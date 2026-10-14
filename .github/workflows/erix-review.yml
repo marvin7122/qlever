@@ -12,9 +12,19 @@ permissions:
   contents: read
   pull-requests: write
 
+# One review per PR: a newer push cancels the stale run so comments
+# always describe the current head.
+concurrency:
+  group: erix-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   review:
-    if: github.event.pull_request.draft == false
+    # Internal PRs only: fork runs carry no secrets, so Erix would
+    # fail on an empty API key.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
