@@ -91,6 +91,15 @@ class BufferPool {
   void setBudget(size_t budgetBytes);
   size_t budgetBytes() const { return budgetPages_.load() * pageSize; }
 
+  // Evict loaded pages (CLOCK) until at most the budget remains, but at most
+  // `maxPages` of them, and return how many were evicted. For a background
+  // thread that lowers the budget and then evicts in bounded steps, so that
+  // queries rarely have to evict themselves (see `BufferPoolBudget`).
+  size_t evictTowardsBudget(size_t maxPages);
+
+  // The bytes of the pages that are currently loaded.
+  size_t loadedBytes() const { return numLoaded_.load() * pageSize; }
+
   // Read `numBytes[i]` bytes at `offsets[i]` of the file into `buffers[i]`
   // for every `i` (any alignment; the ranges must lie within the file).
   // Ranges whose pages are loaded are copied from the region; the missing
@@ -162,6 +171,11 @@ class BufferPool {
   // Evict loaded pages until at most `budgetPages_ - incoming` remain (or no
   // loaded page can be evicted).
   void evictFor(size_t incoming);
+
+  // Evict loaded pages until at most `target` remain, but at most `maxVictims`
+  // of them (or until no loaded page can be evicted). Return the number of
+  // evicted pages.
+  size_t evictDownTo(size_t target, size_t maxVictims);
 
   // Return the memory of the evicted pages to the kernel.
   void releasePages(std::vector<size_t> pages);
