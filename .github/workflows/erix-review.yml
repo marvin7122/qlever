@@ -1,0 +1,33 @@
+name: AI Code Review (Erix)
+
+# Trial review job: Qwen 3 Coder via OpenRouter. Runs only on internal PRs
+# (pull_request from forks carries no secrets, so external PRs skip safely).
+# fail-on-blocking stays false until the trial proves itself.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
+
+      - uses: ecodrix/erix_buddy@v1
+        with:
+          provider: openrouter
+          api-key: ${{ secrets.OPENROUTER_API_KEY }}
+          model: qwen/qwen3-coder-30b-a3b-instruct
+          mode: branch
+          branch: origin/${{ github.base_ref }}
+          severity: minor
+          fail-on-blocking: "false"
+          post-pr-comment: "true"
