@@ -1,0 +1,117 @@
+name: Bot Autofix
+
+# CodeRabbit-style auto-fixer on our own runner, in two phases:
+#   suggest: the `autofix` label collects bot findings, verifies patches,
+#            and posts a sticky audit table. Nothing is pushed.
+#   apply:   a maintainer comments `/autofix apply` and the verified
+#            patches are pushed as one commit.
+# Engine: Qwen 3 Coder via OpenRouter. Internal PRs only.
+
+on:
+  pull_request:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+
+jobs:
+  suggest:
+    concurrency:
+      group: autofix-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: true
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.label.name == 'autofix' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Verify bot findings
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MODE: suggest
+        run: python3 .github/scripts/autofix.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autofix-audit
+          path: ${{ runner.temp }}/autofix-audit.json
+
+  apply:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/autofix apply') &&
+      (github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        id: pr
+        with:
+          script: |
+            const { data } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            core.setOutput('head', data.head.ref);
+            core.setOutput('same_repo',
+              String(data.head.repo.full_name === `${context.repo.owner}/${context.repo.repo}`));
+            const { data: permission } =
+              await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: context.payload.comment.user.login,
+              });
+            core.setOutput('permission', permission.permission);
+
+      - name: Same-repo check
+        if: steps.pr.outputs.same_repo != 'true'
+        run: |
+          echo "autofix apply runs only on same-repo branches"
+          exit 1
+
+      - name: Write-permission check
+        if: >-
+          steps.pr.outputs.permission != 'admin' &&
+          steps.pr.outputs.permission != 'maintain' &&
+          steps.pr.outputs.permission != 'write'
+        run: |
+          echo "autofix apply requires repository write permission"
+          exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Apply verified findings
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          MODE: apply
+          SELECTION: ${{ github.event.comment.body }}
+        run: python3 .github/scripts/autofix.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autofix-audit
+          path: ${{ runner.temp }}/autofix-audit.json
