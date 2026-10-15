@@ -101,6 +101,42 @@ def test_normalize_none_without_hunk():
     assert fx.normalize_diff("") is None
 
 
+def _finding(path, line, bot="bot", created="2026-10-15T00:00:00Z"):
+    return {"path": path, "line": line, "body": "b", "bot": bot,
+            "created": created}
+
+
+def test_group_by_file_orders_newest_first():
+    fs = [_finding("b.py", 1, created="2026-10-15T01:00:00Z"),
+          _finding("a.py", 2, created="2026-10-15T02:00:00Z"),
+          _finding("b.py", 3, created="2026-10-15T03:00:00Z")]
+    # input order (already newest-first) decides file order; same-file
+    # findings stay together so one patch covers them all.
+    grouped = fx.group_by_file(fs)
+    assert [p for p, _ in grouped] == ["b.py", "a.py"]
+    assert [f["line"] for _, g in grouped for f in g] == [1, 3, 2]
+
+
+def test_group_by_file_empty():
+    assert fx.group_by_file([]) == []
+
+
+def test_render_findings_numbers_newest_first():
+    fs = [_finding("a.py", 10, bot="cb"), _finding("a.py", 20, bot="ca")]
+    out = fx.render_findings(fs)
+    assert "[1] (line 10, cb):" in out
+    assert "[2] (line 20, ca):" in out
+    assert "Findings for" not in out  # numbering only; header lives in prompt
+
+
+def test_file_prompt_covers_every_finding():
+    fs = [_finding("a.py", 10), _finding("a.py", 20)]
+    prompt = fx.FILE_PROMPT.format(
+        path="a.py", findings=fx.render_findings(fs), content="x")
+    assert "[1]" in prompt and "[2]" in prompt
+    assert "a.py" in prompt
+
+
 def test_model_call_has_timeout():
     import urllib.request
     from unittest import mock

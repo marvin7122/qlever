@@ -187,15 +187,19 @@ def openrouter(messages, max_tokens=1800):
         return None
 
 
-def collect_findings():
-    """Newest bot inline comments, deduped by (path, line), richest body wins."""
+def collect_findings(allowed=None):
+    """Newest bot inline comments, deduped by (path, line), richest body wins.
+
+    When allowed (the PR's filenames) is given, comments on other paths
+    are dropped up front instead of refetching the file list here.
+    """
     comments = gh_paged(f"/repos/{REPO}/pulls/{PR}/comments")
-    # Filter out comments that are not about the current PR's files
-    comments = [c for c in comments if c.get("path") in {f["filename"] for f in gh_paged(f"/repos/{REPO}/pulls/{PR}/files")}]
     by_key = {}
     for c in comments:
         author = (c.get("user") or {}).get("login") or ""
         if author not in BOT_AUTHORS or not c.get("path") or not c.get("body"):
+            continue
+        if allowed is not None and c["path"] not in allowed:
             continue
         key = (c["path"], c.get("line") or c.get("original_line"))
         old = by_key.get(key)
@@ -213,16 +217,29 @@ def collect_findings():
     return findings[:MAX_FINDINGS]
 
 
-FIX_PROMPT = """\
-You fix one code-review finding with the smallest correct change.
-Rules: reply with ONLY a unified diff (--- a/<path> / +++ b/<path> headers,
-@@ hunks), no prose, no code fences. Keep the change minimal; do not
-refactor surroundings. Count every hunk's @@ -start,len +start,len @@
-numbers exactly from its body lines. The diff must apply with `git apply`
-to the file content below.
+def group_by_file(findings):
+    """Group findings by path, newest file first. -> [(path, [findings])]."""
+    groups, order = {}, []
+    for f in findings:
+        if f["path"] not in groups:
+            groups[f["path"]] = []
+            order.append(f["path"])
+        groups[f["path"]].append(f)
+    return [(p, groups[p]) for p in order]
 
-Finding (file {path}, line {line}):
-{finding}
+
+FILE_PROMPT = """\
+You fix all code-review findings below for one file with the smallest
+correct changes.
+Rules: reply with ONLY one unified diff (--- a/<path> / +++ b/<path>
+headers, @@ hunks), no prose, no code fences. Address every finding;
+keep changes minimal; do not refactor surroundings. Count every hunk's
+@@ -start,len +start,len @@ numbers exactly from its body lines.
+The diff must apply with `git apply` to the file content below.
+If two findings conflict, satisfy the newer one (lower number).
+
+Findings for {path} (newest first):
+{findings}
 
 File content:
 ```
@@ -259,28 +276,35 @@ def check_apply(diff):
     return git("apply", "--check", "/tmp/autofix.patch", check=False)
 
 
-def make_patch(finding, content):
-    """-> (diff, attempts, error). Retries once with the git error fed back."""
-    text = call_model(FIX_PROMPT.format(
-        path=finding["path"], line=finding["line"],
-        finding=finding["body"], content=content))
+def render_findings(findings):
+    return "\n\n".join(
+        f"[{i}] (line {f['line']}, {f['bot']}):\n{f['body']}"
+        for i, f in enumerate(findings, 1))
+
+
+def make_patch_for_file(path, findings, content):
+    """-> (diff, attempts, short_err, full_err). One patch per file."""
+    text = call_model(FILE_PROMPT.format(
+        path=path, findings=render_findings(findings), content=content))
     diff = normalize_diff(extract_diff(text))
     if not diff:
-        return None, 1, "no diff in response"
+        return None, 1, "no diff in response", ""
+    tag = f"{path} ({len(findings)} findings)"
     for attempt in (1, 2):
         r = check_apply(diff)
         if r.returncode == 0:
-            return diff, attempt, ""
+            return diff, attempt, "", ""
+        full = (r.stderr or r.stdout).strip()
+        short = full.splitlines()[0] if full else "apply check failed"
         if attempt == 2:
-            return None, 2, (r.stderr or r.stdout).strip().splitlines()[0]
-        print(f"retry {finding['path']}:{finding['line']} after: "
-              f"{r.stderr.strip().splitlines()[0] if r.stderr else ''}")
+            return None, 2, short, full[:500]
+        print(f"retry {tag} after: {full.splitlines()[0] if full else ''}")
         text = call_model(RETRY_PROMPT.format(
-            error=(r.stderr or r.stdout)[:800], diff=diff, content=content))
+            error=full[:800], diff=diff, content=content))
         diff = normalize_diff(extract_diff(text))
         if not diff:
-            return None, 2, "no diff in retry response"
-    return None, 2, "unreachable"
+            return None, 2, "no diff in retry response", ""
+    return None, 2, "unreachable", ""
 
 
 def verify(path):
@@ -296,66 +320,60 @@ def verify(path):
     return True, ""
 
 
-def process(finding, allowed, keep):
-    """Generate, verify, optionally keep one patch. -> audit record."""
-    path, line = finding["path"], finding["line"]
-    rec = {**{k: finding[k] for k in ("path", "line", "bot")},
-           "status": "", "patch_sha": "", "attempts": 0, "note": ""}
+def process_file(path, findings, allowed, keep):
+    """Generate, verify, optionally keep one patch per file. -> records."""
+    recs = [{**{k: f[k] for k in ("path", "line", "bot")},
+             "status": "", "patch_sha": "", "attempts": 0,
+             "note": "", "error": ""} for f in findings]
+
+    def skip_all(note, error=""):
+        for r in recs:
+            r.update(status="skipped", note=note, error=error)
+        return recs
+
     try:
         content = open(path, encoding="utf-8", errors="replace").read()
     except FileNotFoundError:
-        rec.update(status="skipped", note="file not in checkout")
-        return rec
+        return skip_all("file not in checkout")
     if len(content) > 25000:
-        rec.update(status="skipped", note="file too large for one call")
-        return rec
+        return skip_all("file too large for one call")
     if not keep:
         # Suggest mode verifies each patch against a pristine file, then
         # reverts. Apply mode must NOT reset: it would wipe fixes applied
-        # for earlier findings on the same file (including ones that end
-        # up skipped), leaving only the last fix per file in the commit.
+        # for earlier files (including ones that end up skipped).
         git("checkout", "--", path, check=False)
-    diff, attempts, err = make_patch(finding, content)
-    rec["attempts"] = attempts
+    diff, attempts, err, full_err = make_patch_for_file(
+        path, findings, content)
+    for r in recs:
+        r["attempts"] = attempts
     if not diff:
-        rec.update(status="skipped", note=f"no valid patch: {err}")
-        return rec
+        return skip_all(f"no valid patch: {err}", full_err)
     touched = touched_files(diff)
     if not touched:
-        rec.update(status="skipped", note="patch without file headers")
-        return rec
-    # Check for files that were renamed or had metadata changes
-    # which are not captured by the ---/+++ headers alone
-    git_diff = git("diff", "--name-status", "--cached").stdout
-    git_touched = {
-        line.split("\t")[1] for line in git_diff.splitlines()
-        if line.startswith(("A", "M", "D", "R")) and len(line.split("\t")) >= 2
-    }
-    if git_touched - allowed:
-        rec.update(status="skipped", note="patch touches files outside the PR")
-        return rec
-    if touched - allowed or not touched:
-        rec.update(status="skipped",
-                   note="patch touches files outside the PR")
-        return rec
-    rec["patch_sha"] = hashlib.sha256(diff.encode()).hexdigest()[:12]
+        return skip_all("patch without file headers")
+    if touched - allowed:
+        return skip_all("patch touches files outside the PR")
+    sha = hashlib.sha256(diff.encode()).hexdigest()[:12]
+    for r in recs:
+        r["patch_sha"] = sha
     git("apply", "/tmp/autofix.patch")
     ok, note = verify(path)
     if not ok:
         # Reverse only this patch: a full checkout would also wipe fixes
-        # already applied for earlier findings on the same file.
+        # already applied for earlier files.
         git("apply", "-R", "/tmp/autofix.patch", check=False)
         if not verify(path)[0]:
             git("checkout", "--", path)
-        rec.update(status="skipped", note=f"verification failed: {note}")
-        return rec
+        return skip_all(f"verification failed: {note}")
     if not keep:
         git("checkout", "--", path)
-        rec.update(status="verified",
-                   note=f"verified in {attempts} attempt(s)")
-        return rec
-    rec.update(status="applied", note=f"applied in {attempts} attempt(s)")
-    return rec
+        for r in recs:
+            r.update(status="verified",
+                     note=f"verified in {attempts} attempt(s)")
+        return recs
+    for r in recs:
+        r.update(status="applied", note=f"applied in {attempts} attempt(s)")
+    return recs
 
 
 def audit_markdown(records, mode):
@@ -391,10 +409,11 @@ def run():
     pr = gh("GET", f"/repos/{REPO}/pulls/{PR}")
     files = gh_paged(f"/repos/{REPO}/pulls/{PR}/files")
     allowed = {f["filename"] for f in files}
-    findings = collect_findings()
+    findings = collect_findings(allowed)
     print(f"{len(findings)} bot findings (deduped), mode={MODE}")
     keep = MODE == "apply"
-    records = [process(f, allowed, keep) for f in findings]
+    records = [rec for path, group in group_by_file(findings)
+               for rec in process_file(path, group, allowed, keep)]
     with open("autofix-audit.json", "w") as fh:
         json.dump({"pr": PR, "mode": MODE, "model": MODEL,
                    "records": records}, fh, indent=1)
