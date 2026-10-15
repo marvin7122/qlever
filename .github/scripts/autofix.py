@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Bot-finding autofix for Qlever PRs (v1).
+"""Bot-finding autofix for Qlever PRs (v2).
 
-Collects inline review comments posted by known bot reviewers on a pull
-request, asks an LLM for a minimal unified diff per finding, applies the
-diffs that pass `git apply --check`, commits once, and pushes to the PR
-branch. Only files already touched by the PR are eligible for edits.
+Two phases, CodeRabbit-style:
+  suggest: collect bot inline findings, generate minimal patches with an
+           LLM, verify each (apply-check + targeted checks), and post a
+           sticky audit table plus a JSON record. Nothing is pushed.
+  apply:   regenerate on the current head and push the verified patches
+           as one commit (triggered only by a human approval comment).
 
 Environment:
   GITHUB_REPOSITORY   owner/repo
@@ -12,13 +14,15 @@ Environment:
   GITHUB_TOKEN        token with contents:write + pull-requests:write
   OPENROUTER_API_KEY  model key (spend-capped on the OpenRouter side)
   FIX_MODEL           model id (default qwen/qwen3-coder-30b-a3b-instruct)
-  MAX_FINDINGS        cap per run (default 10)
+  MAX_FINDINGS        cap per run (default 25)
+  MODE                suggest (default) | apply
 """
 
+import hashlib
 import json
 import os
+import re
 import subprocess
-import sys
 import urllib.request
 
 REPO = os.environ["GITHUB_REPOSITORY"]
@@ -26,8 +30,10 @@ PR = int(os.environ["PR_NUMBER"])
 GH_TOKEN = os.environ["GITHUB_TOKEN"]
 OR_KEY = os.environ["OPENROUTER_API_KEY"]
 MODEL = os.environ.get("FIX_MODEL", "qwen/qwen3-coder-30b-a3b-instruct")
-MAX_FINDINGS = int(os.environ.get("MAX_FINDINGS", "10"))
+MAX_FINDINGS = int(os.environ.get("MAX_FINDINGS", "25"))
+MODE = os.environ.get("MODE", "suggest")
 API = "https://api.github.com"
+MARKER = "<!-- autofix:audit -->"
 
 BOT_AUTHORS = {
     "coderabbitai[bot]",
@@ -37,6 +43,7 @@ BOT_AUTHORS = {
     "deepsource-io[bot]",
     "superagent-security[bot]",
     "greptile-apps[bot]",
+    "cubic-dev-ai[bot]",
 }
 
 
@@ -72,7 +79,41 @@ def git(*args, check=True):
     return r
 
 
-def openrouter(messages, max_tokens=1500):
+_DIFF_OK = ("--- ", "+++ ", "@@", " ", "+", "-", "\\",
+            "diff --git ", "index ", "new file mode")
+
+
+def extract_diff(text):
+    """Pull a unified diff out of a model reply, fences and prose stripped."""
+    if not text:
+        return None
+    m = re.search(r"```(?:diff|patch)?\n(.*?)```", text, re.S)
+    lines = (m.group(1) if m else text).splitlines()
+    start = next((i for i, ln in enumerate(lines)
+                  if ln.startswith(("--- ", "diff --git "))), None)
+    if start is None:
+        return None
+    out = []
+    for ln in lines[start:]:
+        if ln.strip().startswith("```"):
+            break
+        if ln.startswith(_DIFF_OK):
+            out.append(ln)
+        elif ln == "":
+            out.append(" ")
+        else:
+            break
+    return ("\n".join(out).rstrip() + "\n") if out else None
+
+
+def touched_files(diff):
+    return {
+        m.group(1)
+        for m in re.finditer(r"^[+-]{3} [ab]/(.+)$", diff, re.M)
+    }
+
+
+def openrouter(messages, max_tokens=1800):
     req = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",
         data=json.dumps(
@@ -88,38 +129,43 @@ def openrouter(messages, max_tokens=1500):
     try:
         return json.load(urllib.request.urlopen(req))
     except Exception as e:
-        print("model call failed:", getattr(e, "read", lambda: e)())
+        try:
+            print("model call failed:", e.read().decode()[:500])
+        except Exception:
+            print("model call failed:", e)
         return None
 
 
 def collect_findings():
-    """Bot inline comments on the PR diff. One entry per (path, line)."""
+    """Newest bot inline comments, deduped by (path, line), richest body wins."""
     comments = gh_paged(f"/repos/{REPO}/pulls/{PR}/comments")
-    seen, findings = set(), []
+    by_key = {}
     for c in comments:
-        if (c.get("user") or {}).get("login") not in BOT_AUTHORS:
+        author = (c.get("user") or {}).get("login") or ""
+        if author not in BOT_AUTHORS or not c.get("path") or not c.get("body"):
             continue
-        if not c.get("path") or not c.get("body"):
+        key = (c["path"], c.get("line") or c.get("original_line"))
+        old = by_key.get(key)
+        if old and len(old["body"]) >= len(c["body"]):
             continue
-        key = (c["path"], c.get("line") or c.get("original_line"), c["body"][:200])
-        if key in seen:
-            continue
-        seen.add(key)
-        findings.append(
-            {
-                "path": c["path"],
-                "line": c.get("line") or c.get("original_line"),
-                "body": c["body"][:3000],
-            }
-        )
+        by_key[key] = {
+            "path": c["path"],
+            "line": c.get("line") or c.get("original_line"),
+            "body": c["body"][:4000],
+            "bot": author.replace("[bot]", ""),
+            "created": c.get("created_at") or "",
+        }
+    findings = sorted(by_key.values(), key=lambda f: f["created"],
+                      reverse=True)
     return findings[:MAX_FINDINGS]
 
 
 FIX_PROMPT = """\
 You fix one code-review finding with the smallest correct change.
 Rules: reply with ONLY a unified diff (--- a/<path> / +++ b/<path> headers,
-@@ hunks), no prose. Keep the change minimal; do not refactor surroundings.
-The diff must apply with `git apply` to the file content below.
+@@ hunks), no prose, no code fences. Keep the change minimal; do not
+refactor surroundings. The diff must apply with `git apply` to the file
+content below.
 
 Finding (file {path}, line {line}):
 {finding}
@@ -130,94 +176,168 @@ File content:
 ```
 """
 
+RETRY_PROMPT = """\
+Your previous diff failed `git apply --check` with:
+{error}
+Previous diff:
+{diff}
+Return a corrected unified diff only, no prose, no code fences.
+It must apply cleanly to the same file content.
+"""
 
-def fix_one(path, line, body, allowed):
+
+def call_model(prompt_text):
+    resp = openrouter([{"role": "user", "content": prompt_text}])
+    try:
+        return resp["choices"][0]["message"]["content"]
+    except (TypeError, KeyError, IndexError):
+        return None
+
+
+def check_apply(diff):
+    with open("/tmp/autofix.patch", "w") as f:
+        f.write(diff)
+    return git("apply", "--check", "/tmp/autofix.patch", check=False)
+
+
+def make_patch(finding, content):
+    """-> (diff, attempts, error). Retries once with the git error fed back."""
+    text = call_model(FIX_PROMPT.format(
+        path=finding["path"], line=finding["line"],
+        finding=finding["body"], content=content))
+    diff = extract_diff(text)
+    if not diff:
+        return None, 1, "no diff in response"
+    for attempt in (1, 2):
+        r = check_apply(diff)
+        if r.returncode == 0:
+            return diff, attempt, ""
+        if attempt == 2:
+            return None, 2, (r.stderr or r.stdout).strip().splitlines()[0]
+        print(f"retry {finding['path']}:{finding['line']} after: "
+              f"{r.stderr.strip().splitlines()[0] if r.stderr else ''}")
+        text = call_model(RETRY_PROMPT.format(
+            error=(r.stderr or r.stdout)[:800], diff=diff))
+        diff = extract_diff(text)
+        if not diff:
+            return None, 2, "no diff in retry response"
+    return None, 2, "unreachable"
+
+
+def verify(path):
+    """Targeted post-apply checks. -> (ok, note)"""
+    r = git("diff", "--check", "--", path, check=False)
+    if r.returncode != 0:
+        return False, "whitespace errors"
+    if path.endswith(".py"):
+        r = subprocess.run(["python3", "-m", "py_compile", path],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            return False, "python syntax error"
+    return True, ""
+
+
+def process(finding, allowed, keep):
+    """Generate, verify, optionally keep one patch. -> audit record."""
+    path, line = finding["path"], finding["line"]
+    rec = {**{k: finding[k] for k in ("path", "line", "bot")},
+           "status": "", "patch_sha": "", "attempts": 0, "note": ""}
     try:
         content = open(path, encoding="utf-8", errors="replace").read()
     except FileNotFoundError:
-        print(f"skip {path}: not in checkout")
-        return False
-    if len(content) > 20000:
-        print(f"skip {path}: file too large for one call")
-        return False
-    resp = openrouter(
-        [{"role": "user", "content": FIX_PROMPT.format(
-            path=path, line=line, finding=body, content=content)}]
-    )
-    if resp is None:
-        return False
-    try:
-        text = resp["choices"][0]["message"]["content"]
-    except (KeyError, IndexError):
-        print(f"skip {path}: bad model response")
-        return False
-    start = text.find("--- ")
-    if start < 0:
-        print(f"skip {path}: no diff in response")
-        return False
-    diff = text[start:].strip() + "\n"
-    touched = [
-        ln[6:] for ln in diff.splitlines()
-        if ln.startswith("+++ b/") or ln.startswith("--- a/")
-    ]
-    if any(t not in allowed for t in set(touched)):
-        print(f"skip {path}: patch touches files outside the PR")
-        return False
-    with open("/tmp/autofix.patch", "w") as f:
-        f.write(diff)
-    r = git("apply", "--check", "/tmp/autofix.patch", check=False)
-    if r.returncode != 0:
-        print(f"skip {path}: patch does not apply cleanly")
-        return False
+        rec.update(status="skipped", note="file not in checkout")
+        return rec
+    if len(content) > 25000:
+        rec.update(status="skipped", note="file too large for one call")
+        return rec
+    git("checkout", "--", path, check=False)
+    diff, attempts, err = make_patch(finding, content)
+    rec["attempts"] = attempts
+    if not diff:
+        rec.update(status="skipped", note=f"no valid patch: {err}")
+        return rec
+    touched = touched_files(diff)
+    if not touched:
+        rec.update(status="skipped", note="patch without file headers")
+        return rec
+    if touched - allowed:
+        rec.update(status="skipped",
+                   note="patch touches files outside the PR")
+        return rec
+    rec["patch_sha"] = hashlib.sha256(diff.encode()).hexdigest()[:12]
     git("apply", "/tmp/autofix.patch")
-    print(f"applied fix for {path}:{line}")
-    return True
+    ok, note = verify(path)
+    if not ok:
+        git("checkout", "--", path)
+        rec.update(status="skipped", note=f"verification failed: {note}")
+        return rec
+    if not keep:
+        git("checkout", "--", path)
+        rec.update(status="verified",
+                   note=f"verified in {attempts} attempt(s)")
+        return rec
+    rec.update(status="applied", note=f"applied in {attempts} attempt(s)")
+    return rec
 
 
-def main():
+def audit_markdown(records, mode):
+    counts = {}
+    for r in records:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    head = ", ".join(f"{v} {k}" for k, v in sorted(counts.items()))
+    rows = ["| File | Bot | Status | Patch | Note |",
+            "| ------ | ------ | ------ | ------ | ------ |"]
+    for r in records:
+        rows.append(f"| `{r['path']}:{r['line']}` | {r['bot']} | "
+                    f"{r['status']} | `{r['patch_sha'] or '-'}` | "
+                    f"{r['note']} |")
+    nxt = ("Verified fixes only — comment `/autofix apply` with write "
+           "access to apply them." if mode == "suggest" else
+           "Applied fixes were pushed; re-review will confirm.")
+    return (f"{MARKER}\n## Autofix audit ({mode})\n\n{head}\n\n"
+            + "\n".join(rows) + f"\n\n{nxt}\n")
+
+
+def post_audit(records, mode):
+    body = audit_markdown(records, mode)
+    comments = gh_paged(f"/repos/{REPO}/issues/{PR}/comments")
+    for c in comments:
+        if MARKER in (c.get("body") or ""):
+            gh("PATCH", f"/repos/{REPO}/issues/comments/{c['id']}",
+               {"body": body})
+            return
+    gh("POST", f"/repos/{REPO}/issues/{PR}/comments", {"body": body})
+
+
+def run():
     pr = gh("GET", f"/repos/{REPO}/pulls/{PR}")
     files = gh_paged(f"/repos/{REPO}/pulls/{PR}/files")
     allowed = {f["filename"] for f in files}
     findings = collect_findings()
-    print(f"{len(findings)} bot findings collected")
-    if not findings:
-        gh("POST", f"/repos/{REPO}/issues/{PR}/comments",
-           {"body": "Autofix: no bot findings to fix."})
-        return
-    applied, skipped = [], []
-    for f in findings:
-        ok = fix_one(f["path"], f["line"], f["body"], allowed)
-        (applied if ok else skipped).append(f"{f['path']}:{f['line']}")
-    status = git("status", "--short").stdout.strip()
-    if not status:
-        summary = "Autofix: nothing applied, everything skipped."
-    else:
-        r = git("diff", "--check", check=False)
-        if r.returncode != 0:
-            print("whitespace errors, aborting push")
-            git("checkout", "--", ".")
-            gh("POST", f"/repos/{REPO}/issues/{PR}/comments",
-               {"body": "Autofix: patches failed the whitespace check, "
-                        "nothing was pushed."})
-            return
+    print(f"{len(findings)} bot findings (deduped), mode={MODE}")
+    keep = MODE == "apply"
+    records = [process(f, allowed, keep) for f in findings]
+    with open("autofix-audit.json", "w") as fh:
+        json.dump({"pr": PR, "mode": MODE, "model": MODEL,
+                   "records": records}, fh, indent=1)
+    if keep and git("status", "--short").stdout.strip():
         git("add", "-A")
         git("-c", "user.name=autofix-bot",
             "-c", "user.email=autofix-bot@users.noreply.github.com",
-            "commit", "-m", "autofix: apply bot review findings")
-        git("push", "origin", f"HEAD:refs/heads/{pr['head']['ref']}")
-        summary = (
-            f"Autofix applied {len(applied)} finding(s), "
-            f"skipped {len(skipped)}.\n"
-            + "".join(f"\n- fixed {a}" for a in applied)
-            + "".join(f"\n- skipped {s}" for s in skipped)
-            + "\nCI and bot re-reviews will validate; re-add the "
-              "`autofix` label to run again."
-        )
-    gh("POST", f"/repos/{REPO}/issues/{PR}/comments", {"body": summary})
+            "commit", "-m", "autofix: apply verified bot review findings")
+        git("push", "origin", "HEAD:refs/heads/" + pr["head"]["ref"])
+    post_audit(records, MODE)
+    return records
+
+
+def main():
     try:
-        gh("DELETE", f"/repos/{REPO}/issues/{PR}/labels/autofix")
-    except Exception as e:
-        print("label removal failed (non-fatal):", e)
+        run()
+    finally:
+        try:
+            gh("DELETE", f"/repos/{REPO}/issues/{PR}/labels/autofix")
+        except Exception as e:
+            print("label removal failed (non-fatal):", e)
 
 
 if __name__ == "__main__":
