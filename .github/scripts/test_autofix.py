@@ -101,6 +101,35 @@ def test_normalize_none_without_hunk():
     assert fx.normalize_diff("") is None
 
 
+def test_model_call_has_timeout():
+    import urllib.request
+    from unittest import mock
+    seen = {}
+
+    def fake(req, timeout=None):
+        seen["timeout"] = timeout
+        raise ValueError("boom")
+
+    with mock.patch.object(urllib.request, "urlopen", fake):
+        assert fx.openrouter([{"role": "user", "content": "hi"}]) is None
+    assert seen["timeout"] and seen["timeout"] > 0
+
+
+def test_gh_call_has_timeout():
+    import io
+    import urllib.request
+    from unittest import mock
+    seen = {}
+
+    def fake(req, timeout=None):
+        seen["timeout"] = timeout
+        return io.BytesIO(b"{}")
+
+    with mock.patch.object(urllib.request, "urlopen", fake):
+        assert fx.gh("GET", "/x") == {}
+    assert seen["timeout"] and seen["timeout"] > 0
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

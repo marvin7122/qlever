@@ -58,7 +58,7 @@ def gh(method, path, data=None):
         },
         method=method,
     )
-    return json.load(urllib.request.urlopen(req))
+    return json.load(urllib.request.urlopen(req, timeout=30))
 
 
 def gh_paged(path):
@@ -178,7 +178,7 @@ def openrouter(messages, max_tokens=1800):
         },
     )
     try:
-        return json.load(urllib.request.urlopen(req))
+        return json.load(urllib.request.urlopen(req, timeout=180))
     except Exception as e:
         try:
             print("model call failed:", e.read().decode()[:500])
