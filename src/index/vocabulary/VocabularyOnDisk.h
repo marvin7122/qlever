@@ -23,6 +23,7 @@
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Algorithm.h"
 #include "util/BufferPool.h"
+#include "util/BufferPoolBudget.h"
 #include "util/File.h"
 #include "util/Generator.h"
 #include "util/IoUringManager.h"
@@ -90,6 +91,12 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     std::atomic<bool> failed_{false};
     std::unique_ptr<ad_utility::BufferPool> words_;
     std::unique_ptr<ad_utility::BufferPool> offsets_;
+    // With `vocabulary-buffer-pool-auto`: the registration with the elastic
+    // budget controller. Declared after the pools, so it is destroyed (and
+    // the controller stops using the pools) before them.
+    std::atomic<bool> elastic_{false};
+    std::unique_ptr<ad_utility::BufferPoolBudgetController::Registration>
+        elasticRegistration_;
   };
   mutable std::unique_ptr<BufferPools> bufferPools_;
 
@@ -321,10 +328,14 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
       ql::span<const OffsetPair> offsetPairs, bool pageCacheFastPath,
       bool residentReads, ad_utility::BufferPool* wordsPool = nullptr) const;
 
-  // The buffer pools for a total budget of `totalBudget` bytes (created on
-  // first use, budgets updated when the parameter changes), or null if
-  // `totalBudget` is zero or the pools cannot be created.
-  BufferPools* bufferPools(size_t totalBudget) const;
+  // The buffer pools (created on first use), or null if they are off or
+  // cannot be created. With `elastic` false, the pools have the fixed total
+  // budget `totalBudget` (off if zero; budgets updated when it changes). With
+  // `elastic` true, the pools are registered with the process-wide
+  // `BufferPoolBudgetController`, which sets their budgets; `totalBudget`, if
+  // positive, is its upper bound, and `reserve` the free memory it leaves.
+  BufferPools* bufferPools(size_t totalBudget, bool elastic = false,
+                           size_t reserve = 0) const;
 
   // A `BufferPool::Loader` that reads the missing pages through `manager`.
   static ad_utility::BufferPool::Loader loaderFor(

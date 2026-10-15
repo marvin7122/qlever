@@ -408,8 +408,21 @@ void BufferPool::unclaim(ql::span<const size_t> pages) {
 void BufferPool::evictFor(size_t incoming) {
   const size_t budget = budgetPages_.load();
   const size_t target = budget > incoming ? budget - incoming : 0;
-  if (numLoaded_.load() <= target) {
-    return;
+  evictDownTo(target, std::numeric_limits<size_t>::max());
+}
+
+// _____________________________________________________________________________
+size_t BufferPool::evictTowardsBudget(size_t maxPages) {
+  if (!isValid()) {
+    return 0;
+  }
+  return evictDownTo(budgetPages_.load(), maxPages);
+}
+
+// _____________________________________________________________________________
+size_t BufferPool::evictDownTo(size_t target, size_t maxVictims) {
+  if (numLoaded_.load() <= target || maxVictims == 0) {
+    return 0;
   }
   std::vector<size_t> victims;
   {
@@ -419,7 +432,8 @@ void BufferPool::evictFor(size_t incoming) {
     // be evicted after that (all pages are being read right now), give up
     // and let the next call try again.
     size_t steps = 2 * clockPages_.size() + 1;
-    while (loaded > target && !clockPages_.empty() && steps-- > 0) {
+    while (loaded > target && victims.size() < maxVictims &&
+           !clockPages_.empty() && steps-- > 0) {
       if (clockHand_ >= clockPages_.size()) {
         clockHand_ = 0;
       }
@@ -451,10 +465,12 @@ void BufferPool::evictFor(size_t incoming) {
     }
     numLoaded_.fetch_sub(victims.size());
   }
-  evictions_.fetch_add(victims.size(), std::memory_order_relaxed);
+  const size_t numVictims = victims.size();
+  evictions_.fetch_add(numVictims, std::memory_order_relaxed);
   if (!victims.empty()) {
     releasePages(std::move(victims));
   }
+  return numVictims;
 }
 
 // _____________________________________________________________________________
