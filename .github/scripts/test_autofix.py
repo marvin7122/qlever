@@ -74,6 +74,33 @@ def test_touched_files_parsed():
     assert fx.touched_files("no headers here\n") == set()
 
 
+WRONG_COUNTS = CLEAN.replace("@@ -1,3 +1,4 @@", "@@ -1,99 +1,7 @@", 1)
+
+FIXED_COUNTS = CLEAN.replace("@@ -1,3 +1,4 @@", "@@ -1,2 +1,3 @@", 1)
+
+
+def test_normalize_fixes_wrong_counts():
+    assert fx.normalize_diff(WRONG_COUNTS) == FIXED_COUNTS
+
+
+def test_normalize_keeps_good_diff_stable():
+    assert fx.normalize_diff(FIXED_COUNTS) == FIXED_COUNTS
+
+
+def test_normalize_keeps_section_heading():
+    hunk = "@@ -1,9 +1,9 @@ def foo():"
+    diff = CLEAN.replace("@@ -1,3 +1,4 @@", hunk, 1)
+    fixed = fx.normalize_diff(diff)
+    assert fixed.splitlines()[2] == "@@ -1,2 +1,3 @@ def foo():"
+    assert fixed.splitlines()[3:] == CLEAN.splitlines()[3:]
+
+
+def test_normalize_none_without_hunk():
+    assert fx.normalize_diff("no headers here\n") is None
+    assert fx.normalize_diff(None) is None
+    assert fx.normalize_diff("") is None
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

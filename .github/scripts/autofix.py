@@ -113,6 +113,57 @@ def touched_files(diff):
     }
 
 
+_HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
+
+
+def normalize_diff(diff):
+    """Rewrite @@ counts from the actual hunk bodies.
+
+    Models routinely emit plausible-but-wrong hunk lengths, which makes
+    `git apply` reject the patch as corrupt before it even tries the
+    context. Recounting is semantics-preserving: no line is touched.
+    Returns None when there is no parseable hunk.
+    """
+    if not diff:
+        return None
+    lines = diff.splitlines()
+    first = next((i for i, ln in enumerate(lines)
+                  if _HUNK.match(ln)), None)
+    if first is None:
+        return None
+    head, out, body, hdr = lines[:first], [], [], None
+    for ln in lines[first:] + [None]:
+        if ln is None or _HUNK.match(ln):
+            if hdr is not None:
+                old, new = _count(body)
+                out.append(f"@@ -{start},{old} +{new_start},{new} @@{suffix}")
+                out.extend(body)
+                body = []
+            if ln is None:
+                break
+            m = _HUNK.match(ln)
+            start, new_start, suffix = int(m.group(1)), int(m.group(3)), m.group(5)
+            hdr = ln
+        else:
+            body.append(ln)
+    return ("\n".join(head + out).rstrip() + "\n") if out else None
+
+
+def _count(body):
+    old = new = 0
+    for ln in body:
+        if ln.startswith("+"):
+            new += 1
+        elif ln.startswith("-"):
+            old += 1
+        elif ln.startswith("\\"):
+            pass
+        else:
+            old += 1
+            new += 1
+    return old, new
+
+
 def openrouter(messages, max_tokens=1800):
     req = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",
@@ -164,8 +215,9 @@ FIX_PROMPT = """\
 You fix one code-review finding with the smallest correct change.
 Rules: reply with ONLY a unified diff (--- a/<path> / +++ b/<path> headers,
 @@ hunks), no prose, no code fences. Keep the change minimal; do not
-refactor surroundings. The diff must apply with `git apply` to the file
-content below.
+refactor surroundings. Count every hunk's @@ -start,len +start,len @@
+numbers exactly from its body lines. The diff must apply with `git apply`
+to the file content below.
 
 Finding (file {path}, line {line}):
 {finding}
@@ -181,8 +233,13 @@ Your previous diff failed `git apply --check` with:
 {error}
 Previous diff:
 {diff}
+File content it must apply to:
+```
+{content}
+```
 Return a corrected unified diff only, no prose, no code fences.
-It must apply cleanly to the same file content.
+Count every hunk's @@ numbers exactly from its body lines.
+It must apply cleanly to this file content.
 """
 
 
@@ -205,7 +262,7 @@ def make_patch(finding, content):
     text = call_model(FIX_PROMPT.format(
         path=finding["path"], line=finding["line"],
         finding=finding["body"], content=content))
-    diff = extract_diff(text)
+    diff = normalize_diff(extract_diff(text))
     if not diff:
         return None, 1, "no diff in response"
     for attempt in (1, 2):
@@ -217,8 +274,8 @@ def make_patch(finding, content):
         print(f"retry {finding['path']}:{finding['line']} after: "
               f"{r.stderr.strip().splitlines()[0] if r.stderr else ''}")
         text = call_model(RETRY_PROMPT.format(
-            error=(r.stderr or r.stdout)[:800], diff=diff))
-        diff = extract_diff(text)
+            error=(r.stderr or r.stdout)[:800], diff=diff, content=content))
+        diff = normalize_diff(extract_diff(text))
         if not diff:
             return None, 2, "no diff in retry response"
     return None, 2, "unreachable"
