@@ -324,18 +324,32 @@ def verify(path):
     return True, ""
 
 
+def failure_reason(short_err):
+    """Stable machine-readable skip code for a patch-generation failure."""
+    if not short_err:
+        return "unknown"
+    if "no diff" in short_err:
+        return "model-declined"
+    if short_err.startswith("error: corrupt"):
+        return "unparseable"
+    if short_err.startswith("error: patch failed"):
+        return "stale-context"
+    return "unknown"
+
+
 def process_file(path, findings, allowed, keep):
     """Generate, verify, optionally keep one patch per file. -> records."""
     recs = [{**{k: f[k] for k in ("path", "line", "bot")},
              "status": "", "patch_sha": "", "attempts": 0,
-             "note": "", "error": ""} for f in findings]
+             "note": "", "error": "", "reason": ""} for f in findings]
 
-    def skip_all(note, error=""):
+    def skip_all(note, reason, error=""):
         for r in recs:
-            r.update(status="skipped", note=note, error=error)
+            r.update(status="skipped", note=note, error=error,
+                     reason=reason)
         return recs
 
-    def fail(note, error=""):
+    def fail(note, reason, error=""):
         # One stale hunk sinks a whole-file patch, losing the fresh
         # findings with it. Fall back to single-finding patches so each
         # finding succeeds or fails on its own context. Singletons never
@@ -344,14 +358,14 @@ def process_file(path, findings, allowed, keep):
             print(f"split {path} ({len(findings)}): {note}")
             return [rec for f in findings
                     for rec in process_file(path, [f], allowed, keep)]
-        return skip_all(note, error)
+        return skip_all(note, reason, error)
 
     try:
         content = open(path, encoding="utf-8", errors="replace").read()
     except FileNotFoundError:
-        return skip_all("file not in checkout")
+        return skip_all("file not in checkout", "missing-file")
     if len(content) > 25000:
-        return skip_all("file too large for one call")
+        return skip_all("file too large for one call", "too-large")
     if not keep:
         # Suggest mode verifies each patch against a pristine file, then
         # reverts. Apply mode must NOT reset: it would wipe fixes applied
@@ -362,16 +376,13 @@ def process_file(path, findings, allowed, keep):
     for r in recs:
         r["attempts"] = attempts
     if not diff:
-        return fail(f"no valid patch: {err}", full_err)
+        return fail(f"no valid patch: {err}", failure_reason(err),
+                    full_err)
     touched = touched_files(diff)
     if not touched:
-        return fail("patch without file headers")
+        return fail("patch without file headers", "unparseable")
     if touched - allowed:
-        return fail("patch touches files outside the PR")
-    if not touched:
-        return fail("patch without file headers")
-    if touched - allowed:
-        return fail("patch touches files outside the PR")
+        return fail("patch touches files outside the PR", "outside-pr")
     sha = hashlib.sha256(diff.encode()).hexdigest()[:12]
     for r in recs:
         r["patch_sha"] = sha
@@ -383,15 +394,16 @@ def process_file(path, findings, allowed, keep):
         git("apply", "-R", "/tmp/autofix.patch", check=False)
         if not verify(path)[0]:
             git("checkout", "--", path)
-        return fail(f"verification failed: {note}")
+        return fail(f"verification failed: {note}", "verify-failed")
     if not keep:
         git("checkout", "--", path)
         for r in recs:
-            r.update(status="verified",
+            r.update(status="verified", reason="verified",
                      note=f"verified in {attempts} attempt(s)")
         return recs
     for r in recs:
-        r.update(status="applied", note=f"applied in {attempts} attempt(s)")
+        r.update(status="applied", reason="fixed",
+                 note=f"applied in {attempts} attempt(s)")
     return recs
 
 

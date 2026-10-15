@@ -137,6 +137,18 @@ def test_file_prompt_covers_every_finding():
     assert "a.py" in prompt
 
 
+def test_failure_reason_codes():
+    assert fx.failure_reason("no diff in response") == "model-declined"
+    assert fx.failure_reason("no diff in retry response") == "model-declined"
+    assert fx.failure_reason(
+        "error: corrupt patch at /tmp/autofix.patch:4") == "unparseable"
+    assert fx.failure_reason(
+        "error: patch failed: a.py:12") == "stale-context"
+    assert fx.failure_reason("unreachable") == "unknown"
+    assert fx.failure_reason("") == "unknown"
+    assert fx.failure_reason(None) == "unknown"
+
+
 def test_group_failure_splits_to_singletons():
     from unittest import mock
     fd = os.path.join(os.path.dirname(__file__), "test_autofix.py")
@@ -145,7 +157,7 @@ def test_group_failure_splits_to_singletons():
 
     def fake_make(path, findings, content):
         calls.append([f["line"] for f in findings])
-        return None, 1, "nope", ""
+        return None, 1, "no diff in response", ""
 
     with mock.patch.object(fx, "make_patch_for_file", fake_make), \
             mock.patch.object(fx, "git"):
@@ -154,6 +166,17 @@ def test_group_failure_splits_to_singletons():
     assert calls == [[1, 2], [1], [2]]
     assert [r["status"] for r in recs] == ["skipped", "skipped"]
     assert all("no valid patch" in r["note"] for r in recs)
+    assert all(r["reason"] == "model-declined" for r in recs)
+
+
+def test_missing_file_reason_recorded():
+    from unittest import mock
+    fs = [_finding("no/such/file.py", 1)]
+    with mock.patch.object(fx, "git"):
+        recs = fx.process_file("no/such/file.py", fs, {"no/such/file.py"},
+                              False)
+    assert recs[0]["status"] == "skipped"
+    assert recs[0]["reason"] == "missing-file"
 
 
 def test_model_call_has_timeout():
