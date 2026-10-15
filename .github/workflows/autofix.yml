@@ -48,7 +48,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: autofix-audit
-          path: autofix-audit.json
+          path: ${{ runner.temp }}/autofix-audit.json
 
   apply:
     if: >-
@@ -113,4 +113,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: autofix-audit
-          path: autofix-audit.json
+          path: ${{ runner.temp }}/autofix-audit.json

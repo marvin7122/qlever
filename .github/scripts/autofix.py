@@ -107,10 +107,22 @@ def extract_diff(text):
 
 
 def touched_files(diff):
-    return {
-        m.group(1)
-        for m in re.finditer(r"^[+-]{3} [ab]/(.+)$", diff, re.M)
-    }
+    """Use Git's patch parser to collect both sides of every change."""
+    with open("/tmp/autofix.patch", "w") as f:
+        f.write(diff)
+    touched = set()
+    # Forward numstat reports destinations; reverse also exposes the
+    # source paths of renames and copies. Keep NUL-delimited names raw.
+    for reverse in ((), ("--reverse",)):
+        r = subprocess.run(
+            ["git", "apply", "--numstat", "-z", *reverse,
+             "/tmp/autofix.patch"], capture_output=True)
+        if r.returncode != 0:
+            return set()
+        for entry in r.stdout.split(b"\0"):
+            if entry:
+                touched.add(os.fsdecode(entry.split(b"\t", 2)[2]))
+    return touched
 
 
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
@@ -383,6 +395,9 @@ def process_file(path, findings, allowed, keep):
         return fail("patch without file headers", "unparseable")
     if touched - allowed:
         return fail("patch touches files outside the PR", "outside-pr")
+    if touched - {path}:
+        return fail("patch touches files beyond the finding's path",
+                    "outside-file")
     sha = hashlib.sha256(diff.encode()).hexdigest()[:12]
     for r in recs:
         r["patch_sha"] = sha
@@ -445,7 +460,9 @@ def run():
     keep = MODE == "apply"
     records = [rec for path, group in group_by_file(findings)
                for rec in process_file(path, group, allowed, keep)]
-    with open("autofix-audit.json", "w") as fh:
+    audit_path = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"),
+                              "autofix-audit.json")
+    with open(audit_path, "w") as fh:
         json.dump({"pr": PR, "mode": MODE, "model": MODEL,
                    "records": records}, fh, indent=1)
     tracked = [ln for ln in
@@ -453,7 +470,7 @@ def run():
                if not ln.startswith("??")]
     if keep and tracked:
         # -u stages only tracked modifications: -A would sweep untracked
-        # junk (__pycache__, the local audit JSON) into the fix commit.
+        # junk (such as __pycache__) into the fix commit.
         git("add", "-u")
         git("-c", "user.name=autofix-bot",
             "-c", "user.email=autofix-bot@users.noreply.github.com",

@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-"""Focused tests for the autofix patch-extraction logic.
+"""Focused tests for autofix patch extraction, containment, and auditing.
 
 The v1 skip storm came from model replies wrapped in markdown fences
 with trailing prose. These cases pin that behavior down.
 Run: python3 .github/scripts/test_autofix.py
 """
 
+import contextlib
 import importlib.util
+import json
 import os
+import subprocess
 import sys
+import tempfile
+from unittest import mock
 
 # autofix.py reads required env at import; stub them.
 os.environ.setdefault("GITHUB_REPOSITORY", "owner/repo")
@@ -70,8 +75,149 @@ def test_empty_context_line_kept():
 
 
 def test_touched_files_parsed():
-    assert fx.touched_files(CLEAN) == {"src/foo.cpp"}
+    assert fx.touched_files(fx.normalize_diff(CLEAN)) == {"src/foo.cpp"}
     assert fx.touched_files("no headers here\n") == set()
+
+
+def _patch(path, new="new"):
+    return (f"--- old/{path}\n+++ new/{path}\n"
+            f"@@ -1 +1 @@\n-old\n+{new}\n")
+
+
+def test_touched_files_nonstandard_headers():
+    assert fx.touched_files(_patch("target.txt") + _patch("other.txt")) == {
+        "target.txt", "other.txt"}
+
+
+def test_touched_files_rename_and_copy_sources():
+    for operation in ("rename", "copy"):
+        patch = ("diff --git a/source.txt b/destination.txt\n"
+                 "similarity index 100%\n"
+                 f"{operation} from source.txt\n"
+                 f"{operation} to destination.txt\n")
+        assert fx.touched_files(patch) == {"source.txt", "destination.txt"}
+
+
+def test_touched_files_unusual_names_and_new_files():
+    with tempfile.TemporaryDirectory() as tmp:
+        for name in ("space name", "tab\tname", "line\nname", "return\rname",
+                     'quote"name', "café"):
+            path = os.path.join(tmp, name)
+            with open(path, "w") as f:
+                f.write("new\n")
+            r = subprocess.run(
+                ["git", "diff", "--no-index", "--", "/dev/null", path],
+                capture_output=True)
+            assert r.returncode == 1
+            # Absolute diff paths lose their leading slash with Git's -p1.
+            expected = path.lstrip("/")
+            patch = os.fsdecode(r.stdout)
+            assert fx.touched_files(patch) == {expected}
+
+
+def test_touched_files_deletion():
+    patch = "--- a/deleted.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n"
+    assert fx.touched_files(patch) == {"deleted.txt"}
+
+
+@contextlib.contextmanager
+def _checkout():
+    previous = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            os.chdir(tmp)
+            fx.git("init", "-q")
+            for path in ("target.txt", "other.txt"):
+                with open(path, "w") as f:
+                    f.write("old\n")
+            fx.git("add", ".")
+            fx.git("-c", "user.name=test", "-c", "user.email=test@example.com",
+                   "commit", "-qm", "fixture")
+            yield tmp
+        finally:
+            os.chdir(previous)
+
+
+def test_process_file_rejects_extra_paths_before_apply():
+    for keep in (False, True):
+        for allowed, reason in (({"target.txt"}, "outside-pr"),
+                                ({"target.txt", "other.txt"}, "outside-file")):
+            patch = _patch("target.txt") + _patch("other.txt")
+            with _checkout(), mock.patch.object(
+                    fx, "make_patch_for_file", return_value=(patch, 1, "", "")):
+                assert fx.check_apply(patch).returncode == 0
+                recs = fx.process_file("target.txt", [_finding("target.txt", 1)],
+                                       allowed, keep)
+                assert recs[0]["status"] == "skipped"
+                assert recs[0]["reason"] == reason
+                assert recs[0]["patch_sha"] == ""
+                assert fx.git("status", "--porcelain").stdout == ""
+                for path in allowed | {"other.txt"}:
+                    with open(path) as f:
+                        assert f.read() == "old\n"
+
+
+def test_process_file_preserves_keep_and_verification_rollback():
+    for keep in (False, True):
+        for new in ("new", "new "):
+            patch = _patch("target.txt", new)
+            if new.endswith(" "):
+                # Keep bad whitespace inside the hunk, away from the
+                # normalizer's existing removal of trailing whitespace.
+                patch += "+tail\n"
+            with _checkout(), mock.patch.object(
+                    fx, "call_model", return_value=patch):
+                recs = fx.process_file("target.txt", [_finding("target.txt", 1)],
+                                       {"target.txt"}, keep)
+                valid = new == "new"
+                expected = "applied" if keep else "verified"
+                assert recs[0]["status"] == (expected if valid else "skipped")
+                if not valid:
+                    assert recs[0]["reason"] == "verify-failed"
+                with open("target.txt") as f:
+                    assert f.read() == ("new\n" if valid and keep else "old\n")
+                with open("other.txt") as f:
+                    assert f.read() == "old\n"
+
+
+def test_run_writes_external_audit_in_both_modes():
+    original_git = fx.git
+
+    def local_git(*args, **kwargs):
+        if args[0] == "push":
+            return subprocess.CompletedProcess(args, 0)
+        return original_git(*args, **kwargs)
+
+    for mode in ("suggest", "apply"):
+        with _checkout(), tempfile.TemporaryDirectory() as audit_dir, \
+                mock.patch.dict(os.environ, {"RUNNER_TEMP": audit_dir}), \
+                mock.patch.object(fx, "MODE", mode), \
+                mock.patch.object(fx, "gh", return_value={"head": {"ref": "test"}}), \
+                mock.patch.object(fx, "gh_paged", return_value=[{"filename": "target.txt"}]), \
+                mock.patch.object(fx, "collect_findings", return_value=[_finding("target.txt", 1)]), \
+                mock.patch.object(fx, "call_model", return_value=_patch("target.txt")), \
+                mock.patch.object(fx, "post_audit") as post, \
+                mock.patch.object(fx, "git", side_effect=local_git) as git:
+            records = fx.run()
+            with open(os.path.join(audit_dir, "autofix-audit.json")) as f:
+                assert json.load(f) == {"pr": fx.PR, "mode": mode,
+                                        "model": fx.MODEL, "records": records}
+            assert records[0]["status"] == (
+                "applied" if mode == "apply" else "verified")
+            post.assert_called_once_with(records, mode)
+            assert not os.path.exists("autofix-audit.json")
+            assert original_git("status", "--porcelain").stdout == ""
+            assert original_git("ls-files").stdout.splitlines() == [
+                "other.txt", "target.txt"]
+            assert any(c.args[0] == "push" for c in git.call_args_list) == (
+                mode == "apply")
+
+
+def test_workflow_uploads_external_audit():
+    workflow = os.path.join(os.path.dirname(__file__), "..", "workflows", "autofix.yml")
+    with open(workflow) as f:
+        paths = [line.strip() for line in f if line.strip().startswith("path:")]
+    assert paths == ["path: ${{ runner.temp }}/autofix-audit.json"] * 2
 
 
 WRONG_COUNTS = CLEAN.replace("@@ -1,3 +1,4 @@", "@@ -1,99 +1,7 @@", 1)
