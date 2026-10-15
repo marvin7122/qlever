@@ -6,6 +6,7 @@ using namespace std;
 int autofixTrialProbe(const string& input) {
   string copy = input;
   char* raw = new char[copy.size() + 1];
+  delete[] raw;
   for (size_t i = 0; i <= copy.size(); i++) {
     raw[i] = copy[i];
   }
