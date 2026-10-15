@@ -331,6 +331,17 @@ def process_file(path, findings, allowed, keep):
             r.update(status="skipped", note=note, error=error)
         return recs
 
+    def fail(note, error=""):
+        # One stale hunk sinks a whole-file patch, losing the fresh
+        # findings with it. Fall back to single-finding patches so each
+        # finding succeeds or fails on its own context. Singletons never
+        # split further, so this recurses at most once.
+        if len(findings) > 1:
+            print(f"split {path} ({len(findings)}): {note}")
+            return [rec for f in findings
+                    for rec in process_file(path, [f], allowed, keep)]
+        return skip_all(note, error)
+
     try:
         content = open(path, encoding="utf-8", errors="replace").read()
     except FileNotFoundError:
@@ -347,12 +358,12 @@ def process_file(path, findings, allowed, keep):
     for r in recs:
         r["attempts"] = attempts
     if not diff:
-        return skip_all(f"no valid patch: {err}", full_err)
+        return fail(f"no valid patch: {err}", full_err)
     touched = touched_files(diff)
     if not touched:
-        return skip_all("patch without file headers")
+        return fail("patch without file headers")
     if touched - allowed:
-        return skip_all("patch touches files outside the PR")
+        return fail("patch touches files outside the PR")
     sha = hashlib.sha256(diff.encode()).hexdigest()[:12]
     for r in recs:
         r["patch_sha"] = sha
@@ -364,7 +375,7 @@ def process_file(path, findings, allowed, keep):
         git("apply", "-R", "/tmp/autofix.patch", check=False)
         if not verify(path)[0]:
             git("checkout", "--", path)
-        return skip_all(f"verification failed: {note}")
+        return fail(f"verification failed: {note}")
     if not keep:
         git("checkout", "--", path)
         for r in recs:

@@ -137,6 +137,25 @@ def test_file_prompt_covers_every_finding():
     assert "a.py" in prompt
 
 
+def test_group_failure_splits_to_singletons():
+    from unittest import mock
+    fd = os.path.join(os.path.dirname(__file__), "test_autofix.py")
+    fs = [_finding(fd, 1), _finding(fd, 2)]
+    calls = []
+
+    def fake_make(path, findings, content):
+        calls.append([f["line"] for f in findings])
+        return None, 1, "nope", ""
+
+    with mock.patch.object(fx, "make_patch_for_file", fake_make), \
+            mock.patch.object(fx, "git"):
+        recs = fx.process_file(fd, fs, {fd}, False)
+    # one group attempt, then one attempt per finding; singletons stop.
+    assert calls == [[1, 2], [1], [2]]
+    assert [r["status"] for r in recs] == ["skipped", "skipped"]
+    assert all("no valid patch" in r["note"] for r in recs)
+
+
 def test_model_call_has_timeout():
     import urllib.request
     from unittest import mock
