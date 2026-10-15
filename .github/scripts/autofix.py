@@ -201,6 +201,10 @@ def collect_findings(allowed=None):
             continue
         if allowed is not None and c["path"] not in allowed:
             continue
+        # Skip resolved comments (comments with an empty body or that have
+        # been deleted)
+        if not c["body"].strip():
+            continue
         key = (c["path"], c.get("line") or c.get("original_line"))
         old = by_key.get(key)
         if old and len(old["body"]) >= len(c["body"]):
@@ -364,6 +368,10 @@ def process_file(path, findings, allowed, keep):
         return fail("patch without file headers")
     if touched - allowed:
         return fail("patch touches files outside the PR")
+    if not touched:
+        return fail("patch without file headers")
+    if touched - allowed:
+        return fail("patch touches files outside the PR")
     sha = hashlib.sha256(diff.encode()).hexdigest()[:12]
     for r in recs:
         r["patch_sha"] = sha
@@ -444,6 +452,11 @@ def run():
 
 
 def main():
+    try:
+        label = f"/repos/{REPO}/issues/{PR}/labels/autofix"
+        gh("DELETE", label)
+    except Exception as e:
+        print("label removal failed (non-fatal):", e)
     try:
         run()
     finally:

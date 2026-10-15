@@ -73,6 +73,13 @@ jobs:
             core.setOutput('head', data.head.ref);
             core.setOutput('same_repo',
               String(data.head.repo.full_name === `${context.repo.owner}/${context.repo.repo}`));
+            const { data: permission } =
+              await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: context.payload.comment.user.login,
+              });
+            core.setOutput('permission', permission.permission);
 
       - name: Same-repo check
         if: steps.pr.outputs.same_repo != 'true'
@@ -80,10 +87,19 @@ jobs:
           echo "autofix apply runs only on same-repo branches"
           exit 1
 
+      - name: Write-permission check
+        if: >-
+          steps.pr.outputs.permission != 'admin' &&
+          steps.pr.outputs.permission != 'maintain' &&
+          steps.pr.outputs.permission != 'write'
+        run: |
+          echo "autofix apply requires repository write permission"
+          exit 1
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ steps.pr.outputs.head }}
+          ref: ${{ github.ref }}
 
       - name: Apply verified findings
         env:
