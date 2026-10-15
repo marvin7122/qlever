@@ -287,7 +287,10 @@ void VocabularyOnDisk::open(const std::string& filename) {
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
-  bool preferIoUring = true;
+  // Measurement variant (colloquium): batched lookups with blocking `pread`
+  // (`SyncIoPolicy`) instead of io_uring, to separate the effect of the batch
+  // path from the effect of io_uring.
+  bool preferIoUring = false;
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
     ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
   }
