@@ -310,7 +310,10 @@ size_t BufferPoolBudgetController::reserveBytes() const {
   }
   const size_t total =
       signals_.totalBytes ? signals_.totalBytes().value_or(0) : 0;
-  return std::max(2 * BufferPoolBudgetConfig::GiB, total / 20);
+  // Relative to the memory this process may use, so that a tight memory
+  // limit is not eaten up by a fixed minimum (#5537: a 2 GiB minimum left the
+  // pool at about 1.6 GiB under a limit with about 4 GiB of headroom).
+  return std::max(256 * BufferPoolBudgetConfig::MiB, total / 20);
 }
 
 // _____________________________________________________________________________

@@ -282,8 +282,8 @@ struct RuntimeParameters {
   Bool vocabularyBufferPoolAuto_{false, "vocabulary-buffer-pool-auto"};
 
   // The free memory that the elastic budget leaves for everything else, in
-  // bytes. 0 (the default) means max(2 GiB, 5 % of the RAM or of the cgroup's
-  // memory limit).
+  // bytes. 0 (the default) means max(256 MiB, 5 % of the RAM or of the
+  // cgroup's memory limit).
   SizeT vocabularyBufferPoolReserve_{0, "vocabulary-buffer-pool-reserve"};
 
   // If set to true, loading a vocabulary that keeps some of its words in RAM

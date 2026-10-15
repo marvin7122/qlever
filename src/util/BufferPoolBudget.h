@@ -44,7 +44,7 @@ struct BufferPoolBudgetConfig {
   // pools do not thrash completely.
   size_t floorBytes = 256 * MiB;
   // Free memory to leave for everything else. 0 = the default
-  // `max(2 GiB, 5 % of the RAM)`.
+  // `max(256 MiB, 5 % of the RAM or of the cgroup's memory limit)`.
   size_t reserveBytes = 0;
   // How much the target grows per tick while memory is free.
   size_t stepBytes = GiB;
