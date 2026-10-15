@@ -354,6 +354,50 @@ def test_gh_call_has_timeout():
     assert seen["timeout"] and seen["timeout"] > 0
 
 
+def test_parse_selection_variants():
+    assert fx.parse_selection("") == "all"
+    assert fx.parse_selection("/autofix apply") == "all"
+    assert fx.parse_selection("/autofix apply all") == "all"
+    assert fx.parse_selection("/autofix apply abc123") == ["abc123"]
+    assert fx.parse_selection(
+        "please /autofix apply ab12, cd34") == ["ab12", "cd34"]
+    assert fx.parse_selection("/autofix apply hello") == []
+
+
+def test_verified_record_stores_patch_and_options_markdown():
+    with _checkout(), mock.patch.object(
+            fx, "call_model", return_value=_patch("target.txt")):
+        recs = fx.process_file("target.txt", [_finding("target.txt", 1)],
+                               {"target.txt"}, False)
+    assert recs[0]["status"] == "verified"
+    assert recs[0]["reason"] == "verified"
+    assert "target.txt" in recs[0]["patch"]
+    body = fx.audit_markdown(recs, "suggest")
+    assert "| Reason |" in body
+    assert recs[0]["reason"] in body
+    assert "### Suggestions (ready to apply)" in body
+    assert "Problem:" in body and "Tradeoff:" in body
+    assert "```diff" in body
+    assert f"/autofix apply {recs[0]['patch_sha']}" in body
+    assert "Option B" in body
+
+
+def test_apply_selection_reverts_unselected():
+    with _checkout(), mock.patch.object(
+            fx, "call_model", return_value=_patch("target.txt")):
+        recs = fx.process_file("target.txt", [_finding("target.txt", 1)],
+                               {"target.txt"}, True)
+        assert recs[0]["status"] == "applied"
+        with open("target.txt") as f:
+            assert f.read() == "new\n"
+        with mock.patch.object(fx, "SELECTION", "/autofix apply deadbeef"):
+            fx.deselect_unwanted(recs)
+        assert recs[0]["status"] == "skipped"
+        assert recs[0]["reason"] == "not-selected"
+        with open("target.txt") as f:
+            assert f.read() == "old\n"
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

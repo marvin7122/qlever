@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Bot-finding autofix for Qlever PRs (v2).
 
-Two phases, CodeRabbit-style:
-  suggest: collect bot inline findings, generate minimal patches with an
-           LLM, verify each (apply-check + targeted checks), and post a
-           sticky audit table plus a JSON record. Nothing is pushed.
-  apply:   regenerate on the current head and push the verified patches
-           as one commit (triggered only by a human approval comment).
+Options-first, command-driven apply:
+  suggest: collect bot inline findings, generate one minimal verified
+           patch per file (Option A), and post a sticky audit comment
+           that states the problem, shows the suggestion ready to apply,
+           and names its tradeoff. Option B is always "leave as-is".
+           Nothing is pushed.
+  apply:   regenerate on the current head and push verified patches as
+           one commit. A human selects with `/autofix apply all` or
+           `/autofix apply <patch-id> [more ids]`; anything not selected
+           is left out. Triggered only by a human approval comment.
 
 Environment:
   GITHUB_REPOSITORY   owner/repo
@@ -16,6 +20,7 @@ Environment:
   FIX_MODEL           model id (default qwen/qwen3-coder-30b-a3b-instruct)
   MAX_FINDINGS        cap per run (default 25)
   MODE                suggest (default) | apply
+  SELECTION           raw `/autofix apply ...` comment body (apply only)
 """
 
 import hashlib
@@ -32,6 +37,7 @@ OR_KEY = os.environ["OPENROUTER_API_KEY"]
 MODEL = os.environ.get("FIX_MODEL", "qwen/qwen3-coder-30b-a3b-instruct")
 MAX_FINDINGS = int(os.environ.get("MAX_FINDINGS", "25"))
 MODE = os.environ.get("MODE", "suggest")
+SELECTION = os.environ.get("SELECTION", "")
 API = "https://api.github.com"
 MARKER = "<!-- autofix:audit -->"
 
@@ -349,11 +355,78 @@ def failure_reason(short_err):
     return "unknown"
 
 
+def parse_selection(body):
+    """Parse `/autofix apply ...` comment bodies. -> "all" | [ids] | [].
+
+    "all" means every verified patch; a list holds requested patch-id
+    prefixes (case-insensitive); [] means an explicit selection matched
+    nothing (apply nothing, say so in the audit).
+    """
+    if not body:
+        return "all"
+    m = re.search(r"/autofix\s+apply\s*([^\n]*)?", body, re.I)
+    if not m:
+        return "all"
+    arg = (m.group(1) or "").strip().lower()
+    if arg in ("", "all"):
+        return "all"
+    ids = [t.strip("`,. ").lower() for t in re.split(r"[\s,]+", arg) if t]
+    ids = [t for t in ids if re.fullmatch(r"[0-9a-f]{2,40}", t)]
+    return ids if ids else []
+
+
+def _matches(sha, wanted):
+    return any(sha.startswith(w) or w.startswith(sha) for w in wanted)
+
+
+def deselect_unwanted(records):
+    """Revert applied patches the human did not select. -> records."""
+    wanted = parse_selection(SELECTION)
+    if wanted == "all":
+        return records
+    wanted = wanted if isinstance(wanted, list) else []
+    seen = set()
+    for r in records:
+        if r["status"] != "applied" or not r["patch_sha"]:
+            continue
+        if r["patch_sha"] in seen:
+            r.update(status="skipped", reason="not-selected",
+                     note="not selected; comment `/autofix apply "
+                     f"{r['patch_sha']}` to apply it")
+            continue
+        if _matches(r["patch_sha"], wanted):
+            seen.add(r["patch_sha"])
+            continue
+        if r.get("patch"):
+            with open("/tmp/autofix.patch", "w") as f:
+                f.write(r["patch"])
+            git("apply", "-R", "/tmp/autofix.patch", check=False)
+        seen.add("reverted:" + r["patch_sha"])
+        for other in records:
+            if other.get("patch_sha") == r["patch_sha"]:
+                other.update(status="skipped", reason="not-selected",
+                             note="not selected; comment `/autofix apply "
+                             f"{r['patch_sha']}` to apply it")
+    return records
+
+
+def tradeoff_line(diff, path):
+    """One-line tradeoff for a verified patch."""
+    plus = sum(1 for ln in diff.splitlines() if ln.startswith("+")
+               and not ln.startswith("+++"))
+    minus = sum(1 for ln in diff.splitlines() if ln.startswith("-")
+                and not ln.startswith("---"))
+    return (f"applies a minimal {plus + minus}-line change in {path} only; "
+            "alternative is leave as-is (no churn, finding stays open)")
+
+
 def process_file(path, findings, allowed, keep):
     """Generate, verify, optionally keep one patch per file. -> records."""
     recs = [{**{k: f[k] for k in ("path", "line", "bot")},
              "status": "", "patch_sha": "", "attempts": 0,
-             "note": "", "error": "", "reason": ""} for f in findings]
+             "note": "", "error": "", "reason": "",
+             "patch": "", "finding": f.get("body", "")[:500]}
+            for f in findings]
 
     def skip_all(note, reason, error=""):
         for r in recs:
@@ -401,6 +474,7 @@ def process_file(path, findings, allowed, keep):
     sha = hashlib.sha256(diff.encode()).hexdigest()[:12]
     for r in recs:
         r["patch_sha"] = sha
+        r["patch"] = diff
     git("apply", "/tmp/autofix.patch")
     ok, note = verify(path)
     if not ok:
@@ -427,17 +501,44 @@ def audit_markdown(records, mode):
     for r in records:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
     head = ", ".join(f"{v} {k}" for k, v in sorted(counts.items()))
-    rows = ["| File | Bot | Status | Patch | Note |",
-            "| ------ | ------ | ------ | ------ | ------ |"]
+    rows = ["| File | Bot | Status | Patch | Reason | Note |",
+            "| ------ | ------ | ------ | ------ | ------ | ------ |"]
     for r in records:
         rows.append(f"| `{r['path']}:{r['line']}` | {r['bot']} | "
                     f"{r['status']} | `{r['patch_sha'] or '-'}` | "
-                    f"{r['note']} |")
-    nxt = ("Verified fixes only — comment `/autofix apply` with write "
-           "access to apply them." if mode == "suggest" else
-           "Applied fixes were pushed; re-review will confirm.")
+                    f"{r.get('reason') or '-'} | {r['note']} |")
+    # One options block per verified patch (deduplicated: same-file
+    # findings share one patch). States the problem, shows the ready
+    # suggestion, and names the tradeoff; Option B is always leave-as-is.
+    seen, options = set(), []
+    for r in records:
+        sha = r.get("patch_sha") or ""
+        if r["status"] not in ("verified", "applied") or not sha:
+            continue
+        if sha in seen or not r.get("patch"):
+            continue
+        seen.add(sha)
+        problem = (r.get("finding") or "").strip().splitlines()
+        problem = " ".join(problem)[:500] or "bot finding (see review)"
+        options.append(
+            f"#### `{r['path']}` — Option A (recommended, `{sha}`)\n"
+            f"Problem: {problem}\n\n"
+            f"Tradeoff: {tradeoff_line(r['patch'], r['path'])}\n\n"
+            f"```diff\n{r['patch'].rstrip()}\n```\n"
+            f"Apply: comment `/autofix apply {sha}` (write access). "
+            "Option B is leave as-is (no action).")
+    opts = ("\n\n### Suggestions (ready to apply)\n\n" + "\n\n".join(options)
+            if options else "")
+    if mode == "suggest":
+        nxt = ("Verified suggestions only — nothing was pushed. Comment "
+               "`/autofix apply all` or `/autofix apply <patch-id>` with "
+               "write access and the agent commits the selection. "
+               "One-click suggestion Apply buttons need PR review comments; "
+               "this audit comment uses the command path.")
+    else:
+        nxt = "Applied fixes were pushed; re-review will confirm."
     return (f"{MARKER}\n## Autofix audit ({mode})\n\n{head}\n\n"
-            + "\n".join(rows) + f"\n\n{nxt}\n")
+            + "\n".join(rows) + opts + f"\n\n{nxt}\n")
 
 
 def post_audit(records, mode):
@@ -460,6 +561,8 @@ def run():
     keep = MODE == "apply"
     records = [rec for path, group in group_by_file(findings)
                for rec in process_file(path, group, allowed, keep)]
+    if keep:
+        records = deselect_unwanted(records)
     audit_path = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"),
                               "autofix-audit.json")
     with open(audit_path, "w") as fh:
