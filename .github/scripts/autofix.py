@@ -307,7 +307,12 @@ def process(finding, allowed, keep):
     if len(content) > 25000:
         rec.update(status="skipped", note="file too large for one call")
         return rec
-    git("checkout", "--", path, check=False)
+    if not keep:
+        # Suggest mode verifies each patch against a pristine file, then
+        # reverts. Apply mode must NOT reset: it would wipe fixes applied
+        # for earlier findings on the same file (including ones that end
+        # up skipped), leaving only the last fix per file in the commit.
+        git("checkout", "--", path, check=False)
     diff, attempts, err = make_patch(finding, content)
     rec["attempts"] = attempts
     if not diff:
@@ -325,7 +330,11 @@ def process(finding, allowed, keep):
     git("apply", "/tmp/autofix.patch")
     ok, note = verify(path)
     if not ok:
-        git("checkout", "--", path)
+        # Reverse only this patch: a full checkout would also wipe fixes
+        # already applied for earlier findings on the same file.
+        git("apply", "-R", "/tmp/autofix.patch", check=False)
+        if not verify(path)[0]:
+            git("checkout", "--", path)
         rec.update(status="skipped", note=f"verification failed: {note}")
         return rec
     if not keep:
@@ -377,8 +386,13 @@ def run():
     with open("autofix-audit.json", "w") as fh:
         json.dump({"pr": PR, "mode": MODE, "model": MODEL,
                    "records": records}, fh, indent=1)
-    if keep and git("status", "--short").stdout.strip():
-        git("add", "-A")
+    tracked = [ln for ln in
+               git("status", "--short").stdout.splitlines()
+               if not ln.startswith("??")]
+    if keep and tracked:
+        # -u stages only tracked modifications: -A would sweep untracked
+        # junk (__pycache__, the local audit JSON) into the fix commit.
+        git("add", "-u")
         git("-c", "user.name=autofix-bot",
             "-c", "user.email=autofix-bot@users.noreply.github.com",
             "commit", "-m", "autofix: apply verified bot review findings")
