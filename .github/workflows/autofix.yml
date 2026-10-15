@@ -17,12 +17,12 @@ permissions:
   contents: write
   pull-requests: write
 
-concurrency:
-  group: autofix-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
 
 jobs:
   suggest:
+    concurrency:
+      group: autofix-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: true
     if: >-
       github.event_name == 'pull_request' &&
       github.event.label.name == 'autofix' &&
@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.ref }}
 
       - name: Verify bot findings
         env:

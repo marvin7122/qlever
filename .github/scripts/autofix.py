@@ -190,6 +190,8 @@ def openrouter(messages, max_tokens=1800):
 def collect_findings():
     """Newest bot inline comments, deduped by (path, line), richest body wins."""
     comments = gh_paged(f"/repos/{REPO}/pulls/{PR}/comments")
+    # Filter out comments that are not about the current PR's files
+    comments = [c for c in comments if c.get("path") in {f["filename"] for f in gh_paged(f"/repos/{REPO}/pulls/{PR}/files")}]
     by_key = {}
     for c in comments:
         author = (c.get("user") or {}).get("login") or ""
@@ -322,7 +324,17 @@ def process(finding, allowed, keep):
     if not touched:
         rec.update(status="skipped", note="patch without file headers")
         return rec
-    if touched - allowed:
+    # Check for files that were renamed or had metadata changes
+    # which are not captured by the ---/+++ headers alone
+    git_diff = git("diff", "--name-status", "--cached").stdout
+    git_touched = {
+        line.split("\t")[1] for line in git_diff.splitlines()
+        if line.startswith(("A", "M", "D", "R")) and len(line.split("\t")) >= 2
+    }
+    if git_touched - allowed:
+        rec.update(status="skipped", note="patch touches files outside the PR")
+        return rec
+    if touched - allowed or not touched:
         rec.update(status="skipped",
                    note="patch touches files outside the PR")
         return rec
