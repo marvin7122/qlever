@@ -334,6 +334,12 @@ def verify(path):
     r = git("diff", "--check", "--", path, check=False)
     if r.returncode != 0:
         return False, "whitespace errors"
+    # Reject pure-churn patches: identical lines re-added with only
+    # whitespace touched. Such "verified" suggestions waste a review
+    # cycle; the live trial showed the model emitting them.
+    w = git("diff", "-w", "--numstat", "--", path, check=False)
+    if not w.stdout.strip():
+        return False, "no functional change"
     if path.endswith(".py"):
         r = subprocess.run(["python3", "-m", "py_compile", path],
                            capture_output=True, text=True)

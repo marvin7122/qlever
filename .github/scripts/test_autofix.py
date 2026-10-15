@@ -382,6 +382,15 @@ def test_verified_record_stores_patch_and_options_markdown():
     assert "Option B" in body
 
 
+def test_verify_rejects_whitespace_only_change():
+    with _checkout():
+        with open("target.txt", "w") as f:
+            f.write("  old\n")
+        ok, note = fx.verify("target.txt")
+        assert not ok
+        assert note == "no functional change"
+
+
 def test_apply_selection_reverts_unselected():
     with _checkout(), mock.patch.object(
             fx, "call_model", return_value=_patch("target.txt")):
