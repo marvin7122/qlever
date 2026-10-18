@@ -230,11 +230,13 @@ VocabularyOnDisk::BufferPools* VocabularyOnDisk::bufferPools(
       static_cast<double>(wordsSize + offsetsSize));
   const size_t offsetsBudget = totalBudget - wordsBudget;
   if (pools.words_ == nullptr) {
+    const size_t pageSize = getRuntimeParameter<
+        &RuntimeParameters::vocabularyBufferPoolPageSize_>();
     auto words = std::make_unique<ad_utility::BufferPool>(
-        pools.filename_, wordsSize, wordsBudget);
+        pools.filename_, wordsSize, wordsBudget, pageSize);
     auto offsets = std::make_unique<ad_utility::BufferPool>(
         pools.filename_ + std::string{offsetSuffix_}, offsetsSize,
-        offsetsBudget);
+        offsetsBudget, pageSize);
     if (!words->isValid() || !offsets->isValid()) {
       AD_LOG_WARN << "Could not create the vocabulary buffer pools for "
                   << pools.filename_ << "; reading without them" << std::endl;
@@ -244,7 +246,8 @@ VocabularyOnDisk::BufferPools* VocabularyOnDisk::bufferPools(
     AD_LOG_INFO << "Vocabulary buffer pools for " << pools.filename_ << ": "
                 << wordsBudget << " + " << offsetsBudget << " bytes"
                 << (elastic ? " (elastic budget, starting at the floor)" : "")
-                << ", " << (words->usesDirectIo() ? "O_DIRECT" : "page cache")
+                << ", pages of " << pageSize << " bytes, "
+                << (words->usesDirectIo() ? "O_DIRECT" : "page cache")
                 << std::endl;
     pools.words_ = std::move(words);
     pools.offsets_ = std::move(offsets);

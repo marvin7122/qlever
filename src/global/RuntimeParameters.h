@@ -286,6 +286,14 @@ struct RuntimeParameters {
   // cgroup's memory limit).
   SizeT vocabularyBufferPoolReserve_{0, "vocabulary-buffer-pool-reserve"};
 
+  // The page size of the buffer pools above in bytes (a power of two, at least
+  // 4096): the unit in which they load, cache and evict. Larger pages mean
+  // fewer and larger `O_DIRECT` reads (like readahead) but more bytes read for
+  // scattered words. Read when the pools are created (first lookup with a
+  // pool), so it must be set at server start.
+  SizeT vocabularyBufferPoolPageSize_{4096,
+                                      "vocabulary-buffer-pool-page-size"};
+
   // If set to true, loading a vocabulary that keeps some of its words in RAM
   // (`VocabularyInternalExternal`) also builds a bit vector with one bit per
   // vocabulary index plus rank counters (see `ad_utility::BitVectorWithRank`).

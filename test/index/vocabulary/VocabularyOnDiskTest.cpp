@@ -549,6 +549,38 @@ TEST(VocabularyOnDisk, BufferPoolReadsAreByteIdentical) {
   }
 }
 
+// _____________________________________________________________________________
+// The same with pools of 16 KiB pages (`vocabulary-buffer-pool-page-size`,
+// read when the pools are created), including a budget below one page.
+TEST(VocabularyOnDisk, BufferPoolLargerPagesAreByteIdentical) {
+  std::vector<std::string> words;
+  for (size_t i = 0; i < 5000; ++i) {
+    words.push_back(absl::StrCat("w", i, std::string(i % 23, 'y')));
+  }
+  words.push_back(std::string(40000, 'L'));
+  words.push_back("end");
+  VocabularyCreator creator{gtestCurrentTestName()};
+  auto vocab = creator.createVocabulary(words);
+  auto pageSizeCleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyBufferPoolPageSize_>(size_t{16384});
+  std::mt19937_64 random{3};
+  for (size_t budget : {size_t{1} << 30, size_t{16384}, size_t{100}}) {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabularyBufferPoolSize_>(budget);
+    for (size_t b = 0; b < 30; ++b) {
+      std::vector<size_t> indices;
+      const size_t batchSize = 1 + random() % 400;
+      for (size_t i = 0; i < batchSize; ++i) {
+        indices.push_back(random() % words.size());
+      }
+      indices.push_back(words.size() - 2);
+      auto result = vocab.lookupBatch(indices);
+      vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+          vocab, result, indices);
+    }
+  }
+}
+
 // An empty batch is an invalid request and must throw.
 TEST(VocabularyOnDisk, LookupBatchEmptyThrows) {
   auto vocab = createExampleVocabulary();

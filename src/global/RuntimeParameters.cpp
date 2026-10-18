@@ -94,6 +94,14 @@ RuntimeParameters::RuntimeParameters() {
     ad_utility::vocabularyBlockCacheNumBlocks.store(numBlocks,
                                                     std::memory_order_relaxed);
   });
+  vocabularyBufferPoolPageSize_.setParameterConstraint(
+      [](size_t pageSize, std::string_view parameterName) {
+        if (pageSize < 4096 || (pageSize & (pageSize - 1)) != 0) {
+          throw std::runtime_error{absl::StrCat(
+              "Parameter ", parameterName,
+              " must be a power of two of at least 4096, was ", pageSize)};
+        }
+      });
   vocabBlockCacheBlockSize_.setParameterConstraint(
       [](size_t blockSize, std::string_view parameterName) {
         constexpr size_t unit =
@@ -119,6 +127,7 @@ RuntimeParameters::RuntimeParameters() {
   add(vocabularyBufferPoolSize_);
   add(vocabularyBufferPoolAuto_);
   add(vocabularyBufferPoolReserve_);
+  add(vocabularyBufferPoolPageSize_);
   add(vocabularyInternalRankLookup_);
   add(vocabularyInternalRankPrefetchDistance_);
   add(vocabularyInternalRankHugePages_);

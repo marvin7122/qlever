@@ -51,11 +51,17 @@ namespace ad_utility {
 // concurrently from any number of threads.
 class BufferPool {
  public:
-  static constexpr size_t pageSize = 4096;
+  // The default page size. Every page size is a power of two and a multiple
+  // of it, so that the pages are aligned as `O_DIRECT` requires.
+  static constexpr size_t defaultPageSize = 4096;
+
+  // The size of the pages of this pool (the unit of loading, caching and
+  // eviction).
+  size_t pageSize() const { return pageSize_; }
 
   // Reads the page-aligned ranges `[offsets[i], offsets[i] + numBytes[i])` of
   // the file into `targets[i]` (page-aligned, `numBytes[i]` a multiple of
-  // `pageSize`, all within the file) from the descriptor `fd`, and returns
+  // `pageSize()`, all within the file) from the descriptor `fd`, and returns
   // only when all of them are complete. Must throw on an error.
   using Loader = std::function<void(int fd, ql::span<const size_t> numBytes,
                                     ql::span<const uint64_t> offsets,
@@ -63,9 +69,12 @@ class BufferPool {
 
   // A pool for the file `filename`, of which the first `fileSize` bytes are
   // read. `budgetBytes` is the maximal size of the loaded pages (see
-  // `setBudget`). The file is opened with `O_DIRECT` if the file system
-  // supports it, otherwise with the page cache.
-  BufferPool(const std::string& filename, size_t fileSize, size_t budgetBytes);
+  // `setBudget`). `pageSize` must be a power of two and a multiple of
+  // `defaultPageSize`; larger pages mean fewer, larger reads (like readahead)
+  // but more bytes read for scattered ranges. The file is opened with
+  // `O_DIRECT` if the file system supports it, otherwise with the page cache.
+  BufferPool(const std::string& filename, size_t fileSize, size_t budgetBytes,
+             size_t pageSize = defaultPageSize);
   ~BufferPool();
 
   BufferPool(const BufferPool&) = delete;
@@ -89,7 +98,7 @@ class BufferPool {
   // A budget of zero keeps no page beyond the end of the `readAll` that
   // loaded it.
   void setBudget(size_t budgetBytes);
-  size_t budgetBytes() const { return budgetPages_.load() * pageSize; }
+  size_t budgetBytes() const { return budgetPages_.load() * pageSize_; }
 
   // Evict loaded pages (CLOCK) until at most the budget remains, but at most
   // `maxPages` of them, and return how many were evicted. For a background
@@ -98,7 +107,7 @@ class BufferPool {
   size_t evictTowardsBudget(size_t maxPages);
 
   // The bytes of the pages that are currently loaded.
-  size_t loadedBytes() const { return numLoaded_.load() * pageSize; }
+  size_t loadedBytes() const { return numLoaded_.load() * pageSize_; }
 
   // Read `numBytes[i]` bytes at `offsets[i]` of the file into `buffers[i]`
   // for every `i` (any alignment; the ranges must lie within the file).
@@ -127,6 +136,7 @@ class BufferPool {
   static constexpr uint64_t referenceBit = 4;
   static constexpr uint64_t versionOne = 8;
 
+  size_t pageSize_ = defaultPageSize;
   char* region_ = nullptr;
   size_t regionSize_ = 0;
   size_t fileSize_ = 0;

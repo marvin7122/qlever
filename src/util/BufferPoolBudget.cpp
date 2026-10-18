@@ -322,7 +322,7 @@ void BufferPoolBudgetController::tickLocked() {
   size_t loaded = 0;
   for (const auto& group : groups_) {
     for (const BufferPool* pool : group.pools_) {
-      fileBytes += pool->numPages() * BufferPool::pageSize;
+      fileBytes += pool->numPages() * pool->pageSize();
       loaded += pool->loadedBytes();
     }
   }
@@ -349,10 +349,10 @@ void BufferPoolBudgetController::tickLocked() {
 
   // Split the target in proportion to the file sizes (as for a fixed budget),
   // then evict towards it in a bounded chunk.
-  size_t evictPages = config_.maxEvictBytesPerTick / BufferPool::pageSize;
+  size_t evictBytes = config_.maxEvictBytesPerTick;
   for (const auto& group : groups_) {
     for (BufferPool* pool : group.pools_) {
-      const size_t poolBytes = pool->numPages() * BufferPool::pageSize;
+      const size_t poolBytes = pool->numPages() * pool->pageSize();
       pool->setBudget(static_cast<size_t>(static_cast<double>(target) *
                                           static_cast<double>(poolBytes) /
                                           static_cast<double>(fileBytes)));
@@ -360,10 +360,12 @@ void BufferPoolBudgetController::tickLocked() {
   }
   for (const auto& group : groups_) {
     for (BufferPool* pool : group.pools_) {
+      const size_t evictPages = evictBytes / pool->pageSize();
       if (evictPages == 0) {
         break;
       }
-      evictPages -= std::min(evictPages, pool->evictTowardsBudget(evictPages));
+      evictBytes -= std::min(
+          evictBytes, pool->evictTowardsBudget(evictPages) * pool->pageSize());
     }
   }
 

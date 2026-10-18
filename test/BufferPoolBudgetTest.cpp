@@ -27,7 +27,7 @@ using ad_utility::BufferPoolBudgetConfig;
 using ad_utility::BufferPoolBudgetController;
 using ad_utility::BufferPoolSignals;
 using ad_utility::nextBufferPoolTarget;
-constexpr size_t P = BufferPool::pageSize;
+constexpr size_t P = BufferPool::defaultPageSize;
 constexpr size_t MiB = BufferPoolBudgetConfig::MiB;
 constexpr size_t GiB = BufferPoolBudgetConfig::GiB;
 

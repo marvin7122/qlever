@@ -85,13 +85,17 @@ void pause(size_t& spins) {
 
 // _____________________________________________________________________________
 BufferPool::BufferPool([[maybe_unused]] const std::string& filename,
-                       size_t fileSize, size_t budgetBytes)
-    : budgetPages_{budgetBytes / pageSize} {
+                       size_t fileSize, size_t budgetBytes,
+                       size_t pageSize)
+    : pageSize_{pageSize}, budgetPages_{budgetBytes / pageSize} {
+  AD_CONTRACT_CHECK(pageSize >= defaultPageSize &&
+                    pageSize % defaultPageSize == 0 &&
+                    (pageSize & (pageSize - 1)) == 0);
 #ifdef QL_BUFFER_POOL
   if (fileSize == 0) {
     return;
   }
-  numPages_ = (fileSize + pageSize - 1) / pageSize;
+  numPages_ = (fileSize + pageSize_ - 1) / pageSize_;
   AD_CONTRACT_CHECK(numPages_ <= std::numeric_limits<uint32_t>::max());
   bufferedFd_ = ::open(filename.c_str(), O_RDONLY | O_CLOEXEC);
   if (bufferedFd_ < 0) {
@@ -109,7 +113,7 @@ BufferPool::BufferPool([[maybe_unused]] const std::string& filename,
   for (size_t i = 0; i < numPages_; ++i) {
     states_[i].store(evicted, std::memory_order_relaxed);
   }
-  regionSize_ = numPages_ * pageSize;
+  regionSize_ = numPages_ * pageSize_;
   void* region = ::mmap(nullptr, regionSize_, PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
   if (region == MAP_FAILED || fd_ < 0) {
@@ -142,7 +146,7 @@ BufferPool::~BufferPool() {
 
 // _____________________________________________________________________________
 void BufferPool::setBudget(size_t budgetBytes) {
-  budgetPages_.store(budgetBytes / pageSize);
+  budgetPages_.store(budgetBytes / pageSize_);
 }
 
 // _____________________________________________________________________________
@@ -150,8 +154,8 @@ bool BufferPool::tryCopy(uint64_t offset, size_t numBytes, char* target) {
   if (numBytes == 0) {
     return true;
   }
-  const size_t first = offset / pageSize;
-  const size_t last = (offset + numBytes - 1) / pageSize;
+  const size_t first = offset / pageSize_;
+  const size_t last = (offset + numBytes - 1) / pageSize_;
   // The state words seen before the copy, without the reference bit (most
   // reads touch one or two pages).
   constexpr size_t numInline = 8;
@@ -226,8 +230,8 @@ void BufferPool::readAll(ql::span<const size_t> numBytes,
       if (numBytes[i] == 0) {
         continue;
       }
-      const size_t first = offsets[i] / pageSize;
-      const size_t last = (offsets[i] + numBytes[i] - 1) / pageSize;
+      const size_t first = offsets[i] / pageSize_;
+      const size_t last = (offsets[i] + numBytes[i] - 1) / pageSize_;
       for (size_t page = first; page <= last; ++page) {
         neededPages.push_back(page);
       }
@@ -281,8 +285,8 @@ void BufferPool::readAll(ql::span<const size_t> numBytes,
     for (size_t i : pending) {
       bool allOwned = !owned.empty() && numBytes[i] > 0;
       if (allOwned) {
-        const size_t first = offsets[i] / pageSize;
-        const size_t last = (offsets[i] + numBytes[i] - 1) / pageSize;
+        const size_t first = offsets[i] / pageSize_;
+        const size_t last = (offsets[i] + numBytes[i] - 1) / pageSize_;
         for (size_t page = first; page <= last && allOwned; ++page) {
           allOwned = std::binary_search(owned.begin(), owned.end(), page);
         }
@@ -327,7 +331,7 @@ void BufferPool::loadClaimed(ql::span<const size_t> pages,
   // Adjacent pages are read as one range. An incomplete last page of the file
   // is read separately through the page cache, because an `O_DIRECT` read of
   // a whole page there returns fewer bytes.
-  const bool lastPageIsPartial = fileSize_ % pageSize != 0;
+  const bool lastPageIsPartial = fileSize_ % pageSize_ != 0;
   std::vector<size_t> runBytes;
   std::vector<uint64_t> runOffsets;
   std::vector<char*> runTargets;
@@ -344,9 +348,9 @@ void BufferPool::loadClaimed(ql::span<const size_t> pages,
       --numRunPages;
     }
     if (numRunPages > 0) {
-      runBytes.push_back(numRunPages * pageSize);
-      runOffsets.push_back(firstPage * pageSize);
-      runTargets.push_back(region_ + firstPage * pageSize);
+      runBytes.push_back(numRunPages * pageSize_);
+      runOffsets.push_back(firstPage * pageSize_);
+      runTargets.push_back(region_ + firstPage * pageSize_);
     }
     k = end;
   }
@@ -358,7 +362,7 @@ void BufferPool::loadClaimed(ql::span<const size_t> pages,
     }
   }
   if (readPartialLastPage) {
-    const uint64_t offset = (numPages_ - 1) * pageSize;
+    const uint64_t offset = (numPages_ - 1) * pageSize_;
     preadFully(bufferedFd_, region_ + offset, fileSize_ - offset, offset);
   }
   pageLoads_.fetch_add(pages.size(), std::memory_order_relaxed);
@@ -482,7 +486,7 @@ void BufferPool::releasePages(std::vector<size_t> pages) {
     while (end < pages.size() && pages[end] == pages[end - 1] + 1) {
       ++end;
     }
-    ::madvise(region_ + pages[k] * pageSize, (end - k) * pageSize,
+    ::madvise(region_ + pages[k] * pageSize_, (end - k) * pageSize_,
               MADV_DONTNEED);
     k = end;
   }

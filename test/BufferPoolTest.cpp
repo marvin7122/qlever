@@ -21,7 +21,7 @@
 
 namespace {
 using ad_utility::BufferPool;
-constexpr size_t P = BufferPool::pageSize;
+constexpr size_t P = BufferPool::defaultPageSize;
 
 // Write `contents` to `filename`.
 void writeFile(const std::string& filename, const std::string& contents) {
@@ -255,4 +255,52 @@ TEST(BufferPool, concurrentReadersUnderEviction) {
     // After all readers are done, the budget holds.
     EXPECT_LE(pool.numLoadedPages(), budgetPages);
   }
+}
+
+// _____________________________________________________________________________
+// Pages larger than the default: the unit of loading and eviction is the
+// larger page, reads stay byte-identical (also across page boundaries, in the
+// incomplete last page and under a budget of one page), and invalid page
+// sizes are rejected.
+TEST(BufferPool, largerPages) {
+  const std::string filename = "bufferPoolTestLargePages.dat";
+  const std::string contents = makeContents(37, 1000);
+  absl::Cleanup removeFile{[&filename]() { ad_utility::deleteFile(filename); }};
+  writeFile(filename, contents);
+#ifndef __linux__
+  GTEST_SKIP() << "BufferPool needs Linux";
+#endif
+  constexpr size_t L = 4 * P;
+  {
+    BufferPool pool(filename, contents.size(), 100 * L, L);
+    ASSERT_TRUE(pool.isValid());
+    EXPECT_EQ(pool.pageSize(), L);
+    EXPECT_EQ(pool.numPages(), 10u);  // 37 pages + 1000 bytes in 16 KiB pages
+    // Two reads in the first large page, one across the boundary of large
+    // pages 2 and 3, one in the incomplete last page.
+    readAndCheck(pool, contents,
+                 {{10, 20}, {P + 3, 100}, {3 * L - 7, 50}, {9 * L + 5, 900}});
+    EXPECT_EQ(pool.numPageLoads(), 4u);  // large pages 0, 2, 3, 9
+    EXPECT_EQ(pool.loadedBytes(), 4 * L);
+    readAndCheck(pool, contents, {{L + 1, 2 * L}, {0, contents.size()}});
+    EXPECT_EQ(pool.numPageLoads(), 10u);
+  }
+  {
+    // A budget of one large page: every read still returns the right bytes.
+    BufferPool pool(filename, contents.size(), L, L);
+    std::mt19937_64 random{7};
+    for (size_t round = 0; round < 50; ++round) {
+      std::vector<std::pair<uint64_t, size_t>> ranges;
+      for (size_t i = 0; i < 20; ++i) {
+        const uint64_t offset = random() % contents.size();
+        ranges.emplace_back(offset,
+                            std::min<size_t>(random() % (2 * L),
+                                             contents.size() - offset));
+      }
+      readAndCheck(pool, contents, ranges);
+    }
+    EXPECT_LE(pool.loadedBytes(), L);
+  }
+  EXPECT_ANY_THROW(BufferPool(filename, contents.size(), L, 3 * P));
+  EXPECT_ANY_THROW(BufferPool(filename, contents.size(), L, 2048));
 }
