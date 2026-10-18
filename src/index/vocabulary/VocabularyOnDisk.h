@@ -11,6 +11,7 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -21,6 +22,8 @@
 #include "index/vocabulary/VocabularyBinarySearchMixin.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Algorithm.h"
+#include "util/BufferPool.h"
+#include "util/BufferPoolBudget.h"
 #include "util/File.h"
 #include "util/Generator.h"
 #include "util/IoUringManager.h"
@@ -73,6 +76,29 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     ad_utility::export_prototypes::DirectIoFile offsets_;
   };
   mutable std::unique_ptr<DirectIoFiles> directIoFiles_;
+
+  // Buffer pools for `file_` and `offsetsFile_` (see
+  // `vocabulary-buffer-pool-size`), created on first use and shared by all
+  // lookups. The total budget is split between the two files in proportion to
+  // their sizes.
+  struct BufferPools {
+    std::string filename_;
+    std::mutex mutex_;
+    // The total budget the pools were last set to (0 = not created yet).
+    std::atomic<size_t> budget_{0};
+    // Set if creating the pools failed (e.g. no address space): the lookups
+    // then take the other paths.
+    std::atomic<bool> failed_{false};
+    std::unique_ptr<ad_utility::BufferPool> words_;
+    std::unique_ptr<ad_utility::BufferPool> offsets_;
+    // With `vocabulary-buffer-pool-auto`: the registration with the elastic
+    // budget controller. Declared after the pools, so it is destroyed (and
+    // the controller stops using the pools) before them.
+    std::atomic<bool> elastic_{false};
+    std::unique_ptr<ad_utility::BufferPoolBudgetController::Registration>
+        elasticRegistration_;
+  };
+  mutable std::unique_ptr<BufferPools> bufferPools_;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
@@ -275,6 +301,10 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     // fast path and were submitted to the manager; `finish` marks them
     // resident once the batch has completed.
     std::vector<size_t> missedPositions_;
+    // The buffer pools of this lookup (see `vocabulary-buffer-pool-size`), or
+    // null. With the pools, both phases run in `finish` and read through the
+    // pools; the mappings and the page-cache fast path are not used.
+    VocabularyOnDisk::BufferPools* bufferPools_ = nullptr;
 
     // Hand the `manager_` back to the pool. Used by `finish` and the
     // destructor; the handle owns the manager until one of them runs.
@@ -291,10 +321,25 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // through `manager`.
   // With `residentReads`, words whose pages are known resident are copied
   // from `wordsMapping_` first.
-  VocabBatchLookupResult readStrings(ad_utility::BatchManagerBase& manager,
-                                     ql::span<const OffsetPair> offsetPairs,
-                                     bool pageCacheFastPath,
-                                     bool residentReads) const;
+  // With `wordsPool` (not null), all words are read through that buffer pool
+  // (misses through `manager`) instead.
+  VocabBatchLookupResult readStrings(
+      ad_utility::BatchManagerBase& manager,
+      ql::span<const OffsetPair> offsetPairs, bool pageCacheFastPath,
+      bool residentReads, ad_utility::BufferPool* wordsPool = nullptr) const;
+
+  // The buffer pools (created on first use), or null if they are off or
+  // cannot be created. With `elastic` false, the pools have the fixed total
+  // budget `totalBudget` (off if zero; budgets updated when it changes). With
+  // `elastic` true, the pools are registered with the process-wide
+  // `BufferPoolBudgetController`, which sets their budgets; `totalBudget`, if
+  // positive, is its upper bound, and `reserve` the free memory it leaves.
+  BufferPools* bufferPools(size_t totalBudget, bool elastic = false,
+                           size_t reserve = 0) const;
+
+  // A `BufferPool::Loader` that reads the missing pages through `manager`.
+  static ad_utility::BufferPool::Loader loaderFor(
+      ad_utility::BatchManagerBase& manager);
 
   // Serve the reads whose pages are known resident in `mapping` (if not null)
   // from the mapping, then the others with `readPageCacheHits`; mark the pages
