@@ -30,6 +30,7 @@
 #include "util/MemorySize/MemorySize.h"
 
 using namespace ad_utility::memory_literals;
+using namespace ad_utility::vocabulary;
 
 namespace {
 // _____________________________________________________________________________
