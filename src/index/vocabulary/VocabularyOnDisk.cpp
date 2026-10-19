@@ -20,6 +20,7 @@
 #include "backports/filesystem.h"
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
+#include "index/vocabulary/LookupPipeline.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
@@ -285,6 +286,19 @@ ad_utility::BufferPool::Loader VocabularyOnDisk::loaderFor(
 }
 
 // _____________________________________________________________________________
+ad_utility::BufferPool::AsyncLoader VocabularyOnDisk::asyncLoaderFor(
+    ad_utility::BatchManagerBase& manager) {
+  ad_utility::BufferPool::AsyncLoader loader;
+  loader.submit = [&manager](int fd, ql::span<const size_t> numBytes,
+                             ql::span<const uint64_t> offsets,
+                             ql::span<char*> targets) -> uint64_t {
+    return manager.addBatch(fd, numBytes, offsets, targets);
+  };
+  loader.wait = [&manager](uint64_t batch) { manager.wait(batch); };
+  return loader;
+}
+
+// _____________________________________________________________________________
 void VocabularyOnDisk::readThroughManager(ad_utility::BatchManagerBase& manager,
                                           int fd,
                                           ql::span<const size_t> numBytes,
@@ -405,7 +419,15 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
   // only code that returns the manager to the pool, so it is returned on every
   // exit path (including exceptions such as an out-of-range index) without a
   // separate cleanup that could double-return it.
-  handle->manager_ = ioManagers_->pop().value();
+  // A pipelined lookup (see `LookupPipelineScope`) borrows the thread's
+  // manager instead, so that a thread can have several lookups in flight.
+  const bool pipelined = LookupPipelineScope::active();
+  if (pipelined) {
+    handle->io_ = &LookupPipelineScope::manager();
+  } else {
+    handle->manager_ = ioManagers_->pop().value();
+    handle->io_ = handle->manager_.get();
+  }
   handle->indices_.assign(indices.begin(), indices.end());
 
   // Submit the offset reads (Phase 1) without waiting for them: the caller
@@ -424,12 +446,25 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
   }
   // With the buffer pools, both phases run in `finish` (the pool serves the
   // hits from memory and loads the misses in one batch), so nothing is
-  // submitted here.
+  // submitted here. A pipelined lookup instead starts loading the missing
+  // offset pages here (phase 2 starts in `advance`).
   handle->bufferPools_ = bufferPools(
       getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolSize_>(),
       getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolAuto_>(),
       getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolReserve_>());
   if (handle->bufferPools_ != nullptr) {
+    if (pipelined) {
+      handle->pipelinedPools_ = true;
+      handle->offsetSizes_ = std::move(sizes);
+      handle->offsetFileOffsets_ = std::move(fileOffsets);
+      handle->offsetTargets_ = std::move(targets);
+      handle->bufferPools_->offsets_->startReadAll(
+          handle->offsetsRead_, handle->offsetSizes_,
+          handle->offsetFileOffsets_, handle->offsetTargets_,
+          asyncLoaderFor(*handle->io_),
+          getRuntimeParameter<
+              &RuntimeParameters::vocabularyMmapPrefetchDistance_>());
+    }
     return handle;
   }
   handle->pageCacheFastPath_ =
@@ -440,7 +475,7 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
       handle->pageCacheFastPath_ &&
       getRuntimeParameter<&RuntimeParameters::vocabularyMmapResidentReads_>();
   if (!handle->pageCacheFastPath_) {
-    handle->offsetBatch_ = handle->manager_->addBatch(
+    handle->offsetBatch_ = handle->io_->addBatch(
         offsetsFile_.fd(), sizes, fileOffsets, targets,
         batchReadOptions(true));
     return handle;
@@ -495,7 +530,7 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
     }
   }
   handle->offsetBatch_ = submitThroughManager(
-      *handle->manager_, offsetsFile_.fd(), sizes, fileOffsets, targets,
+      *handle->io_, offsetsFile_.fd(), sizes, fileOffsets, targets,
       missedPositions, batchReadOptions(true));
   handle->missedPositions_ = std::move(missedPositions);
   return handle;
@@ -521,6 +556,14 @@ VocabBatchLookupResult VocabularyOnDisk::LookupHandle::finish() {
                                   "returning the `IoManager` to the pool in "
                                   "`VocabularyOnDisk::LookupHandle::finish`");
   }};
+  if (pipelinedPools_) {
+    advance();
+    auto loader = loaderFor(*io_);
+    bufferPools_->words_->finishReadAll(wordsRead_, wordSizes_,
+                                        wordFileOffsets_, wordTargets_,
+                                        &loader);
+    return std::move(words_).value().finalize();
+  }
   if (bufferPools_ != nullptr) {
     // Phase 1 through the offsets pool (the pairs of consecutive indices
     // overlap in the file; the pool copies each pair separately), then phase 2
@@ -533,12 +576,12 @@ VocabBatchLookupResult VocabularyOnDisk::LookupHandle::finish() {
       fileOffsets[i] = indices_[i] * sizeof(uint64_t);
       targets[i] = reinterpret_cast<char*>(&offsetPairs_[i]);
     }
-    auto loader = loaderFor(*manager_);
+    auto loader = loaderFor(*io_);
     bufferPools_->offsets_->readAll(
         sizes, fileOffsets, targets, &loader,
         getRuntimeParameter<
             &RuntimeParameters::vocabularyMmapPrefetchDistance_>());
-    return vocab_->readStrings(*manager_, offsetPairs_, false, false,
+    return vocab_->readStrings(*io_, offsetPairs_, false, false,
                                bufferPools_->words_.get());
   }
   // Wait for the offset reads submitted by `beginLookup`, then read the string
@@ -546,7 +589,7 @@ VocabBatchLookupResult VocabularyOnDisk::LookupHandle::finish() {
   // With the page-cache fast path, all offset pairs may already have been
   // read by `beginLookup`, in which case no batch was submitted.
   if (offsetBatch_.has_value()) {
-    manager_->wait(offsetBatch_.value());
+    io_->wait(offsetBatch_.value());
   }
   if (residentReads_) {
     // The runs served from the resident mapping or the page cache were marked
@@ -561,12 +604,50 @@ VocabBatchLookupResult VocabularyOnDisk::LookupHandle::finish() {
     vocab_->offsetsMapping_.markAllResident(sizes, fileOffsets,
                                             missedPositions_);
   }
-  return vocab_->readStrings(*manager_, offsetPairs_, pageCacheFastPath_,
+  return vocab_->readStrings(*io_, offsetPairs_, pageCacheFastPath_,
                              residentReads_);
 }
 
 // _____________________________________________________________________________
+void VocabularyOnDisk::LookupHandle::advance() {
+  if (!pipelinedPools_ || advanced_) {
+    return;
+  }
+  advanced_ = true;
+  // Phase 1: the offset pairs (loads started by `beginLookup`).
+  auto loader = loaderFor(*io_);
+  bufferPools_->offsets_->finishReadAll(offsetsRead_, offsetSizes_,
+                                        offsetFileOffsets_, offsetTargets_,
+                                        &loader);
+  // Phase 2: start loading the words into one contiguous buffer.
+  const size_t numIndices = offsetPairs_.size();
+  wordSizes_.resize(numIndices);
+  wordFileOffsets_.resize(numIndices);
+  for (size_t i = 0; i < numIndices; ++i) {
+    wordSizes_[i] = offsetPairs_[i].wordSize();
+    wordFileOffsets_[i] = offsetPairs_[i].offset();
+  }
+  words_.emplace(wordSizes_);
+  wordTargets_ = words_->targets();
+  bufferPools_->words_->startReadAll(
+      wordsRead_, wordSizes_, wordFileOffsets_, wordTargets_,
+      asyncLoaderFor(*io_),
+      getRuntimeParameter<
+          &RuntimeParameters::vocabularyMmapPrefetchDistance_>());
+}
+
+// _____________________________________________________________________________
 VocabularyOnDisk::LookupHandle::~LookupHandle() {
+  // A pipelined lookup through the pools: the pending reads complete in their
+  // own destructors (declared last, so before the buffers they write into).
+  // A pipelined lookup without the pools borrowed the thread's manager: drain
+  // its offset reads, which target `offsetPairs_` (a no-op after `finish`).
+  if (manager_ == nullptr && io_ != nullptr && offsetBatch_.has_value()) {
+    ad_utility::terminateIfThrows(
+        [this]() { io_->wait(offsetBatch_.value()); },
+        "draining in-flight offset reads in the destructor of "
+        "`VocabularyOnDisk::LookupHandle`");
+  }
   // If `finish` was never called (e.g. an exception between `beginLookup` and
   // `finishLookup`), drain the offset reads first. Those reads target
   // `offsetPairs_`, which dies with this handle. Returning a busy manager
@@ -587,6 +668,10 @@ VocabularyOnDisk::LookupHandle::~LookupHandle() {
 
 // _____________________________________________________________________________
 void VocabularyOnDisk::LookupHandle::returnManagerToPool() {
+  // A pipelined lookup borrowed the thread's manager: nothing to return.
+  if (manager_ == nullptr) {
+    return;
+  }
   vocab_->ioManagers_->push(std::move(manager_));
 }
 

@@ -10,6 +10,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,17 @@
 namespace ql::engine::export_v2 {
 
 using qlever::export_v2::ScatterGatherChunkBuilder;
+
+// The vocabulary lookups of one window of rows, started ahead of serializing
+// that window (see `export-v2-pipeline-lookups`). Destroying it without
+// serializing the window waits for its reads.
+class PreparedWindowBase {
+ public:
+  virtual ~PreparedWindowBase() = default;
+  // Wait for the first phase of the lookups and start the second (see
+  // `VocabLookupHandleBase::advance`).
+  virtual void advance() = 0;
+};
 
 // Instantiates a CONSTRUCT template for a window of result rows and writes one
 // Turtle or N-Triples line per instantiated triple, with the same bytes as
@@ -64,10 +76,23 @@ class ConstructRowSerializer {
   // Append the triples of the rows `[rowBegin, rowEnd)` of `idTable` to
   // `builder`. `rowsExportedBeforeBlock` is the number of rows that the blocks
   // before `idTable` exported (see `ExportMorselSegment`).
+  // `prepared`, if not null, must come from `prepareRows` with the same
+  // `idTable`, `index`, `rowBegin` and `rowEnd`; its lookups are then
+  // completed instead of looking the words up here. The bytes are the same.
   void appendRows(const IdTableView<0>& idTable, const LocalVocab& localVocab,
                   const Index& index, uint64_t rowBegin, uint64_t rowEnd,
                   uint64_t rowsExportedBeforeBlock,
-                  ScatterGatherChunkBuilder& builder) const;
+                  ScatterGatherChunkBuilder& builder,
+                  PreparedWindowBase* prepared = nullptr) const;
+
+  // Start the vocabulary lookups of the rows `[rowBegin, rowEnd)` of
+  // `idTable` (one split-phase lookup per template variable), for a later
+  // `appendRows` of the same rows. Returns null if there is nothing to look
+  // up.
+  std::unique_ptr<PreparedWindowBase> prepareRows(const IdTableView<0>& idTable,
+                                                  const Index& index,
+                                                  uint64_t rowBegin,
+                                                  uint64_t rowEnd) const;
 
  private:
   // One position of a template triple.

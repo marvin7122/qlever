@@ -60,6 +60,68 @@ void appendObject(std::string& out, std::string_view text) {
 // go through one batched vocabulary lookup and become views into the decoded
 // batch. All other ids take Legacy's `idToStringAndType`; `Undefined` marks
 // the cell unbound.
+// The rows of `ids` that hold a `VocabIndex`, and their vocabulary indices.
+struct VocabCells {
+  std::vector<size_t> rows_;
+  std::vector<size_t> indices_;
+};
+VocabCells vocabCellsOf(ql::span<const Id> ids) {
+  VocabCells cells;
+  for (size_t row = 0; row < ids.size(); ++row) {
+    const Id id = ids[row];
+    if (id.getDatatype() == Datatype::VocabIndex) {
+      cells.rows_.push_back(row);
+      cells.indices_.push_back(id.getVocabIndex().get());
+    }
+  }
+  return cells;
+}
+
+// Set the cells `vocabRows` of `column` to the looked-up `words` (in the same
+// order), and keep `words` alive with the column.
+void placeVocabWords(ResolvedColumn& column, ql::span<const size_t> vocabRows,
+                     ad_utility::vocabulary::VocabBatchLookupResult words) {
+  AD_CORRECTNESS_CHECK(words.size() == vocabRows.size());
+  auto word = words.begin();
+  for (size_t row : vocabRows) {
+    auto literalOrIri = LiteralOrIriView::fromStringRepresentation(*word++);
+    std::optional<std::string_view> blankNode;
+    if (literalOrIri.isIri()) {
+      blankNode = ql::exportIds::blankNodeIriToString(literalOrIri.getIri());
+    }
+    column.setView(row, blankNode.has_value()
+                            ? blankNode.value()
+                            : literalOrIri.toStringRepresentation());
+  }
+  column.keepAlive(std::move(words));
+}
+
+// The cells of `ids` that are not `VocabIndex`es (the part of
+// `resolveTermColumn` without the vocabulary lookup).
+void resolveNonVocabCells(ResolvedColumn& column, const Index& index,
+                          ql::span<const Id> ids, const LocalVocab& localVocab,
+                          bool includeDataType) {
+  for (size_t row = 0; row < ids.size(); ++row) {
+    const Id id = ids[row];
+    if (id.getDatatype() == Datatype::VocabIndex) {
+      continue;
+    }
+    auto stringAndType =
+        ql::exportIds::idToStringAndType(index, id, localVocab);
+    if (!stringAndType.has_value()) {
+      column.setUnbound(row);
+      continue;
+    }
+    auto& [text, type] = stringAndType.value();
+    if (type == nullptr) {
+      column.setCopy(row, text);
+    } else {
+      column.setCopy(row, formatTerm(EvaluatedTermData{std::move(text), type},
+                                     includeDataType));
+    }
+  }
+}
+
 void resolveTermColumn(ResolvedColumn& column, const Index& index,
                        ql::span<const Id> ids, const LocalVocab& localVocab,
                        bool includeDataType) {
@@ -112,7 +174,54 @@ void resolveTermColumn(ResolvedColumn& column, const Index& index,
 // separators, for the size estimate only.
 constexpr size_t kBlankNodeRowIdBytes = 20;
 
+// The started lookups of one window: per template variable (slot), the rows
+// with a `VocabIndex` and the split-phase lookup of their words (null if
+// there are none).
+class PreparedRows : public PreparedWindowBase {
+ public:
+  struct Slot {
+    std::vector<size_t> vocabRows_;
+    std::unique_ptr<ad_utility::vocabulary::VocabLookupHandleBase> handle_;
+  };
+  std::vector<Slot> slots_;
+  uint64_t rowBegin_ = 0;
+  uint64_t rowEnd_ = 0;
+
+  void advance() override {
+    for (auto& slot : slots_) {
+      if (slot.handle_ != nullptr) {
+        slot.handle_->advance();
+      }
+    }
+  }
+};
+
 }  // namespace
+
+// _____________________________________________________________________________
+std::unique_ptr<PreparedWindowBase> ConstructRowSerializer::prepareRows(
+    const IdTableView<0>& idTable, const Index& index, uint64_t rowBegin,
+    uint64_t rowEnd) const {
+  rowEnd = std::min(rowEnd, static_cast<uint64_t>(idTable.numRows()));
+  if (rowBegin >= rowEnd || triples_.empty()) {
+    return nullptr;
+  }
+  const size_t n = static_cast<size_t>(rowEnd - rowBegin);
+  auto prepared = std::make_unique<PreparedRows>();
+  prepared->rowBegin_ = rowBegin;
+  prepared->rowEnd_ = rowEnd;
+  prepared->slots_.resize(columns_.size());
+  for (size_t slot = 0; slot < columns_.size(); ++slot) {
+    auto cells =
+        vocabCellsOf(idTable.getColumn(columns_[slot]).subspan(rowBegin, n));
+    auto& out = prepared->slots_[slot];
+    if (!cells.indices_.empty()) {
+      out.handle_ = index.getImpl().getVocab().beginLookup(cells.indices_);
+    }
+    out.vocabRows_ = std::move(cells.rows_);
+  }
+  return prepared;
+}
 
 // _____________________________________________________________________________
 bool ConstructRowSerializer::supportsMediaType(
@@ -180,22 +289,37 @@ ConstructRowSerializer::ConstructRowSerializer(
 void ConstructRowSerializer::appendRows(
     const IdTableView<0>& idTable, const LocalVocab& localVocab,
     const Index& index, uint64_t rowBegin, uint64_t rowEnd,
-    uint64_t rowsExportedBeforeBlock,
-    ScatterGatherChunkBuilder& builder) const {
+    uint64_t rowsExportedBeforeBlock, ScatterGatherChunkBuilder& builder,
+    PreparedWindowBase* prepared) const {
   rowEnd = std::min(rowEnd, static_cast<uint64_t>(idTable.numRows()));
   if (rowBegin >= rowEnd || triples_.empty()) {
     return;
   }
   const size_t n = static_cast<size_t>(rowEnd - rowBegin);
+  auto* preparedRows = static_cast<PreparedRows*>(prepared);
+  if (preparedRows != nullptr) {
+    AD_CONTRACT_CHECK(preparedRows->rowBegin_ == rowBegin &&
+                      preparedRows->rowEnd_ == rowEnd &&
+                      preparedRows->slots_.size() == columns_.size());
+  }
 
   // `ResolvedColumn` is pinned, so the vector is sized once and each column
   // is constructed in place.
   std::vector<std::optional<ResolvedColumn>> resolved(columns_.size());
   for (size_t slot = 0; slot < columns_.size(); ++slot) {
     auto& column = resolved[slot].emplace(n);
-    resolveTermColumn(column, index,
-                      idTable.getColumn(columns_[slot]).subspan(rowBegin, n),
-                      localVocab, includeDataType_);
+    const auto ids = idTable.getColumn(columns_[slot]).subspan(rowBegin, n);
+    if (preparedRows == nullptr) {
+      resolveTermColumn(column, index, ids, localVocab, includeDataType_);
+    } else {
+      auto& preparedSlot = preparedRows->slots_[slot];
+      resolveNonVocabCells(column, index, ids, localVocab, includeDataType_);
+      if (preparedSlot.handle_ != nullptr) {
+        placeVocabWords(column, preparedSlot.vocabRows_,
+                        index.getImpl().getVocab().finishLookup(
+                            std::move(preparedSlot.handle_)));
+      }
+    }
     column.finish();
   }
 

@@ -26,6 +26,7 @@
 #include <stdexcept>
 
 #include "util/Exception.h"
+#include "util/IoWaitStats.h"
 #include "util/Log.h"
 #include "util/VocabBlockCache.h"
 
@@ -574,9 +575,14 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
   // ready. This costs at most one `io_uring_enter` for the whole wave.
   io_uring_cqe* cqe = nullptr;
   int ret = 0;
-  do {
-    ret = io_uring_wait_cqes(&ring_, &cqe, numToWaitFor, nullptr, nullptr);
-  } while (ret == -EINTR);
+  {
+    // For `export-io-wait-stats`: the time this thread is blocked here.
+    io_wait_stats::ScopedWait timeWait{io_wait_stats::ioUringWaitNs,
+                                       io_wait_stats::ioUringWaits};
+    do {
+      ret = io_uring_wait_cqes(&ring_, &cqe, numToWaitFor, nullptr, nullptr);
+    } while (ret == -EINTR);
+  }
   if (ret < 0) {
     AD_THROW(absl::StrCat("io_uring_wait_cqes failed in IoUringPolicy: ",
                           std::strerror(-ret)));

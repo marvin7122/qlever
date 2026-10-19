@@ -813,6 +813,14 @@ class VocabLookupHandleBase {
   // string representations, in the same order as the indices passed to the
   // corresponding `beginLookup`.
   [[nodiscard]] virtual VocabBatchLookupResult finish() = 0;
+
+  // Optional middle step of a lookup whose reads have two dependent phases
+  // (the offsets, then the words): wait for the first phase and start the
+  // second, without waiting for it. A caller that calls `advance` some time
+  // before `finish` lets both phases overlap with its own work. Only
+  // pipelined lookups (see `LookupPipelineScope`) do anything here; the
+  // default does nothing, and `finish` works without it.
+  virtual void advance() {}
 };
 
 // A split-phase lookup handle for vocabularies whose lookups complete without

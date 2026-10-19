@@ -15,9 +15,11 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <deque>
 #include <functional>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,9 +44,11 @@
 #include "global/Id.h"
 #include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
+#include "index/vocabulary/LookupPipeline.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/Exception.h"
 #include "util/InputRangeUtils.h"
+#include "util/IoWaitStats.h"
 #include "util/Log.h"
 #include "util/Timer.h"
 
@@ -396,9 +400,94 @@ uint64_t offsetLeftToApply(const QueryExecutionTree& qet,
 // owns everything it reads besides the block (shared ownership): closing the
 // session does not join running helpers, so a helper may still serialize after
 // the request's context is gone.
-using SegmentSerializer =
-    std::function<void(const ExportMorselSegment& segment, uint64_t begin,
-                       uint64_t end, ScatterGatherChunkBuilder& builder)>;
+// `prepare_` (optional) starts the vocabulary lookups of a window ahead of its
+// `serialize_` call (see `export-v2-pipeline-lookups`), which then gets the
+// result; `serialize_` also accepts null (no prepared lookups).
+struct SegmentSerializer {
+  std::function<void(const ExportMorselSegment& segment, uint64_t begin,
+                     uint64_t end, ScatterGatherChunkBuilder& builder,
+                     PreparedWindowBase* prepared)>
+      serialize_;
+  std::function<std::unique_ptr<PreparedWindowBase>(
+      const ExportMorselSegment& segment, uint64_t begin, uint64_t end)>
+      prepare_;
+};
+
+// The windows of rows of a morsel, in order: at most `kRevocationCheckRows`
+// rows of one segment each.
+struct MorselWindow {
+  size_t segment_;
+  uint64_t begin_;
+  uint64_t end_;
+};
+std::vector<MorselWindow> windowsOf(const ExportMorsel& plan) {
+  std::vector<MorselWindow> windows;
+  for (size_t s = 0; s < plan.segments_.size(); ++s) {
+    const auto& segment = plan.segments_[s];
+    for (uint64_t pos = segment.begin_; pos < segment.end_;) {
+      const uint64_t end = pos + std::min(kRevocationCheckRows,
+                                          segment.end_ - pos);
+      windows.push_back({s, pos, end});
+      pos = end;
+    }
+  }
+  return windows;
+}
+
+// Serialize the windows of `plan` in order into `builder`. Before every
+// window but the first, `continueAt(window)` is called with that window; if
+// it returns false, the loop stops (the window and the rest are not
+// serialized). With `export-v2-pipeline-lookups` (and a `prepare_`), the
+// lookups run two windows ahead: before window i is serialized, the lookups
+// of window i+2 are started and those of window i+1 advanced (see
+// `PreparedWindowBase`), all with this thread's I/O ring.
+template <typename ContinueAt>
+void serializeWindows(const ExportMorsel& plan,
+                      const SegmentSerializer& serializer,
+                      ScatterGatherChunkBuilder& builder,
+                      ContinueAt continueAt) {
+  const auto windows = windowsOf(plan);
+  const bool pipelined =
+      serializer.prepare_ &&
+      getRuntimeParameter<&RuntimeParameters::exportV2PipelineLookups_>();
+  // Declared before the prepared windows, so that they are completed (or
+  // destroyed) while the scope is alive.
+  std::optional<ad_utility::vocabulary::LookupPipelineScope> scope;
+  std::deque<std::unique_ptr<PreparedWindowBase>> prepared;
+  size_t nextToPrepare = 0;
+  if (pipelined) {
+    scope.emplace();
+  }
+  uint64_t rowsDone = 0;
+  bool reserved = false;
+  for (size_t i = 0; i < windows.size(); ++i) {
+    const auto& window = windows[i];
+    if (i > 0 && !continueAt(window)) {
+      return;
+    }
+    const auto& segment = plan.segments_[window.segment_];
+    std::unique_ptr<PreparedWindowBase> current;
+    if (pipelined) {
+      for (; nextToPrepare < std::min(i + 3, windows.size());
+           ++nextToPrepare) {
+        const auto& ahead = windows[nextToPrepare];
+        prepared.push_back(serializer.prepare_(
+            plan.segments_[ahead.segment_], ahead.begin_, ahead.end_));
+      }
+      if (prepared.size() > 1 && prepared[1] != nullptr) {
+        prepared[1]->advance();
+      }
+      current = std::move(prepared.front());
+      prepared.pop_front();
+    }
+    serializer.serialize_(segment, window.begin_, window.end_, builder,
+                          current.get());
+    rowsDone += window.end_ - window.begin_;
+    if (!reserved) {
+      reserved = reserveForMorsel(builder, rowsDone, plan.numRows_);
+    }
+  }
+}
 
 // Builds morsel tasks with cooperative revocation checkpoints (unordered
 // sessions only). On revocation the task returns its partial builder and
@@ -427,43 +516,28 @@ struct CheckpointMorselRunner {
     const uint64_t epoch = state_->currentEpoch();
     ScatterGatherChunkBuilder builder;
     const size_t numSegments = plan.segments_.size();
-    uint64_t rowsDone = 0;
-    bool reserved = false;
-    for (size_t s = 0; s < numSegments; ++s) {
-      auto& seg = plan.segments_[s];
-      uint64_t pos = seg.begin_;
-      while (pos < seg.end_) {
-        const uint64_t windowEnd =
-            std::min(seg.end_, pos + kRevocationCheckRows);
-        (*serialize_)(seg, pos, windowEnd, builder);
-        rowsDone += windowEnd - pos;
-        if (!reserved) {
-          reserved = reserveForMorsel(builder, rowsDone, plan.numRows_);
-        }
-        pos = windowEnd;
-        if (pos < seg.end_ || s + 1 < numSegments) {
+    serializeWindows(
+        plan, *serialize_, builder, [&](const MorselWindow& next) {
           if (state_->isCancelled()) {
-            return builder;
+            return false;
           }
           if (checkpoints_ && state_->currentEpoch() != epoch) {
+            // Resubmit the rows from `next` on.
             ExportMorsel remainder;
-            if (pos < seg.end_) {
-              auto tail = seg;
-              tail.begin_ = pos;
-              remainder.segments_.push_back(std::move(tail));
-              remainder.numRows_ += seg.end_ - pos;
-            }
-            for (size_t r = s + 1; r < numSegments; ++r) {
+            auto tail = plan.segments_[next.segment_];
+            tail.begin_ = next.begin_;
+            remainder.numRows_ += tail.end_ - tail.begin_;
+            remainder.segments_.push_back(std::move(tail));
+            for (size_t r = next.segment_ + 1; r < numSegments; ++r) {
               remainder.numRows_ +=
                   plan.segments_[r].end_ - plan.segments_[r].begin_;
-              remainder.segments_.push_back(std::move(plan.segments_[r]));
+              remainder.segments_.push_back(plan.segments_[r]);
             }
             state_->trySubmitMorsel(makeTask(std::move(remainder)));
-            return builder;
+            return false;
           }
-        }
-      }
-    }
+          return true;
+        });
     return builder;
   }
 };
@@ -494,6 +568,28 @@ cppcoro::generator<ScatterGatherChunkBuilder> serializeMorsels(
   std::shared_ptr<const Result> result = qet.getResult(true);
   result->logResultSize();
 
+  // With `export-io-wait-stats`: the time that threads waited for vocabulary
+  // reads while this request serialized its rows (process-wide counters).
+  const auto waitsBefore = ad_utility::io_wait_stats::Snapshot::now();
+  const ad_utility::Timer serializeTimer{ad_utility::Timer::Started};
+  auto logIoWaits = [&waitsBefore, &serializeTimer]() {
+    if (!ad_utility::io_wait_stats::enabled.load()) {
+      return;
+    }
+    const auto waits =
+        ad_utility::io_wait_stats::Snapshot::now() - waitsBefore;
+    AD_LOG_INFO << "ExportEngineV2 I/O waits: serialize_ms="
+                << serializeTimer.msecs().count()
+                << " io_uring_wait_ms=" << waits.ioUringWaitNs_ / 1'000'000
+                << " io_uring_waits=" << waits.ioUringWaits_
+                << " pool_page_wait_ms=" << waits.poolPageWaitNs_ / 1'000'000
+                << " pool_page_waits=" << waits.poolPageWaits_
+                << " pipeline="
+                << getRuntimeParameter<
+                       &RuntimeParameters::exportV2PipelineLookups_>()
+                << std::endl;
+  };
+
   // The order of the morsels follows the clause the user wrote, the rows to
   // skip follow the plan (see `offsetLeftToApply`).
   const bool ordered = limitOffset._limit.has_value() ||
@@ -520,22 +616,10 @@ cppcoro::generator<ScatterGatherChunkBuilder> serializeMorsels(
                            std::function<uint64_t()>{rowsPerMorselFn})) {
       cancellationHandle->throwIfCancelled();
       ScatterGatherChunkBuilder builder;
-      uint64_t rowsDone = 0;
-      bool reserved = false;
-      for (const auto& segment : plan.segments_) {
-        uint64_t pos = segment.begin_;
-        while (pos < segment.end_) {
-          cancellationHandle->throwIfCancelled();
-          const uint64_t windowEnd =
-              pos + std::min(kRevocationCheckRows, segment.end_ - pos);
-          (*serialize)(segment, pos, windowEnd, builder);
-          rowsDone += windowEnd - pos;
-          if (!reserved) {
-            reserved = reserveForMorsel(builder, rowsDone, plan.numRows_);
-          }
-          pos = windowEnd;
-        }
-      }
+      serializeWindows(plan, *serialize, builder, [&](const MorselWindow&) {
+        cancellationHandle->throwIfCancelled();
+        return true;
+      });
       if (adaptiveChunkSizing) {
         adaptiveSizer.recordChunk(builder.size(), plan.numRows_);
       }
@@ -543,6 +627,7 @@ cppcoro::generator<ScatterGatherChunkBuilder> serializeMorsels(
         co_yield std::move(builder);
       }
     }
+    logIoWaits();
     co_return;
   }
 
@@ -626,6 +711,7 @@ cppcoro::generator<ScatterGatherChunkBuilder> serializeMorsels(
     }
   }
   logHelpers(true);
+  logIoWaits();
 }
 
 // The SELECT CSV/TSV morsels: a header line, then the selected columns of
@@ -638,17 +724,20 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildSelectMorsels(
   auto columns = selectedColumns(parsedQuery, qet, selectClause);
   const bool monomorphicRows =
       getRuntimeParameter<&RuntimeParameters::exportV2MonomorphicRows_>();
-  auto serialize = std::make_shared<const SegmentSerializer>(
+  // No `prepare_`: the SELECT path does not pipeline its lookups.
+  auto serialize = std::make_shared<const SegmentSerializer>(SegmentSerializer{
       [indices = std::move(columns.indices_),
        lattice = std::move(columns.lattice_.columns_),
        index = qet.getQec()->getIndexSharedPtr(), format,
        monomorphicRows](const ExportMorselSegment& segment, uint64_t begin,
-                        uint64_t end, ScatterGatherChunkBuilder& builder) {
+                        uint64_t end, ScatterGatherChunkBuilder& builder,
+                        PreparedWindowBase*) {
         ExportEngineV2::appendSerializedRows(
             segment.block_->idTable_.asStaticView<0>(),
             segment.block_->localVocab_, format, builder, *index, indices,
             begin, end, lattice, monomorphicRows);
-      });
+      },
+      {}});
   return serializeMorsels(
       qet, parsedQuery._limitOffset, makeHeaderLine(selectClause, format),
       std::move(serialize), std::move(cancellationHandle), scheduler);
@@ -667,14 +756,20 @@ cppcoro::generator<ScatterGatherChunkBuilder> buildConstructMorsels(
   auto serializer = std::make_shared<const ConstructRowSerializer>(
       parsedQuery.constructClause().triples_, qet.getVariableColumns(), *index,
       mediaType, offsetLeftToApply(qet, limitOffset));
-  auto serialize = std::make_shared<const SegmentSerializer>(
-      [serializer = std::move(serializer), index = std::move(index)](
-          const ExportMorselSegment& segment, uint64_t begin, uint64_t end,
-          ScatterGatherChunkBuilder& builder) {
+  auto serialize = std::make_shared<const SegmentSerializer>(SegmentSerializer{
+      [serializer, index](const ExportMorselSegment& segment, uint64_t begin,
+                          uint64_t end, ScatterGatherChunkBuilder& builder,
+                          PreparedWindowBase* prepared) {
         serializer->appendRows(segment.block_->idTable_.asStaticView<0>(),
                                segment.block_->localVocab_, *index, begin, end,
-                               segment.rowsExportedBeforeBlock_, builder);
-      });
+                               segment.rowsExportedBeforeBlock_, builder,
+                               prepared);
+      },
+      [serializer, index](const ExportMorselSegment& segment, uint64_t begin,
+                          uint64_t end) {
+        return serializer->prepareRows(
+            segment.block_->idTable_.asStaticView<0>(), *index, begin, end);
+      }});
   return serializeMorsels(qet, limitOffset, std::nullopt, std::move(serialize),
                           std::move(cancellationHandle), scheduler);
 }

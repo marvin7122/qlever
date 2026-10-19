@@ -712,6 +712,11 @@ CPP_template(typename UnderlyingVocabulary,
       vocab_->appendDecodedWords(indices_, compressed, builder);
       return std::move(builder).finalize();
     }
+
+    void advance() override {
+      AD_CORRECTNESS_CHECK(underlyingHandle_ != nullptr);
+      underlyingHandle_->advance();
+    }
   };
 
   // Get the correct decoder for the word at the given position. One decoder is

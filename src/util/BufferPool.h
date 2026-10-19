@@ -12,15 +12,24 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "backports/span.h"
 
 namespace ad_utility {
+
+// Process-wide switch, set by the runtime parameter
+// `vocabulary-buffer-pool-futex-wait`: a thread that waits for a page which
+// another thread is loading or evicting first spins briefly and then sleeps on
+// a futex until that thread publishes or releases the page. If false (the
+// default), it calls `sched_yield` in a loop instead.
+inline std::atomic<bool> bufferPoolFutexWait{false};
 
 // A buffer pool for one immutable, read-only file, in the style of vmcache
 // (Leis et al., "Virtual-Memory Assisted Buffer Management", SIGMOD 2023).
@@ -120,6 +129,73 @@ class BufferPool {
                ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                const Loader* loader = nullptr, size_t prefetchDistance = 0);
 
+  // Split-phase reading (see `startReadAll`): `submit` starts reading the
+  // ranges like a `Loader` (same requirements) and returns a token without
+  // waiting; `wait(token)` returns when they are complete and must throw on
+  // an error.
+  struct AsyncLoader {
+    std::function<uint64_t(int fd, ql::span<const size_t> numBytes,
+                           ql::span<const uint64_t> offsets,
+                           ql::span<char*> targets)>
+        submit;
+    std::function<void(uint64_t token)> wait;
+  };
+
+  // The state of a read between `startReadAll` and `finishReadAll`: the reads
+  // that are not served yet, and the pages that this thread claimed and whose
+  // loads are in flight. Other threads that need these pages wait until they
+  // are published, so a thread must never wait for another thread's page
+  // while it holds such claims: every waiting thread first completes its own
+  // pending reads (`completeOwnPendingReads`). Belongs to the thread that
+  // started it. Not movable, because the thread keeps a list of its pending
+  // reads. The destructor completes an unfinished read (its pages are then
+  // published, but the buffers of its unserved reads stay unwritten).
+  class PendingRead {
+   public:
+    PendingRead() = default;
+    ~PendingRead();
+    PendingRead(const PendingRead&) = delete;
+    PendingRead& operator=(const PendingRead&) = delete;
+
+    // True between `startReadAll` and `finishReadAll`.
+    bool active() const { return pool_ != nullptr; }
+
+   private:
+    friend class BufferPool;
+    // Wait for the loads and publish the claimed pages; on an error discard
+    // them and keep the error for `finishReadAll`. Idempotent, never throws.
+    void complete() noexcept;
+    // Remove this read from its thread's list and reset it.
+    void release();
+
+    BufferPool* pool_ = nullptr;
+    std::vector<size_t> pending_;
+    std::vector<size_t> claimed_;
+    std::optional<uint64_t> token_;
+    std::function<void(uint64_t)> wait_;
+    bool completed_ = false;
+    std::exception_ptr error_;
+  };
+
+  // The first half of `readAll`: copy the reads whose pages are loaded, claim
+  // the evicted pages of the other reads and start loading them with
+  // `loader.submit` (one call for all, adjacent pages as one read), without
+  // waiting. The spans must stay valid and unchanged until `finishReadAll`.
+  // `read` must not be active.
+  void startReadAll(PendingRead& read, ql::span<const size_t> numBytes,
+                    ql::span<const uint64_t> offsets, ql::span<char*> buffers,
+                    const AsyncLoader& loader, size_t prefetchDistance = 0);
+
+  // The second half: wait for the loads of `read`, publish its pages and serve
+  // all remaining reads (as `readAll` does, missing pages through `loader`).
+  // The spans must be the ones passed to `startReadAll`.
+  void finishReadAll(PendingRead& read, ql::span<const size_t> numBytes,
+                     ql::span<const uint64_t> offsets, ql::span<char*> buffers,
+                     const Loader* loader = nullptr);
+
+  // Complete all pending reads of the calling thread (see `PendingRead`).
+  static void completeOwnPendingReads() noexcept;
+
   // Statistics, for logging and tests.
   size_t numLoadedPages() const { return numLoaded_.load(); }
   uint64_t numHits() const { return hits_.load(); }
@@ -134,7 +210,11 @@ class BufferPool {
   static constexpr uint64_t loading = 1;
   static constexpr uint64_t resident = 2;
   static constexpr uint64_t referenceBit = 4;
-  static constexpr uint64_t versionOne = 8;
+  // Set by a thread that sleeps on the futex of a page that is loading or
+  // evicting (see `bufferPoolFutexWait`); the thread that changes the state
+  // clears it and wakes the sleepers.
+  static constexpr uint64_t waiterBit = 8;
+  static constexpr uint64_t versionOne = 16;
 
   size_t pageSize_ = defaultPageSize;
   char* region_ = nullptr;
@@ -168,6 +248,42 @@ class BufferPool {
   // Load the pages `pages` (sorted, unique) that this thread has claimed
   // (state `loading`).
   void loadClaimed(ql::span<const size_t> pages, const Loader* loader);
+
+  // The reads that load the claimed `pages` (sorted, unique): adjacent pages
+  // as one read, without an incomplete last page of the file, which is read
+  // separately (`partialLastPage`).
+  struct PageRuns {
+    std::vector<size_t> numBytes_;
+    std::vector<uint64_t> offsets_;
+    std::vector<char*> targets_;
+    bool partialLastPage_ = false;
+  };
+  PageRuns runsOf(ql::span<const size_t> pages) const;
+
+  // Read the incomplete last page of the file through the page cache.
+  void readPartialLastPage();
+
+  // Copy the hits of all reads into their buffers (prefetching ahead) and
+  // return the indices of the reads that are not served.
+  std::vector<size_t> copyHits(ql::span<const size_t> numBytes,
+                               ql::span<const uint64_t> offsets,
+                               ql::span<char*> buffers,
+                               size_t prefetchDistance);
+
+  // Serve the reads `pending` (the rounds of `readAll`).
+  void servePending(std::vector<size_t> pending,
+                    ql::span<const size_t> numBytes,
+                    ql::span<const uint64_t> offsets, ql::span<char*> buffers,
+                    const Loader* loader);
+
+  // Wait until `page` is neither loading nor evicting.
+  void waitWhileBusy(size_t page);
+
+  // Atomically replace the state word of `page` by `next(old)`; return `old`.
+  // Wakes the threads sleeping on the page if `old` had the waiter bit and the
+  // new word does not.
+  template <typename F>
+  uint64_t transition(size_t page, F next);
 
   // Publish the claimed pages as loaded (and add them to the CLOCK).
   void publish(ql::span<const size_t> pages);

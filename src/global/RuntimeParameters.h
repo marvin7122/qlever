@@ -294,6 +294,31 @@ struct RuntimeParameters {
   SizeT vocabularyBufferPoolPageSize_{4096,
                                       "vocabulary-buffer-pool-page-size"};
 
+  // If set to true, a thread that needs a buffer-pool page which another
+  // thread is loading or evicting spins briefly and then sleeps on a futex
+  // until the page is published or released. If false (the default), it
+  // calls `sched_yield` in a loop, which burns CPU while the read is in
+  // flight and competes with other processes for the cores.
+  Bool vocabularyBufferPoolFutexWait_{false,
+                                      "vocabulary-buffer-pool-futex-wait"};
+
+  // If set to true, Export V2 pipelines the vocabulary lookups of CONSTRUCT
+  // exports within each morsel: before a thread serializes a window of rows,
+  // it has already started the reads of the next two windows (with the
+  // buffer pools: the offsets of window i+2 and the words of window i+1), so
+  // that the SSD works while the thread serializes. The lookups of a morsel
+  // use one I/O ring per thread (`LookupPipelineScope`). The bytes are the
+  // same. False (the default): each window looks up its words and waits for
+  // them before it is serialized.
+  Bool exportV2PipelineLookups_{false, "export-v2-pipeline-lookups"};
+
+  // If set to true, the time that threads spend waiting for vocabulary reads
+  // (in `io_uring_wait_cqes`, and for buffer-pool pages that other threads
+  // load) is summed, and every Export V2 request logs it. For measurements;
+  // the counters are process-wide, so they are exact only for one request at
+  // a time.
+  Bool exportIoWaitStats_{false, "export-io-wait-stats"};
+
   // If set to true, loading a vocabulary that keeps some of its words in RAM
   // (`VocabularyInternalExternal`) also builds a bit vector with one bit per
   // vocabulary index plus rank counters (see `ad_utility::BitVectorWithRank`).

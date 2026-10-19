@@ -267,6 +267,11 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     // `offsetPairs_` to be set by `VocabularyOnDisk::beginLookup`.
     VocabBatchLookupResult finish() override;
 
+    // For a pipelined lookup through the buffer pools (see
+    // `LookupPipelineScope`): wait for the offset pages and start loading the
+    // word pages. A no-op otherwise, and when called again.
+    void advance() override;
+
     // Drain in-flight offset reads, then return the `manager_` if `finish`
     // was never called. The reads target `offsetPairs_`, which dies here.
     ~LookupHandle() override;
@@ -280,6 +285,10 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     // The vocabulary that created this handle. It must outlive the handle.
     const VocabularyOnDisk* vocab_ = nullptr;
     std::unique_ptr<ad_utility::BatchManagerBase> manager_;
+    // The manager that the reads of this lookup go through: `manager_`, or
+    // for a pipelined lookup the thread's manager of the
+    // `LookupPipelineScope` (then `manager_` stays empty).
+    ad_utility::BatchManagerBase* io_ = nullptr;
     // The requested indices, owned so the offset reads can be completed after
     // the caller's span has gone out of scope.
     std::vector<size_t> indices_;
@@ -309,6 +318,24 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     // Hand the `manager_` back to the pool. Used by `finish` and the
     // destructor; the handle owns the manager until one of them runs.
     void returnManagerToPool();
+
+    // The state of a pipelined lookup through the buffer pools: phase 1 (the
+    // offset pairs) is started by `beginLookup`, phase 2 (the words) by
+    // `advance`, and `finish` completes it. The spans of each phase's reads
+    // must stay valid while it is pending, so they are members. The pending
+    // reads are declared last, so they are completed (in their destructors)
+    // before the buffers they write into are destroyed.
+    bool pipelinedPools_ = false;
+    bool advanced_ = false;
+    std::vector<size_t> offsetSizes_;
+    std::vector<uint64_t> offsetFileOffsets_;
+    std::vector<char*> offsetTargets_;
+    std::vector<size_t> wordSizes_;
+    std::vector<uint64_t> wordFileOffsets_;
+    std::optional<ContiguousVocabBatchBuilder> words_;
+    std::vector<char*> wordTargets_;
+    ad_utility::BufferPool::PendingRead offsetsRead_;
+    ad_utility::BufferPool::PendingRead wordsRead_;
   };
 
   // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1, read the
@@ -339,6 +366,11 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
   // A `BufferPool::Loader` that reads the missing pages through `manager`.
   static ad_utility::BufferPool::Loader loaderFor(
+      ad_utility::BatchManagerBase& manager);
+
+  // A `BufferPool::AsyncLoader` that submits the missing pages to `manager`
+  // as one batch and waits for that batch.
+  static ad_utility::BufferPool::AsyncLoader asyncLoaderFor(
       ad_utility::BatchManagerBase& manager);
 
   // Serve the reads whose pages are known resident in `mapping` (if not null)

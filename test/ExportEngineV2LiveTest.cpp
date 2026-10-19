@@ -448,4 +448,42 @@ TEST(ExportEngineV2LiveTest, ConstructManyRowsMatchLegacy) {
   }
 }
 
+// With `export-v2-pipeline-lookups` (lookups two windows ahead, one I/O ring
+// per thread), with and without the buffer pools (futex waits on), V2 writes
+// the same CONSTRUCT output as Legacy, also over many morsels and windows.
+TEST(ExportEngineV2LiveTest, ConstructPipelinedLookupsMatchLegacy) {
+  auto pipeline =
+      setRuntimeParameterForTest<&RuntimeParameters::exportV2PipelineLookups_>(
+          true);
+  auto futex = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyBufferPoolFutexWait_>(true);
+  auto stats =
+      setRuntimeParameterForTest<&RuntimeParameters::exportIoWaitStats_>(true);
+  std::string turtle;
+  for (size_t i = 0; i < 6'000; ++i) {
+    const std::string n = std::to_string(i);
+    turtle += "<http://example.org/" + n + "> <http://example.org/label> \"" +
+              (i % 3 == 0 ? "Name \\\" " : "Name ") + n + "\"@de .\n";
+  }
+  for (size_t poolBytes : {size_t{0}, size_t{1} << 26, size_t{8192}}) {
+    auto pool = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabularyBufferPoolSize_>(poolBytes);
+    for (const auto& vocabularyType : vocabularyTypes) {
+      for (const auto& query : constructQueries) {
+        expectConstructV2EqualsLegacy(makeConfig(kg, vocabularyType), query);
+      }
+      const auto config = makeConfig(turtle, vocabularyType);
+      expectConstructV2EqualsLegacy(
+          config,
+          "CONSTRUCT { ?s <http://www.w3.org/2000/01/rdf-schema#label> ?o . "
+          "?o <http://example.org/of> ?s } "
+          "WHERE { ?s <http://example.org/label> ?o }");
+      expectConstructV2EqualsLegacy(
+          config,
+          "CONSTRUCT { ?s <http://example.org/v> ?o } WHERE { ?s "
+          "<http://example.org/label> ?o } LIMIT 5000 OFFSET 77");
+    }
+  }
+}
+
 }  // namespace

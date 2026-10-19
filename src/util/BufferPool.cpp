@@ -19,11 +19,17 @@
 #include <utility>
 
 #include "util/Exception.h"
+#include "util/IoWaitStats.h"
 
 #if defined(__linux__) && !defined(__EMSCRIPTEN__)
 #include <fcntl.h>
+#include <linux/futex.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <unistd.h>
+
+#include <climits>
+#include <ctime>
 #define QL_BUFFER_POOL
 #endif
 
@@ -71,17 +77,87 @@ void loadSynchronously(int fd, ql::span<const size_t> numBytes,
   }
 }
 
-// Wait until another thread has finished loading or evicting a page.
-void pause(size_t& spins) {
-  if (++spins < 64) {
-#if defined(__x86_64__)
-    __builtin_ia32_pause();
+#ifdef QL_BUFFER_POOL
+// The futex of a page: the low half of its state word, which holds the state
+// bits, so it changes whenever the page stops loading or evicting.
+static_assert(sizeof(std::atomic<uint64_t>) == sizeof(uint64_t));
+static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
+              "the futex is the low half of the state word");
+uint32_t* futexOf(std::atomic<uint64_t>& word) {
+  return reinterpret_cast<uint32_t*>(&word);
+}
+
+// Sleep while the futex of `word` holds `expected`, at most 10 ms (a safety
+// net; every state change that ends a wait wakes the sleepers).
+void futexWait(std::atomic<uint64_t>& word, uint32_t expected) {
+  timespec timeout{0, 10'000'000};
+  ::syscall(SYS_futex, futexOf(word), FUTEX_WAIT_PRIVATE, expected, &timeout,
+            nullptr, 0);
+}
+
+void futexWakeAll(std::atomic<uint64_t>& word) {
+  ::syscall(SYS_futex, futexOf(word), FUTEX_WAKE_PRIVATE, INT_MAX, nullptr,
+            nullptr, 0);
+}
 #endif
-  } else {
+
+// The pending split-phase reads of this thread (see
+// `BufferPool::PendingRead`).
+thread_local std::vector<BufferPool::PendingRead*> ownPendingReads;
+}  // namespace
+
+// _____________________________________________________________________________
+template <typename F>
+uint64_t BufferPool::transition(size_t page, F next) {
+  uint64_t old = states_[page].load(std::memory_order_relaxed);
+  uint64_t updated = next(old);
+  while (!states_[page].compare_exchange_weak(old, updated,
+                                              std::memory_order_acq_rel)) {
+    updated = next(old);
+  }
+#ifdef QL_BUFFER_POOL
+  if ((old & waiterBit) != 0 && (updated & waiterBit) == 0) {
+    futexWakeAll(states_[page]);
+  }
+#endif
+  return old;
+}
+
+// _____________________________________________________________________________
+void BufferPool::waitWhileBusy(size_t page) {
+  io_wait_stats::ScopedWait timeWait{io_wait_stats::poolPageWaitNs,
+                                     io_wait_stats::poolPageWaits};
+  size_t spins = 0;
+  while (true) {
+    uint64_t word = states_[page].load(std::memory_order_acquire);
+    const uint64_t state = word & stateMask;
+    if (state == resident || state == evicted) {
+      return;
+    }
+    if (++spins < 64) {
+#if defined(__x86_64__)
+      __builtin_ia32_pause();
+#endif
+      continue;
+    }
+#ifdef QL_BUFFER_POOL
+    if (bufferPoolFutexWait.load(std::memory_order_relaxed)) {
+      // Announce the sleeper, so that the next state change wakes it, then
+      // sleep unless the word has changed in the meantime.
+      if ((word & waiterBit) == 0) {
+        if (!states_[page].compare_exchange_weak(word, word | waiterBit,
+                                                 std::memory_order_acq_rel)) {
+          continue;
+        }
+        word |= waiterBit;
+      }
+      futexWait(states_[page], static_cast<uint32_t>(word));
+      continue;
+    }
+#endif
     std::this_thread::yield();
   }
 }
-}  // namespace
 
 // _____________________________________________________________________________
 BufferPool::BufferPool([[maybe_unused]] const std::string& filename,
@@ -190,10 +266,10 @@ bool BufferPool::tryCopy(uint64_t offset, size_t numBytes, char* target) {
 }
 
 // _____________________________________________________________________________
-void BufferPool::readAll(ql::span<const size_t> numBytes,
-                         ql::span<const uint64_t> offsets,
-                         ql::span<char*> buffers, const Loader* loader,
-                         size_t prefetchDistance) {
+std::vector<size_t> BufferPool::copyHits(ql::span<const size_t> numBytes,
+                                         ql::span<const uint64_t> offsets,
+                                         ql::span<char*> buffers,
+                                         size_t prefetchDistance) {
   AD_CONTRACT_CHECK(offsets.size() == numBytes.size() &&
                     buffers.size() == numBytes.size());
   AD_CONTRACT_CHECK(isValid());
@@ -217,7 +293,25 @@ void BufferPool::readAll(ql::span<const size_t> numBytes,
     }
   }
   hits_.fetch_add(n - pending.size(), std::memory_order_relaxed);
+  return pending;
+}
 
+// _____________________________________________________________________________
+void BufferPool::readAll(ql::span<const size_t> numBytes,
+                         ql::span<const uint64_t> offsets,
+                         ql::span<char*> buffers, const Loader* loader,
+                         size_t prefetchDistance) {
+  servePending(copyHits(numBytes, offsets, buffers, prefetchDistance),
+               numBytes, offsets, buffers, loader);
+  // Keep the budget also when this call loaded more than it allowed.
+  evictFor(0);
+}
+
+// _____________________________________________________________________________
+void BufferPool::servePending(std::vector<size_t> pending,
+                              ql::span<const size_t> numBytes,
+                              ql::span<const uint64_t> offsets,
+                              ql::span<char*> buffers, const Loader* loader) {
   // Misses: load the missing pages of all pending reads, then copy. In the
   // first round only the missing pages are claimed. If a read is still not
   // served after that (because another thread evicted one of its pages in the
@@ -251,7 +345,7 @@ void BufferPool::readAll(ql::span<const size_t> numBytes,
         const uint64_t state = word & stateMask;
         if (state == evicted || (state == resident && round > 0)) {
           const uint64_t ownedWord =
-              (word & ~(stateMask | referenceBit)) | loading;
+              (word & ~(stateMask | referenceBit | waiterBit)) | loading;
           if (states_[page].compare_exchange_weak(word, ownedWord,
                                                   std::memory_order_acq_rel)) {
             (state == evicted ? claimed : pinned).push_back(page);
@@ -301,17 +395,13 @@ void BufferPool::readAll(ql::span<const size_t> numBytes,
     unpin(pinned);
 
     // Wait for the pages that other threads are loading, pinning or evicting
-    // (after releasing our own, so no two threads wait for each other).
+    // (after releasing our own, so no two threads wait for each other; this
+    // includes the claims of this thread's pending split-phase reads).
+    if (!busy.empty()) {
+      completeOwnPendingReads();
+    }
     for (size_t page : busy) {
-      size_t spins = 0;
-      while (true) {
-        const uint64_t state =
-            states_[page].load(std::memory_order_acquire) & stateMask;
-        if (state == resident || state == evicted) {
-          break;
-        }
-        pause(spins);
-      }
+      waitWhileBusy(page);
     }
 
     pending.clear();
@@ -321,21 +411,15 @@ void BufferPool::readAll(ql::span<const size_t> numBytes,
       }
     }
   }
-  // Keep the budget also when this call loaded more than it allowed.
-  evictFor(0);
 }
 
 // _____________________________________________________________________________
-void BufferPool::loadClaimed(ql::span<const size_t> pages,
-                             const Loader* loader) {
+BufferPool::PageRuns BufferPool::runsOf(ql::span<const size_t> pages) const {
   // Adjacent pages are read as one range. An incomplete last page of the file
   // is read separately through the page cache, because an `O_DIRECT` read of
   // a whole page there returns fewer bytes.
   const bool lastPageIsPartial = fileSize_ % pageSize_ != 0;
-  std::vector<size_t> runBytes;
-  std::vector<uint64_t> runOffsets;
-  std::vector<char*> runTargets;
-  bool readPartialLastPage = false;
+  PageRuns runs;
   for (size_t k = 0; k < pages.size();) {
     size_t end = k + 1;
     while (end < pages.size() && pages[end] == pages[end - 1] + 1) {
@@ -344,28 +428,183 @@ void BufferPool::loadClaimed(ql::span<const size_t> pages,
     size_t firstPage = pages[k];
     size_t numRunPages = end - k;
     if (lastPageIsPartial && pages[end - 1] == numPages_ - 1) {
-      readPartialLastPage = true;
+      runs.partialLastPage_ = true;
       --numRunPages;
     }
     if (numRunPages > 0) {
-      runBytes.push_back(numRunPages * pageSize_);
-      runOffsets.push_back(firstPage * pageSize_);
-      runTargets.push_back(region_ + firstPage * pageSize_);
+      runs.numBytes_.push_back(numRunPages * pageSize_);
+      runs.offsets_.push_back(firstPage * pageSize_);
+      runs.targets_.push_back(region_ + firstPage * pageSize_);
     }
     k = end;
   }
-  if (!runBytes.empty()) {
+  return runs;
+}
+
+// _____________________________________________________________________________
+void BufferPool::readPartialLastPage() {
+  const uint64_t offset = (numPages_ - 1) * pageSize_;
+  preadFully(bufferedFd_, region_ + offset, fileSize_ - offset, offset);
+}
+
+// _____________________________________________________________________________
+void BufferPool::loadClaimed(ql::span<const size_t> pages,
+                             const Loader* loader) {
+  auto runs = runsOf(pages);
+  if (!runs.numBytes_.empty()) {
     if (loader != nullptr) {
-      (*loader)(fd_, runBytes, runOffsets, runTargets);
+      (*loader)(fd_, runs.numBytes_, runs.offsets_, runs.targets_);
     } else {
-      loadSynchronously(fd_, runBytes, runOffsets, runTargets);
+      loadSynchronously(fd_, runs.numBytes_, runs.offsets_, runs.targets_);
     }
   }
-  if (readPartialLastPage) {
-    const uint64_t offset = (numPages_ - 1) * pageSize_;
-    preadFully(bufferedFd_, region_ + offset, fileSize_ - offset, offset);
+  if (runs.partialLastPage_) {
+    readPartialLastPage();
   }
   pageLoads_.fetch_add(pages.size(), std::memory_order_relaxed);
+}
+
+// _____________________________________________________________________________
+void BufferPool::startReadAll(PendingRead& read,
+                              ql::span<const size_t> numBytes,
+                              ql::span<const uint64_t> offsets,
+                              ql::span<char*> buffers,
+                              const AsyncLoader& loader,
+                              size_t prefetchDistance) {
+  AD_CONTRACT_CHECK(!read.active());
+  AD_CONTRACT_CHECK(loader.submit && loader.wait);
+  auto pending = copyHits(numBytes, offsets, buffers, prefetchDistance);
+
+  // Claim the evicted pages of the pending reads. Pages that other threads
+  // (or other pending reads of this thread) are loading are left to
+  // `finishReadAll`.
+  std::vector<size_t> neededPages;
+  for (size_t i : pending) {
+    if (numBytes[i] == 0) {
+      continue;
+    }
+    const size_t first = offsets[i] / pageSize_;
+    const size_t last = (offsets[i] + numBytes[i] - 1) / pageSize_;
+    for (size_t page = first; page <= last; ++page) {
+      neededPages.push_back(page);
+    }
+  }
+  std::sort(neededPages.begin(), neededPages.end());
+  neededPages.erase(std::unique(neededPages.begin(), neededPages.end()),
+                    neededPages.end());
+  std::vector<size_t> claimed;
+  for (size_t page : neededPages) {
+    uint64_t word = states_[page].load(std::memory_order_acquire);
+    while ((word & stateMask) == evicted) {
+      const uint64_t ownedWord =
+          (word & ~(stateMask | referenceBit | waiterBit)) | loading;
+      if (states_[page].compare_exchange_weak(word, ownedWord,
+                                              std::memory_order_acq_rel)) {
+        claimed.push_back(page);
+        break;
+      }
+    }
+  }
+
+  std::optional<uint64_t> token;
+  if (!claimed.empty()) {
+    evictFor(claimed.size());
+    try {
+      auto runs = runsOf(claimed);
+      if (runs.partialLastPage_) {
+        readPartialLastPage();
+      }
+      if (!runs.numBytes_.empty()) {
+        token =
+            loader.submit(fd_, runs.numBytes_, runs.offsets_, runs.targets_);
+      }
+    } catch (...) {
+      unclaim(claimed);
+      throw;
+    }
+    pageLoads_.fetch_add(claimed.size(), std::memory_order_relaxed);
+  }
+  read.pool_ = this;
+  read.pending_ = std::move(pending);
+  read.claimed_ = std::move(claimed);
+  read.token_ = token;
+  read.wait_ = loader.wait;
+  read.completed_ = false;
+  read.error_ = nullptr;
+  ownPendingReads.push_back(&read);
+}
+
+// _____________________________________________________________________________
+void BufferPool::finishReadAll(PendingRead& read,
+                               ql::span<const size_t> numBytes,
+                               ql::span<const uint64_t> offsets,
+                               ql::span<char*> buffers, const Loader* loader) {
+  AD_CONTRACT_CHECK(read.pool_ == this);
+  read.complete();
+  auto error = read.error_;
+  auto pending = std::move(read.pending_);
+  read.release();
+  if (error) {
+    std::rethrow_exception(error);
+  }
+  // The claimed pages are published now: copy the reads that they complete
+  // (unless they were evicted again in the meantime) and serve the rest.
+  std::vector<size_t> stillPending;
+  for (size_t i : pending) {
+    if (!tryCopy(offsets[i], numBytes[i], buffers[i])) {
+      stillPending.push_back(i);
+    }
+  }
+  servePending(std::move(stillPending), numBytes, offsets, buffers, loader);
+  evictFor(0);
+}
+
+// _____________________________________________________________________________
+void BufferPool::completeOwnPendingReads() noexcept {
+  for (auto* read : ownPendingReads) {
+    read->complete();
+  }
+}
+
+// _____________________________________________________________________________
+void BufferPool::PendingRead::complete() noexcept {
+  if (completed_ || pool_ == nullptr) {
+    return;
+  }
+  completed_ = true;
+  try {
+    if (token_.has_value()) {
+      wait_(token_.value());
+    }
+    pool_->publish(claimed_);
+  } catch (...) {
+    error_ = std::current_exception();
+    pool_->unclaim(claimed_);
+  }
+  claimed_.clear();
+}
+
+// _____________________________________________________________________________
+void BufferPool::PendingRead::release() {
+  auto it = std::find(ownPendingReads.begin(), ownPendingReads.end(), this);
+  if (it != ownPendingReads.end()) {
+    ownPendingReads.erase(it);
+  }
+  pool_ = nullptr;
+  pending_.clear();
+  claimed_.clear();
+  token_.reset();
+  wait_ = nullptr;
+  completed_ = false;
+  error_ = nullptr;
+}
+
+// _____________________________________________________________________________
+BufferPool::PendingRead::~PendingRead() {
+  if (pool_ != nullptr) {
+    complete();
+    release();
+  }
 }
 
 // _____________________________________________________________________________
@@ -374,10 +613,10 @@ void BufferPool::publish(ql::span<const size_t> pages) {
     return;
   }
   for (size_t page : pages) {
-    const uint64_t word = states_[page].load(std::memory_order_relaxed);
-    AD_CORRECTNESS_CHECK((word & stateMask) == loading);
-    states_[page].store((word & ~stateMask) | resident | referenceBit,
-                        std::memory_order_release);
+    const uint64_t old = transition(page, [](uint64_t word) {
+      return (word & ~(stateMask | waiterBit)) | resident | referenceBit;
+    });
+    AD_CORRECTNESS_CHECK((old & stateMask) == loading);
   }
   numLoaded_.fetch_add(pages.size());
   std::lock_guard lock{clockMutex_};
@@ -390,20 +629,21 @@ void BufferPool::publish(ql::span<const size_t> pages) {
 void BufferPool::unpin(ql::span<const size_t> pages) {
   // The pages stayed loaded (and in the CLOCK): only the state goes back.
   for (size_t page : pages) {
-    const uint64_t word = states_[page].load(std::memory_order_relaxed);
-    AD_CORRECTNESS_CHECK((word & stateMask) == loading);
-    states_[page].store((word & ~stateMask) | resident | referenceBit,
-                        std::memory_order_release);
+    const uint64_t old = transition(page, [](uint64_t word) {
+      return (word & ~(stateMask | waiterBit)) | resident | referenceBit;
+    });
+    AD_CORRECTNESS_CHECK((old & stateMask) == loading);
   }
 }
 
 // _____________________________________________________________________________
 void BufferPool::unclaim(ql::span<const size_t> pages) {
   // The pages may hold part of a read: discard them like evicted pages.
+  // Sleepers keep waiting (the waiter bit stays) until `releasePages`.
   for (size_t page : pages) {
-    const uint64_t word = states_[page].load(std::memory_order_relaxed);
-    states_[page].store(((word & ~stateMask) + versionOne) | evicting,
-                        std::memory_order_release);
+    transition(page, [](uint64_t word) {
+      return ((word & ~stateMask) + versionOne) | evicting;
+    });
   }
   releasePages({pages.begin(), pages.end()});
 }
@@ -493,10 +733,10 @@ void BufferPool::releasePages(std::vector<size_t> pages) {
 #endif
   // Only now may another thread load these pages again.
   for (size_t page : pages) {
-    const uint64_t word = states_[page].load(std::memory_order_relaxed);
-    AD_CORRECTNESS_CHECK((word & stateMask) == evicting);
-    states_[page].store((word & ~stateMask) | evicted,
-                        std::memory_order_release);
+    const uint64_t old = transition(page, [](uint64_t word) {
+      return (word & ~(stateMask | waiterBit)) | evicted;
+    });
+    AD_CORRECTNESS_CHECK((old & stateMask) == evicting);
   }
 }
 

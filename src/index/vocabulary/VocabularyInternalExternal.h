@@ -210,6 +210,11 @@ class VocabularyInternalExternal {
   class MixedLookupHandle : public VocabLookupHandleBase {
    public:
     VocabBatchLookupResult finish() override;
+    void advance() override {
+      if (externalHandle_ != nullptr) {
+        externalHandle_->advance();
+      }
+    }
 
    private:
     // Only `VocabularyInternalExternal::beginLookup` sets up the state below.

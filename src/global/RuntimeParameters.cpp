@@ -8,7 +8,9 @@
 // BMW =  Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
 #include "global/RuntimeParameters.h"
+#include "util/BufferPool.h"
 #include "util/IoUringManager.h"
+#include "util/IoWaitStats.h"
 
 #include <absl/strings/str_join.h>
 
@@ -128,6 +130,17 @@ RuntimeParameters::RuntimeParameters() {
   add(vocabularyBufferPoolAuto_);
   add(vocabularyBufferPoolReserve_);
   add(vocabularyBufferPoolPageSize_);
+  add(vocabularyBufferPoolFutexWait_);
+  add(exportV2PipelineLookups_);
+  add(exportIoWaitStats_);
+  // The buffer pool and the I/O wait counters live in the util library, which
+  // does not depend on the runtime parameters.
+  vocabularyBufferPoolFutexWait_.setOnUpdateAction([](bool value) {
+    ad_utility::bufferPoolFutexWait.store(value, std::memory_order_relaxed);
+  });
+  exportIoWaitStats_.setOnUpdateAction([](bool value) {
+    ad_utility::io_wait_stats::enabled.store(value, std::memory_order_relaxed);
+  });
   add(vocabularyInternalRankLookup_);
   add(vocabularyInternalRankPrefetchDistance_);
   add(vocabularyInternalRankHugePages_);

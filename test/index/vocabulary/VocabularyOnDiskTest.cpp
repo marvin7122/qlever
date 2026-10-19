@@ -14,7 +14,10 @@
 #include <gmock/gmock.h>
 #include <unistd.h>
 
+#include <atomic>
+#include <deque>
 #include <random>
+#include <thread>
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
@@ -24,7 +27,9 @@
 #include "backports/algorithm.h"
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
+#include "index/vocabulary/LookupPipeline.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
+#include "util/BufferPool.h"
 #include "util/File.h"
 #include "util/Forward.h"
 #include "util/MmapVector.h"
@@ -32,6 +37,7 @@
 
 namespace {
 using namespace vocabulary_test;
+using ad_utility::vocabulary::VocabLookupHandleBase;
 using ad_utility::vocabulary::VocabularyOnDisk;
 
 // Store a `VocabularyOnDisk` and read it back from file. For each instance of
@@ -577,6 +583,138 @@ TEST(VocabularyOnDisk, BufferPoolLargerPagesAreByteIdentical) {
       auto result = vocab.lookupBatch(indices);
       vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
           vocab, result, indices);
+    }
+  }
+}
+
+// _____________________________________________________________________________
+// Pipelined lookups (`LookupPipelineScope`, as `export-v2-pipeline-lookups`
+// uses them): several lookups of one thread in flight at once (more than the
+// pool has managers), advanced and finished in order or dropped unfinished,
+// with and without the buffer pools, return the same words.
+TEST(VocabularyOnDisk, PipelinedLookupsAreByteIdentical) {
+  std::vector<std::string> words;
+  for (size_t i = 0; i < 4000; ++i) {
+    words.push_back(absl::StrCat("p", i, std::string(i % 29, 'z')));
+  }
+  words.push_back(std::string(12000, 'L'));
+  VocabularyCreator creator{gtestCurrentTestName()};
+  auto vocab = creator.createVocabulary(words);
+  std::mt19937_64 random{7};
+  std::vector<std::vector<size_t>> batches;
+  for (size_t b = 0; b < 40; ++b) {
+    std::vector<size_t> indices;
+    const size_t batchSize = 1 + random() % 300;
+    for (size_t i = 0; i < batchSize; ++i) {
+      indices.push_back(random() % words.size());
+    }
+    batches.push_back(std::move(indices));
+  }
+  batches.push_back({words.size() - 1, 0, words.size() - 1});
+  for (size_t budget : {size_t{0}, size_t{1} << 30, size_t{8192},
+                        size_t{100}}) {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabularyBufferPoolSize_>(budget);
+    ad_utility::vocabulary::LookupPipelineScope scope;
+    // Two windows ahead, like the export: begin i+2, advance i+1, finish i.
+    std::deque<std::unique_ptr<VocabLookupHandleBase>> inFlight;
+    size_t next = 0;
+    for (size_t i = 0; i < batches.size(); ++i) {
+      for (; next < std::min(i + 3, batches.size()); ++next) {
+        inFlight.push_back(vocab.beginLookup(batches[next]));
+      }
+      if (inFlight.size() > 1) {
+        inFlight[1]->advance();
+      }
+      auto result = vocab.finishLookup(std::move(inFlight.front()));
+      inFlight.pop_front();
+      vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+          vocab, result, batches[i]);
+    }
+    // All batches in flight at once, some advanced; every second one is
+    // dropped without `finishLookup`.
+    std::vector<std::unique_ptr<VocabLookupHandleBase>> all;
+    for (const auto& indices : batches) {
+      all.push_back(vocab.beginLookup(indices));
+    }
+    for (size_t i = 0; i < all.size(); i += 3) {
+      all[i]->advance();
+    }
+    for (size_t i = 0; i < all.size(); ++i) {
+      if (i % 2 == 1) {
+        all[i].reset();
+        continue;
+      }
+      auto result = vocab.finishLookup(std::move(all[i]));
+      vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+          vocab, result, batches[i]);
+    }
+  }
+  // Without a scope, lookups take the pooled managers again.
+  auto result = vocab.lookupBatch(batches[0]);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(vocab, result,
+                                                                batches[0]);
+}
+
+// _____________________________________________________________________________
+// Several threads with pipelined lookups on the same buffer pools (small
+// budget, so pages are evicted and reloaded), with yielding and with futex
+// waits.
+TEST(VocabularyOnDisk, ConcurrentPipelinedLookupsThroughBufferPools) {
+  std::vector<std::string> words;
+  for (size_t i = 0; i < 3000; ++i) {
+    words.push_back(absl::StrCat("c", i, std::string(i % 13, 'q')));
+  }
+  VocabularyCreator creator{gtestCurrentTestName()};
+  auto vocab = creator.createVocabulary(words);
+  absl::Cleanup resetWait{[]() { ad_utility::bufferPoolFutexWait = false; }};
+  for (bool futex : {false, true}) {
+    ad_utility::bufferPoolFutexWait = futex;
+    for (size_t budget : {size_t{1} << 30, size_t{16384}}) {
+      auto cleanup = setRuntimeParameterForTest<
+          &RuntimeParameters::vocabularyBufferPoolSize_>(budget);
+      std::atomic<size_t> errors = 0;
+      std::vector<std::thread> threads;
+      for (size_t t = 0; t < 6; ++t) {
+        threads.emplace_back([&vocab, &words, &errors, t]() {
+          std::mt19937_64 random{t};
+          ad_utility::vocabulary::LookupPipelineScope scope;
+          std::deque<std::pair<std::vector<size_t>,
+                               std::unique_ptr<VocabLookupHandleBase>>>
+              inFlight;
+          auto finishOldest = [&]() {
+            auto& [indices, handle] = inFlight.front();
+            auto result = vocab.finishLookup(std::move(handle));
+            for (size_t i = 0; i < indices.size(); ++i) {
+              errors += result[i] != words[indices[i]];
+            }
+            inFlight.pop_front();
+          };
+          for (size_t b = 0; b < 60; ++b) {
+            std::vector<size_t> indices;
+            const size_t batchSize = 1 + random() % 200;
+            for (size_t i = 0; i < batchSize; ++i) {
+              // Half of them in a hot range shared by all threads.
+              indices.push_back(random() % (i % 2 == 0 ? 50 : words.size()));
+            }
+            auto handle = vocab.beginLookup(indices);
+            inFlight.emplace_back(std::move(indices), std::move(handle));
+            if (inFlight.size() > 1) {
+              inFlight[1].second->advance();
+            }
+            if (inFlight.size() == 3) {
+              finishOldest();
+            }
+          }
+          while (!inFlight.empty()) {
+            finishOldest();
+          }
+        });
+      }
+      for (auto& thread : threads) {
+        thread.join();
+      }
+      EXPECT_EQ(errors.load(), 0u) << "futex " << futex << " budget " << budget;
     }
   }
 }
