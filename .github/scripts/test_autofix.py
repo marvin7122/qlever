@@ -13,7 +13,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from unittest import mock
+from unittest import TestCase, mock
 
 # autofix.py reads required env at import; stub them.
 os.environ.setdefault("GITHUB_REPOSITORY", "owner/repo")
@@ -180,7 +180,7 @@ def test_process_file_preserves_keep_and_verification_rollback():
                     assert f.read() == "old\n"
 
 
-def test_run_writes_external_audit_in_both_modes():
+def test_run_reuses_suggest_audit_without_generating_patches():
     original_git = fx.git
 
     def local_git(*args, **kwargs):
@@ -188,36 +188,191 @@ def test_run_writes_external_audit_in_both_modes():
             return subprocess.CompletedProcess(args, 0)
         return original_git(*args, **kwargs)
 
-    for mode in ("suggest", "apply"):
-        with _checkout(), tempfile.TemporaryDirectory() as audit_dir, \
-                mock.patch.dict(os.environ, {"RUNNER_TEMP": audit_dir}), \
-                mock.patch.object(fx, "MODE", mode), \
-                mock.patch.object(fx, "gh", return_value={"head": {"ref": "test"}}), \
-                mock.patch.object(fx, "gh_paged", return_value=[{"filename": "target.txt"}]), \
-                mock.patch.object(fx, "collect_findings", return_value=[_finding("target.txt", 1)]), \
-                mock.patch.object(fx, "call_model", return_value=_patch("target.txt")), \
-                mock.patch.object(fx, "post_audit") as post, \
-                mock.patch.object(fx, "git", side_effect=local_git) as git:
-            records = fx.run()
-            with open(os.path.join(audit_dir, "autofix-audit.json")) as f:
-                assert json.load(f) == {"pr": fx.PR, "mode": mode,
-                                        "model": fx.MODEL, "records": records}
-            assert records[0]["status"] == (
-                "applied" if mode == "apply" else "verified")
-            post.assert_called_once_with(records, mode)
-            assert not os.path.exists("autofix-audit.json")
-            assert original_git("status", "--porcelain").stdout == ""
-            assert original_git("ls-files").stdout.splitlines() == [
-                "other.txt", "target.txt"]
-            assert any(c.args[0] == "push" for c in git.call_args_list) == (
-                mode == "apply")
+    with _checkout(), tempfile.TemporaryDirectory() as audit_dir:
+        head_sha = original_git("rev-parse", "HEAD").stdout.strip()
+        suggested = None
+        for mode in ("suggest", "apply"):
+            source = os.path.join(audit_dir, "suggest.json")
+            with mock.patch.dict(os.environ, {"RUNNER_TEMP": audit_dir,
+                                             "VERIFIED_AUDIT_PATH": source}), \
+                    mock.patch.object(fx, "MODE", mode), \
+                    mock.patch.object(fx, "SELECTION", "/autofix apply all"), \
+                    mock.patch.object(fx, "gh", return_value={
+                        "head": {"ref": "test", "sha": head_sha}}), \
+                    mock.patch.object(fx, "gh_paged", return_value=[{"filename": "target.txt"}]), \
+                    mock.patch.object(fx, "collect_findings", return_value=[_finding("target.txt", 1)]) as collect, \
+                    mock.patch.object(fx, "call_model", return_value=_patch("target.txt")) as model, \
+                    mock.patch.object(fx, "process_file", wraps=fx.process_file) as process, \
+                    mock.patch.object(fx, "post_audit") as post, \
+                    mock.patch.object(fx, "git", side_effect=local_git) as git:
+                records = fx.run()
+                if mode == "apply":
+                    collect.assert_not_called()
+                    process.assert_not_called()
+                    model.assert_not_called()
+                    assert records[0]["patch"] == suggested[0]["patch"]
+                    assert records[0]["patch_sha"] == suggested[0]["patch_sha"]
+                    assert original_git("show", "HEAD:target.txt").stdout == "new\n"
+                else:
+                    suggested = records
+                with open(os.path.join(audit_dir, "autofix-audit.json")) as f:
+                    audit = json.load(f)
+                    assert audit == {
+                        "repo": fx.REPO, "pr": fx.PR, "head_sha": head_sha,
+                        "mode": mode, "model": fx.MODEL, "records": records}
+                if mode == "suggest":
+                    with open(source, "w") as f:
+                        json.dump(audit, f)
+                assert records[0]["status"] == (
+                    "applied" if mode == "apply" else "verified")
+                post.assert_called_once_with(records, mode)
+                assert not os.path.exists("autofix-audit.json")
+                assert original_git("status", "--porcelain").stdout == ""
+                assert original_git("ls-files").stdout.splitlines() == [
+                    "other.txt", "target.txt"]
+                assert any(c.args[0] == "push" for c in git.call_args_list) == (
+                    mode == "apply")
+
+
+@contextlib.contextmanager
+def _suggested_audit():
+    with _checkout(), tempfile.TemporaryDirectory() as audit_dir, \
+            mock.patch.object(fx, "call_model", return_value=_patch("target.txt")):
+        records = fx.process_file("target.txt", [_finding("target.txt", 1)],
+                                  {"target.txt"}, False)
+        audit = {"repo": fx.REPO, "pr": fx.PR, "mode": "suggest",
+                 "head_sha": fx.git("rev-parse", "HEAD").stdout.strip(),
+                 "records": records}
+        source = os.path.join(audit_dir, "suggest.json")
+        with open(source, "w") as f:
+            json.dump(audit, f)
+        with mock.patch.dict(os.environ, {"VERIFIED_AUDIT_PATH": source}):
+            yield audit, source
+
+
+def test_apply_rejects_missing_stale_or_wrong_audit():
+    cases = [({"head_sha": "0" * 40}, "head changed"),
+             ({"pr": fx.PR + 1}, "not a suggestion for this PR"),
+             ({"repo": "another/repo"}, "not a suggestion for this PR"),
+             ({"mode": "apply"}, "not a suggestion for this PR")]
+    for changes, message in cases:
+        with _suggested_audit() as (audit, source):
+            head_sha = audit["head_sha"]
+            audit.update(changes)
+            with open(source, "w") as f:
+                json.dump(audit, f)
+            with TestCase().assertRaisesRegex(SystemExit, message):
+                fx.apply_verified(head_sha, {"target.txt"})
+            assert fx.git("status", "--porcelain").stdout == ""
+    with _checkout(), mock.patch.dict(os.environ, {"VERIFIED_AUDIT_PATH": ""}):
+        with TestCase().assertRaisesRegex(SystemExit, "requires a stored"):
+            fx.apply_verified("head", {"target.txt"})
+
+
+def test_apply_rejects_checkout_that_does_not_match_pr_head():
+    with _checkout(), mock.patch.object(fx, "MODE", "apply"), \
+            mock.patch.object(fx, "gh", return_value={"head": {"sha": "0" * 40}}), \
+            mock.patch.object(fx, "apply_verified") as apply:
+        with TestCase().assertRaisesRegex(SystemExit, "checkout does not match"):
+            fx.run()
+        apply.assert_not_called()
+
+
+def test_apply_selects_and_deduplicates_stored_patches():
+    for selection in ("all", "selected", "unselected"):
+        with _suggested_audit() as (audit, source):
+            record = audit["records"][0]
+            # Two findings may share a single verified patch.
+            audit["records"].append({**record, "line": 2})
+            with mock.patch.object(fx, "call_model", return_value=_patch("other.txt")):
+                audit["records"].extend(fx.process_file(
+                    "other.txt", [_finding("other.txt", 1)], {"other.txt"}, False))
+            with open(source, "w") as f:
+                json.dump(audit, f)
+            patch_id = {"all": "all", "selected": record["patch_sha"][:6],
+                        "unselected": "deadbeef"}[selection]
+            with mock.patch.object(fx, "SELECTION", f"/autofix apply {patch_id}"):
+                records = fx.apply_verified(audit["head_sha"], {"target.txt", "other.txt"})
+            selected = selection != "unselected"
+            assert [r["status"] for r in records[:2]] == [
+                "applied" if selected else "skipped"] * 2
+            assert records[2]["status"] == ("applied" if selection == "all" else "skipped")
+            with open("target.txt") as f:
+                assert f.read() == ("new\n" if selected else "old\n")
+            with open("other.txt") as f:
+                assert f.read() == ("new\n" if selection == "all" else "old\n")
+
+
+def test_apply_rejects_modified_or_out_of_scope_patch():
+    for change in ("diff", "path", "allowed"):
+        with _suggested_audit() as (audit, source):
+            if change == "diff":
+                audit["records"][0]["patch"] = _patch("target.txt", "tampered")
+            if change == "path":
+                audit["records"][0]["path"] = "other.txt"
+            with open(source, "w") as f:
+                json.dump(audit, f)
+            allowed = {"other.txt"} if change == "allowed" else {"target.txt", "other.txt"}
+            with TestCase().assertRaisesRegex(SystemExit, "integrity or path"):
+                fx.apply_verified(audit["head_sha"], allowed)
+            assert fx.git("status", "--porcelain").stdout == ""
+
+
+def test_apply_rolls_back_failed_verification_without_regenerating():
+    with _suggested_audit() as (audit, source), \
+            mock.patch.object(fx, "verify", return_value=(False, "test failure")), \
+            mock.patch.object(fx, "call_model") as model:
+        with TestCase().assertRaisesRegex(SystemExit, "verification failed"):
+            fx.apply_verified(audit["head_sha"], {"target.txt"})
+        assert fx.git("status", "--porcelain").stdout == ""
+        model.assert_not_called()
+
+
+def test_apply_rejects_conflicting_stored_patches_before_changing_files():
+    with _suggested_audit() as (audit, source):
+        with mock.patch.object(fx, "call_model", return_value=_patch("target.txt", "another")):
+            audit["records"].extend(fx.process_file(
+                "target.txt", [_finding("target.txt", 2)], {"target.txt"}, False))
+        # Both patches passed verification independently on the PR head.
+        assert all(r["status"] == "verified" for r in audit["records"])
+        with open(source, "w") as f:
+            json.dump(audit, f)
+        with TestCase().assertRaisesRegex(SystemExit, "do not apply"):
+            fx.apply_verified(audit["head_sha"], {"target.txt"})
+        assert fx.git("status", "--porcelain").stdout == ""
+
+
+def test_apply_does_not_retry_skipped_suggestions():
+    with _suggested_audit() as (audit, source):
+        audit["records"][0].update(status="skipped", reason="verify-failed")
+        with open(source, "w") as f:
+            json.dump(audit, f)
+        records = fx.apply_verified(audit["head_sha"], {"target.txt"})
+        assert records[0]["reason"] == "verify-failed"
+        assert fx.git("status", "--porcelain").stdout == ""
 
 
 def test_workflow_uploads_external_audit():
     workflow = os.path.join(os.path.dirname(__file__), "..", "workflows", "autofix.yml")
     with open(workflow) as f:
-        paths = [line.strip() for line in f if line.strip().startswith("path:")]
+        uploads = f.read().split("uses: actions/upload-artifact@v4")[1:]
+    paths = [next(line.strip() for line in upload.splitlines()
+                  if line.strip().startswith("path:")) for upload in uploads]
     assert paths == ["path: ${{ runner.temp }}/autofix-audit.json"] * 2
+
+
+def test_workflow_passes_suggestions_between_runs_on_pr_head():
+    workflow = os.path.join(os.path.dirname(__file__), "..", "workflows", "autofix.yml")
+    with open(workflow) as f:
+        suggest, apply = f.read().split("\n  apply:\n")
+    assert "ref: ${{ github.event.pull_request.head.sha }}" in suggest
+    assert "name: autofix-suggestions-${{ github.event.pull_request.number }}" in suggest
+    assert "actions: read" in suggest
+    assert "ref: ${{ steps.pr.outputs.sha }}" in apply
+    assert "actions/download-artifact@v4" in apply
+    assert "name: autofix-suggestions-${{ github.event.issue.number }}" in apply
+    assert "run-id: ${{ steps.suggestions.outputs.run_id }}" in apply
+    assert "VERIFIED_AUDIT_PATH: ${{ runner.temp }}/autofix-suggestions/autofix-audit.json" in apply
 
 
 WRONG_COUNTS = CLEAN.replace("@@ -1,3 +1,4 @@", "@@ -1,99 +1,7 @@", 1)

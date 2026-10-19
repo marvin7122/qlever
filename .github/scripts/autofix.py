@@ -7,7 +7,7 @@ Options-first, command-driven apply:
            that states the problem, shows the suggestion ready to apply,
            and names its tradeoff. Option B is always "leave as-is".
            Nothing is pushed.
-  apply:   regenerate on the current head and push verified patches as
+  apply:   reuse stored verified patches on the same PR head and push as
            one commit. A human selects with `/autofix apply all` or
            `/autofix apply <patch-id> [more ids]`; anything not selected
            is left out. Triggered only by a human approval comment.
@@ -21,6 +21,7 @@ Environment:
   MAX_FINDINGS        cap per run (default 25)
   MODE                suggest (default) | apply
   SELECTION           raw `/autofix apply ...` comment body (apply only)
+  VERIFIED_AUDIT_PATH downloaded suggest audit JSON (apply only)
 """
 
 import hashlib
@@ -33,7 +34,7 @@ import urllib.request
 REPO = os.environ["GITHUB_REPOSITORY"]
 PR = int(os.environ["PR_NUMBER"])
 GH_TOKEN = os.environ["GITHUB_TOKEN"]
-OR_KEY = os.environ["OPENROUTER_API_KEY"]
+OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 MODEL = os.environ.get("FIX_MODEL", "qwen/qwen3-coder-30b-a3b-instruct")
 MAX_FINDINGS = int(os.environ.get("MAX_FINDINGS", "25"))
 MODE = os.environ.get("MODE", "suggest")
@@ -558,21 +559,78 @@ def post_audit(records, mode):
     gh("POST", f"/repos/{REPO}/issues/{PR}/comments", {"body": body})
 
 
+def apply_verified(head_sha, allowed):
+    """Apply only selected, unchanged diffs from the persisted suggest audit."""
+    audit_path = os.environ.get("VERIFIED_AUDIT_PATH")
+    if not audit_path:
+        raise SystemExit("apply requires a stored suggest audit")
+    with open(audit_path) as fh:
+        audit = json.load(fh)
+    if (audit.get("repo") != REPO or audit.get("pr") != PR
+            or audit.get("mode") != "suggest"):
+        raise SystemExit("stored audit is not a suggestion for this PR")
+    if audit.get("head_sha") != head_sha:
+        raise SystemExit("PR head changed since suggest; run suggest again")
+
+    records = audit["records"]
+    wanted = parse_selection(SELECTION)
+    patches, paths = {}, set()
+    for r in records:
+        if r["status"] != "verified":
+            continue
+        sha, diff = r["patch_sha"], r["patch"]
+        if wanted != "all" and not _matches(sha, wanted):
+            r.update(status="skipped", reason="not-selected",
+                     note="not selected")
+            continue
+        if (not diff or hashlib.sha256(diff.encode()).hexdigest()[:12] != sha
+                or r["path"] not in allowed
+                or touched_files(diff) != {r["path"]}):
+            raise SystemExit("stored patch failed integrity or path checks")
+        patches[sha] = diff
+        paths.add(r["path"])
+
+    if patches:
+        # Check the entire selection together: independently verified
+        # same-file patches may conflict. Never regenerate a failed diff.
+        diff = "".join(patches.values())
+        if check_apply(diff).returncode != 0:
+            raise SystemExit("stored patches do not apply; run suggest again")
+        git("apply", "/tmp/autofix.patch")
+        for path in paths:
+            ok, note = verify(path)
+            if not ok:
+                git("apply", "-R", "/tmp/autofix.patch")
+                raise SystemExit(f"stored patch verification failed: {note}")
+    for r in records:
+        if r["status"] == "verified":
+            r.update(status="applied", reason="fixed",
+                     note="applied stored verified patch")
+    return records
+
+
 def run():
     pr = gh("GET", f"/repos/{REPO}/pulls/{PR}")
+    head_sha = pr["head"]["sha"]
+    if git("rev-parse", "HEAD").stdout.strip() != head_sha:
+        raise SystemExit("checkout does not match the current PR head")
+    if git("status", "--porcelain", "--untracked-files=no").stdout:
+        raise SystemExit("autofix requires a clean checkout")
     files = gh_paged(f"/repos/{REPO}/pulls/{PR}/files")
     allowed = {f["filename"] for f in files}
-    findings = collect_findings(allowed)
-    print(f"{len(findings)} bot findings (deduped), mode={MODE}")
     keep = MODE == "apply"
-    records = [rec for path, group in group_by_file(findings)
-               for rec in process_file(path, group, allowed, keep)]
     if keep:
-        records = deselect_unwanted(records)
+        records = apply_verified(head_sha, allowed)
+    else:
+        findings = collect_findings(allowed)
+        print(f"{len(findings)} bot findings (deduped), mode={MODE}")
+        records = [rec for path, group in group_by_file(findings)
+                   for rec in process_file(path, group, allowed, False)]
     audit_path = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"),
                               "autofix-audit.json")
     with open(audit_path, "w") as fh:
-        json.dump({"pr": PR, "mode": MODE, "model": MODEL,
+        json.dump({"repo": REPO, "pr": PR, "head_sha": head_sha,
+                   "mode": MODE, "model": MODEL,
                    "records": records}, fh, indent=1)
     tracked = [ln for ln in
                git("status", "--short").stdout.splitlines()
