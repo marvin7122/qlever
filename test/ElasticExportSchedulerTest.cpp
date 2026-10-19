@@ -730,11 +730,13 @@ TEST(ElasticExportSchedulerTest, FairThreadQuotaFormula) {
     }
   }
   // m = 8: n = 1 -> 7 helpers; n = 3 -> 3,3,2 threads -> 2,2,1 helpers.
-  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 1, 0), 7u);
-  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 3, 0), 2u);
-  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 3, 1), 2u);
-  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 3, 2), 1u);
-  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 9, 0), 0u);
+  const std::vector<size_t> actual = {
+      ElasticExportScheduler::fairHelperQuota(8, 1, 0),
+      ElasticExportScheduler::fairHelperQuota(8, 3, 0),
+      ElasticExportScheduler::fairHelperQuota(8, 3, 1),
+      ElasticExportScheduler::fairHelperQuota(8, 3, 2),
+      ElasticExportScheduler::fairHelperQuota(8, 9, 0)};
+  EXPECT_THAT(actual, ElementsAre(7u, 2u, 2u, 1u, 0u));
 }
 
 // Live sessions get their quota by start order; a finishing query hands its
