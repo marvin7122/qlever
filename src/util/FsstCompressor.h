@@ -207,15 +207,24 @@ class FsstRepeatedDecoder {
       : decoders_{std::move(decoders)} {}
 
   // ___________________________________________________________________________
-  // Return an upper bound on the size after all `N` decoding stages.
-  [[nodiscard]] static size_t maxDecompressedSize(std::string_view str) {
-    size_t bound = str.size();
-    for ([[maybe_unused]] size_t stage : ::ranges::views::iota(size_t{0}, N)) {
-      AD_CONTRACT_CHECK(bound <= std::numeric_limits<size_t>::max() /
-                                     FsstDecoder::maxExpansionFactor);
-      bound *= FsstDecoder::maxExpansionFactor;
+  // The worst-case expansion of all `N` stages together.
+  static constexpr size_t maxExpansionFactorOfAllStages = [] {
+    size_t factor = 1;
+    for (size_t stage = 0; stage < N; ++stage) {
+      factor *= FsstDecoder::maxExpansionFactor;
     }
-    return bound;
+    return factor;
+  }();
+
+  // ___________________________________________________________________________
+  // Return an upper bound on the size after all `N` decoding stages. It is
+  // computed for every decoded word, so it is one check and one
+  // multiplication (the check is equivalent to checking the bound before the
+  // expansion of each stage).
+  [[nodiscard]] static size_t maxDecompressedSize(std::string_view str) {
+    AD_CONTRACT_CHECK(str.size() <= std::numeric_limits<size_t>::max() /
+                                        maxExpansionFactorOfAllStages);
+    return maxExpansionFactorOfAllStages * str.size();
   }
 
   // ___________________________________________________________________________
@@ -227,7 +236,8 @@ class FsstRepeatedDecoder {
   // other's input. Return the number of bytes written.
   [[nodiscard]] size_t decompressInto(std::string_view str, ql::span<char> out,
                                       std::string& scratch) const {
-    AD_CONTRACT_CHECK(out.size() >= maxDecompressedSize(str));
+    const size_t bound = maxDecompressedSize(str);
+    AD_CONTRACT_CHECK(out.size() >= bound);
     if constexpr (N == 1) {
       return decoders_[0].decompressInto(str, out);
     } else {
@@ -238,8 +248,7 @@ class FsstRepeatedDecoder {
           !less(out.data(), scratch.data() + scratch.capacity()) ||
               !less(scratch.data(), out.data() + out.size()),
           "`out` must not alias `scratch`");
-      const size_t scratchBound =
-          maxDecompressedSize(str) / FsstDecoder::maxExpansionFactor;
+      const size_t scratchBound = bound / FsstDecoder::maxExpansionFactor;
       if (scratch.size() < scratchBound) {
         scratch.resize(scratchBound);
       }

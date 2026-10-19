@@ -470,6 +470,20 @@ TEST(FsstEncoder, MaxDecompressedSizeRejectsOverflow) {
   AD_EXPECT_THROW_WITH_MESSAGE(
       (void)FsstRepeatedDecoder<3>::maxDecompressedSize(viewOfSize(limit3 + 1)),
       ::testing::HasSubstr("maxExpansionFactor"));
+
+  // Two stages (the vocabulary's FSST squared): the bound is 64 times the
+  // size, up to the same limit as stage by stage.
+  static_assert(FsstRepeatedDecoder<2>::maxExpansionFactorOfAllStages == 64);
+  static_assert(FsstRepeatedDecoder<1>::maxExpansionFactorOfAllStages == 8);
+  EXPECT_EQ(FsstRepeatedDecoder<2>::maxDecompressedSize(viewOfSize(17)),
+            17u * 64u);
+  EXPECT_EQ(FsstRepeatedDecoder<2>::maxDecompressedSize(viewOfSize(0)), 0u);
+  constexpr size_t limit2 = max / factor / factor;
+  EXPECT_EQ(FsstRepeatedDecoder<2>::maxDecompressedSize(viewOfSize(limit2)),
+            limit2 * factor * factor);
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      (void)FsstRepeatedDecoder<2>::maxDecompressedSize(viewOfSize(limit2 + 1)),
+      ::testing::HasSubstr("maxExpansionFactor"));
 }
 
 // _____________________________________________________________________________
