@@ -14,6 +14,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <optional>
@@ -638,6 +639,60 @@ TEST(PmrVocabBatchLookupData, ArenaDoesNotAllocatePerWord) {
   // 400 kB in geometrically growing chunks; one allocation per word would be
   // 10'000.
   EXPECT_LT(counter.numAllocations_, 64u);
+}
+
+// _____________________________________________________________________________
+// Decoded words are packed behind each other: only the bytes of a word stay
+// used, not its whole bound. A decoder may write beyond the end of the word
+// (up to the bound, as FSST does); that must not change any earlier word.
+TEST(PmrVocabBatchLookupData, DecompressedWordsArePackedBehindEachOther) {
+  constexpr size_t bound = 640;
+  constexpr size_t numWords = 1000;
+  std::vector<std::string> expected;
+  ArenaVocabBatchBuilder builder(numWords + 3);
+  for (size_t i = 0; i < numWords; ++i) {
+    std::string word = absl::StrCat("word", i);
+    builder.appendDecompressedWord(bound, [&word](ql::span<char> out) {
+      EXPECT_EQ(out.size(), bound);
+      // Scribble over the whole bound first, then write the word.
+      std::fill(out.begin(), out.end(), '#');
+      std::memcpy(out.data(), word.data(), word.size());
+      return word.size();
+    });
+    expected.push_back(std::move(word));
+  }
+  // An empty word, a word whose bound is larger than a chunk, and a word
+  // after it.
+  builder.appendDecompressedWord(bound, [](ql::span<char>) { return 0; });
+  expected.emplace_back();
+  const size_t largeBound = 3 * ArenaVocabBatchBuilder::decodeChunkSize;
+  std::string large(largeBound - 1, 'L');
+  builder.appendDecompressedWord(largeBound, [&large](ql::span<char> out) {
+    EXPECT_EQ(out.size(), largeBound);
+    std::memcpy(out.data(), large.data(), large.size());
+    return large.size();
+  });
+  expected.push_back(large);
+  builder.appendDecompressedWord(bound, [](ql::span<char> out) {
+    out[0] = 'z';
+    return 1;
+  });
+  expected.emplace_back("z");
+
+  auto result = std::move(builder).finalize();
+  ASSERT_EQ(result.size(), expected.size());
+  for (size_t i = 0; i < expected.size(); ++i) {
+    EXPECT_EQ(result[i], expected[i]) << i;
+  }
+  // Within a chunk, each word starts where the previous one ends.
+  size_t numAdjacent = 0;
+  for (size_t i = 1; i < numWords; ++i) {
+    numAdjacent +=
+        result[i].data() == result[i - 1].data() + result[i - 1].size();
+  }
+  // About 7000 bytes of words fit into one chunk of 64 KiB together with the
+  // reserve of one bound.
+  EXPECT_EQ(numAdjacent, numWords - 1);
 }
 
 namespace {

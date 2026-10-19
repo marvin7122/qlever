@@ -13,6 +13,7 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -426,10 +427,18 @@ std::string_view decompressIntoSpan(ql::span<char> destination, size_t bound,
 // Owns the arena and, when constructed with `AllocatorWithLimit`, the
 // memory-limit tracker. Vocabularies only append decompressed bytes.
 class ArenaVocabBatchBuilder {
+ public:
+  // The minimal size of the chunks of the arena that words are decoded into
+  // (see `appendDecompressedWord`).
+  static constexpr size_t decodeChunkSize = 64 * 1024;
+
  private:
   std::unique_ptr<ql::pmr::memory_resource> upstream_;
   std::unique_ptr<ql::pmr::monotonic_buffer_resource> buffer_;
   std::vector<std::string_view> views_;
+  // The unused tail of the current decode chunk.
+  char* decodeFree_ = nullptr;
+  size_t decodeNumFree_ = 0;
 
   void initBuffer(ql::pmr::memory_resource* resource) {
     buffer_ = std::make_unique<ql::pmr::monotonic_buffer_resource>(resource);
@@ -456,21 +465,36 @@ class ArenaVocabBatchBuilder {
     initBuffer(upstream_.get());
   }
 
-  // Allocate storage inside the arena for `bound` bytes, invoke
-  // `decompress(destinationSpan)` to write the bytes (up to `bound`), and
-  // register the view.
+  // Invoke `decompress(destinationSpan)` on `bound` bytes of storage inside
+  // the arena to write the word (at most `bound` bytes), and register the
+  // view. Only the bytes of the word stay used: the next word is decoded
+  // right behind it. The bound is a worst case (64 times the compressed size
+  // for two FSST stages), so reserving all of it per word would spread the
+  // words of a batch over a much larger area than their bytes.
+  // NOTE: `decompress` may write beyond the end of the word (up to `bound`);
+  // those bytes belong to no view and are overwritten by the next word.
   template <typename DecompressFunc>
   void appendDecompressedWord(size_t bound, DecompressFunc&& decompress) {
     if (bound == 0) {
       views_.emplace_back("");
       return;
     }
-
-    ql::pmr::polymorphic_allocator<char> allocator{buffer_.get()};
-    char* mem = allocator.allocate(bound);
-    views_.push_back(
-        decompressIntoSpan(ql::span<char>{mem, bound}, bound,
-                           std::forward<DecompressFunc>(decompress)));
+    if (decodeNumFree_ < bound) {
+      // Start a new chunk, the rest of the current one stays unused.
+      const size_t chunkSize = std::max(bound, decodeChunkSize);
+      ql::pmr::polymorphic_allocator<char> allocator{buffer_.get()};
+      decodeFree_ = allocator.allocate(chunkSize);
+      decodeNumFree_ = chunkSize;
+    }
+    const std::string_view word =
+        decompressIntoSpan(ql::span<char>{decodeFree_, bound}, bound,
+                           std::forward<DecompressFunc>(decompress));
+    if (!word.empty()) {
+      AD_CORRECTNESS_CHECK(word.data() == decodeFree_);
+      decodeFree_ += word.size();
+      decodeNumFree_ -= word.size();
+    }
+    views_.push_back(word);
   }
 
   // Allocate storage inside the arena and copy the given word into it.
