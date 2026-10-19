@@ -36,6 +36,10 @@ class VocabularyInternalExternal {
   VocabularyInMemoryBinSearch internalVocab_;
   VocabularyOnDisk externalVocab_;
 
+  // Move the words in RAM onto transparent huge pages (see the runtime
+  // parameter `vocabulary-internal-words-hugepages`) and log the outcome.
+  void adviseInternalWordsHugePages() const;
+
  public:
   // These suffixes are appended to the base filename in order to get the base
   // filenames of the internal and the external vocabulary.

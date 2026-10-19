@@ -10,8 +10,10 @@
 #ifndef QLEVER_SRC_UTIL_COMPACTSTRINGVECTOR_H
 #define QLEVER_SRC_UTIL_COMPACTSTRINGVECTOR_H
 
+#include <array>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -187,6 +189,14 @@ class CompactVectorOfStrings {
       serializer | data;
       serializer | offsets;
     }
+  }
+
+ public:
+  // The memory of the characters and of the offsets (begin, number of bytes),
+  // for example to back it with huge pages.
+  std::array<std::pair<const void*, size_t>, 2> memoryRanges() const {
+    return {{{dataSpan().data(), dataSpan().size_bytes()},
+             {offsetsSpan().data(), offsetsSpan().size_bytes()}}};
   }
 
  private:

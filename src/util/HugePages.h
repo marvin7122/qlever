@@ -33,6 +33,26 @@ std::string selectedTransparentHugePagesMode(std::string_view content);
 // read.
 std::optional<size_t> anonHugePageBytes(const void* begin, size_t size);
 
+// The result of `adviseHugePages`: the number of bytes of the 2 MiB-aligned
+// part of the range that was advised, and the `errno` of a failed
+// `madvise(MADV_HUGEPAGE)` or `madvise(MADV_COLLAPSE)` (0 on success or if the
+// call was not made).
+struct HugePageAdvice {
+  size_t alignedBytes = 0;
+  int hugePageErrno = 0;
+  int collapseErrno = 0;
+};
+
+// Mark the 2 MiB-aligned part of the existing memory `[begin, begin + size)`
+// with `madvise(MADV_HUGEPAGE)` and, if `collapse` is set, collapse it into
+// transparent huge pages right away with `madvise(MADV_COLLAPSE)` (Linux 6.1
+// or newer). `MADV_COLLAPSE` copies the already populated small pages into
+// huge pages; it ignores the system-wide THP mode (see the kernel's
+// Documentation/admin-guide/mm/transhuge.rst), so it also works in "madvise"
+// and "never" mode. Only a hint: if a call fails, the memory simply stays (in
+// part) on regular pages, which the returned `errno` values report.
+HugePageAdvice adviseHugePages(const void* begin, size_t size, bool collapse);
+
 }  // namespace ad_utility
 
 #endif  // QLEVER_SRC_UTIL_HUGEPAGES_H

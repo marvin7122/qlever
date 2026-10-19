@@ -10,9 +10,19 @@
 #include "util/HugePages.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <fstream>
 #include <sstream>
+
+#if defined(__linux__) && !defined(__EMSCRIPTEN__)
+#include <sys/mman.h>
+#define QL_HUGE_PAGE_ADVICE
+// `MADV_COLLAPSE` (Linux 6.1) is missing in older C library headers.
+#ifndef MADV_COLLAPSE
+#define MADV_COLLAPSE 25
+#endif
+#endif
 
 namespace ad_utility {
 
@@ -76,6 +86,36 @@ std::optional<size_t> anonHugePageBytes(const void* begin, size_t size) {
       }
     }
   }
+  return result;
+}
+
+// _____________________________________________________________________________
+HugePageAdvice adviseHugePages(const void* begin, size_t size, bool collapse) {
+  HugePageAdvice result;
+  constexpr uintptr_t hugePageSize = uintptr_t{1} << 21;
+  const auto rangeBegin = reinterpret_cast<uintptr_t>(begin);
+  const uintptr_t rangeEnd = rangeBegin + size;
+  // Only whole huge pages inside the range: the memory around it may belong
+  // to other allocations.
+  const uintptr_t alignedBegin =
+      (rangeBegin + hugePageSize - 1) / hugePageSize * hugePageSize;
+  const uintptr_t alignedEnd = rangeEnd / hugePageSize * hugePageSize;
+  if (begin == nullptr || alignedEnd <= alignedBegin) {
+    return result;
+  }
+  result.alignedBytes = alignedEnd - alignedBegin;
+#ifdef QL_HUGE_PAGE_ADVICE
+  void* address = reinterpret_cast<void*>(alignedBegin);
+  if (::madvise(address, result.alignedBytes, MADV_HUGEPAGE) != 0) {
+    result.hugePageErrno = errno;
+  }
+  if (collapse && ::madvise(address, result.alignedBytes, MADV_COLLAPSE) != 0) {
+    result.collapseErrno = errno;
+  }
+#else
+  (void)collapse;
+  result.hugePageErrno = ENOSYS;
+#endif
   return result;
 }
 

@@ -292,6 +292,18 @@ struct RuntimeParameters {
   Bool vocabularyInternalRankHugePages_{false,
                                         "vocabulary-internal-rank-hugepages"};
 
+  // If set to true, the words that a vocabulary keeps in RAM
+  // (`VocabularyInternalExternal`: their characters, their offsets and their
+  // sorted vocabulary indices) are moved onto transparent huge pages right
+  // after loading, with `madvise(MADV_HUGEPAGE)` and `madvise(MADV_COLLAPSE)`
+  // on the 2 MiB-aligned part of each array (see `ad_utility::adviseHugePages`;
+  // `MADV_COLLAPSE` needs Linux 6.1 and works in every THP mode). A random
+  // lookup then needs fewer TLB entries and shorter page walks. Costs one copy
+  // of these arrays at load time; on failure they stay on regular pages. Read
+  // when the index is loaded.
+  Bool vocabularyInternalWordsHugePages_{false,
+                                         "vocabulary-internal-words-hugepages"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.

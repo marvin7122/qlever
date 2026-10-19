@@ -308,6 +308,10 @@ TEST(VocabularyInternalExternal, LookupBatchIsIndependentOfInternalLookupMode) {
           &RuntimeParameters::vocabularyInternalRankLookup_>(rankLookup);
       auto cleanupHugePages = setRuntimeParameterForTest<
           &RuntimeParameters::vocabularyInternalRankHugePages_>(hugePages);
+      // Moving the words in RAM onto huge pages must not change any result
+      // (it is combined with the rank huge pages to keep the test fast).
+      auto cleanupWordsHugePages = setRuntimeParameterForTest<
+          &RuntimeParameters::vocabularyInternalWordsHugePages_>(hugePages);
       VocabularyInternalExternal vocab;
       vocab.open(filename);
       EXPECT_EQ(vocab.internalVocab().hasIndexRankDirectory(), rankLookup);

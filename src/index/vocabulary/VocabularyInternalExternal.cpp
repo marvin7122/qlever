@@ -174,6 +174,39 @@ VocabularyInternalExternal::WordWriter::~WordWriter() {
 }
 
 // _____________________________________________________________________________
+void VocabularyInternalExternal::adviseInternalWordsHugePages() const {
+  size_t alignedBytes = 0;
+  size_t totalBytes = 0;
+  size_t hugeBytes = 0;
+  bool hugeBytesKnown = true;
+  int hugePageErrno = 0;
+  int collapseErrno = 0;
+  for (const auto& [begin, numBytes] : internalVocab_.memoryRanges()) {
+    const auto advice =
+        ad_utility::adviseHugePages(begin, numBytes, /*collapse=*/true);
+    alignedBytes += advice.alignedBytes;
+    totalBytes += numBytes;
+    hugePageErrno = hugePageErrno != 0 ? hugePageErrno : advice.hugePageErrno;
+    collapseErrno = collapseErrno != 0 ? collapseErrno : advice.collapseErrno;
+    const auto huge = ad_utility::anonHugePageBytes(begin, numBytes);
+    hugeBytesKnown = hugeBytesKnown && huge.has_value();
+    hugeBytes += huge.value_or(0);
+  }
+  AD_LOG_INFO << "Huge pages for the words in RAM requested (transparent huge "
+              << "pages: " << ad_utility::transparentHugePagesMode()
+              << "): " << alignedBytes << " of " << totalBytes
+              << " bytes advised, "
+              << (hugeBytesKnown ? std::to_string(hugeBytes)
+                                 : std::string{"unknown"})
+              << " bytes on huge pages (upper bound)" << std::endl;
+  if (hugePageErrno != 0 || collapseErrno != 0) {
+    AD_LOG_WARN << "madvise for the words in RAM failed (MADV_HUGEPAGE errno "
+                << hugePageErrno << ", MADV_COLLAPSE errno " << collapseErrno
+                << "); the failed part stays on regular pages" << std::endl;
+  }
+}
+
+// _____________________________________________________________________________
 void VocabularyInternalExternal::open(const std::string& filename) {
   AD_LOG_INFO << "Reading vocabulary from file " << filename << " ..."
               << std::endl;
@@ -183,6 +216,10 @@ void VocabularyInternalExternal::open(const std::string& filename) {
   AD_LOG_INFO << "Number of words in internal vocabulary (these are also part "
                  "of the external vocabulary): "
               << internalVocab_.size() << std::endl;
+  if (getRuntimeParameter<
+          &RuntimeParameters::vocabularyInternalWordsHugePages_>()) {
+    adviseInternalWordsHugePages();
+  }
   if (getRuntimeParameter<
           &RuntimeParameters::vocabularyInternalRankLookup_>()) {
     const bool useHugePages = getRuntimeParameter<

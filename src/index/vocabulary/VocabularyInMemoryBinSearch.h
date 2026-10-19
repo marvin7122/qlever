@@ -5,6 +5,7 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYINMEMORYBINSEARCH_H
 #define QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYINMEMORYBINSEARCH_H
 
+#include <array>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -133,6 +134,15 @@ class VocabularyInMemoryBinSearch
   }
   void prefetchWordAtPosition(size_t position) const {
     __builtin_prefetch(wordAtPosition(position).data());
+  }
+
+  // The memory of the words (characters and offsets) and of the sorted
+  // vocabulary indices (begin, number of bytes), for example to back it with
+  // huge pages (see `ad_utility::adviseHugePages`).
+  std::array<std::pair<const void*, size_t>, 3> memoryRanges() const {
+    const auto words = words_.memoryRanges();
+    const auto ids = indices();
+    return {{words[0], words[1], {ids.data(), ids.size_bytes()}}};
   }
 
   // Whether `buildIndexRankDirectory` was called (since the last `close`).

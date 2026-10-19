@@ -16,6 +16,7 @@
 #include <random>
 #include <vector>
 
+#include "backports/algorithm.h"
 #include "util/BitVectorWithRank.h"
 #include "util/HugePages.h"
 
@@ -200,4 +201,38 @@ TEST(HugePages, ModeAndAnonHugePageBytes) {
   // information, so the result is always `std::nullopt`.
   EXPECT_EQ(anonHugePageBytes(nullptr, 0), std::nullopt);
 #endif
+}
+
+// _____________________________________________________________________________
+TEST(HugePages, AdviseHugePages) {
+  using namespace ad_utility;
+  constexpr size_t hugePage = size_t{1} << 21;
+  // Nothing to advise: no memory, or no whole huge page inside the range.
+  EXPECT_EQ(adviseHugePages(nullptr, 0, true).alignedBytes, 0);
+  std::vector<char> small(4096, 'x');
+  auto smallAdvice = adviseHugePages(small.data(), small.size(), true);
+  EXPECT_EQ(smallAdvice.alignedBytes, 0);
+  EXPECT_EQ(smallAdvice.hugePageErrno, 0);
+  EXPECT_EQ(smallAdvice.collapseErrno, 0);
+  EXPECT_TRUE(ql::ranges::all_of(small, [](char c) { return c == 'x'; }));
+
+  // An unaligned range of 3.5 huge pages contains at least two whole huge
+  // pages; advising (and collapsing) them must keep the contents.
+  std::vector<uint64_t> values(7 * hugePage / 2 / sizeof(uint64_t));
+  for (size_t i = 0; i < values.size(); ++i) {
+    values[i] = i * 0x9E3779B97F4A7C15ULL;
+  }
+  const size_t numBytes = values.size() * sizeof(uint64_t);
+  for (bool collapse : {false, true}) {
+    auto advice = adviseHugePages(values.data(), numBytes, collapse);
+    EXPECT_GE(advice.alignedBytes, 2 * hugePage);
+    EXPECT_LE(advice.alignedBytes, numBytes);
+    EXPECT_EQ(advice.alignedBytes % hugePage, 0);
+    if (!collapse) {
+      EXPECT_EQ(advice.collapseErrno, 0);
+    }
+    for (size_t i = 0; i < values.size(); ++i) {
+      ASSERT_EQ(values[i], i * 0x9E3779B97F4A7C15ULL) << i;
+    }
+  }
 }
