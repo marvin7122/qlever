@@ -39,15 +39,11 @@ struct EndToEndSplitFunc {
   }
 };
 
-struct EndToEndSplitFilenameFunc {
-  std::array<std::string, 2> operator()(std::string_view base) const {
-    return {std::string(base), std::string(base) + ".a"};
-  }
-};
+constexpr std::array<std::string_view, 2> endToEndFilenameSuffixes{"", ".a"};
 
 class SplitVocabLookupBatchEndToEndBenchmark : public BenchmarkInterface {
  private:
-  using Vocab = SplitVocabulary<EndToEndSplitFunc, EndToEndSplitFilenameFunc,
+  using Vocab = SplitVocabulary<EndToEndSplitFunc, endToEndFilenameSuffixes,
                                 VocabularyInMemory, VocabularyInMemory>;
 
   // Remove a whole directory tree. Best effort: failures are ignored.

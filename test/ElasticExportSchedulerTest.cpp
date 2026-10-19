@@ -393,11 +393,13 @@ TEST(ElasticExportSchedulerTest, QueryRegistryLifecycleHookIntegration) {
   EXPECT_EQ(scheduler.activeForegroundQueries(), 0u);
 
   {
-    auto q1 = registry.uniqueId("SELECT ?x WHERE { ?x ?p ?o }");
+    auto q1 = registry.uniqueId("SELECT ?x WHERE { ?x ?p ?o }",
+                                 ad_utility::websocket::QueryOperation::QUERY);
     EXPECT_EQ(scheduler.activeForegroundQueries(), 1u);
 
     {
-      auto q2 = registry.uniqueId("SELECT ?y WHERE { ?y ?p ?o }");
+      auto q2 = registry.uniqueId("SELECT ?y WHERE { ?y ?p ?o }",
+                                   ad_utility::websocket::QueryOperation::QUERY);
       EXPECT_EQ(scheduler.activeForegroundQueries(), 2u);
     }
     // q2 destroyed -> end callback fired

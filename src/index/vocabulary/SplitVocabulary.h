@@ -113,6 +113,11 @@ class SplitVocabulary {
   // vocabularies would be stored in the same files.
   static_assert(ad_utility::allDistinct(FilenameSuffixes));
 
+  // The filename suffixes of the underlying vocabularies, exposed so that
+  // test helpers can derive owned file paths (see `underlyingFilenames`).
+  static constexpr std::array<std::string_view, numberOfVocabs>
+      filenameSuffixes = FilenameSuffixes;
+
   // Because of the marker bits, a `SplitVocabulary` should not hold another
   // `SplitVocabulary` or a `PolymorphicVocabulary`, where it cannot be
   // guaranteed that it does not hold an underlying `SplitVocabulary`.

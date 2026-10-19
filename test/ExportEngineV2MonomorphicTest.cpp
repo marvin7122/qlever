@@ -252,16 +252,16 @@ TEST_F(ExportEngineV2Monomorphic, RuntimeParameterKeepsLegacyBytes) {
     if (!monomorphic.has_value()) {
       ad_utility::Timer timer{ad_utility::Timer::Started};
       for (const auto& block : ExportQueryExecutionTrees::computeResult(
-               pq, qet, mediaType, timer, std::move(handle))) {
+               pq, *qet, mediaType, timer, std::move(handle))) {
         result += block;
       }
       return result;
     }
     auto cleanup = setRuntimeParameterForTest<
         &RuntimeParameters::exportV2MonomorphicRows_>(monomorphic.value());
-    EXPECT_TRUE(ExportEngineV2::canHandle(pq, qet, mediaType));
-    for (const auto& block :
-         ExportEngineV2::computeResult(pq, qet, mediaType, std::move(handle))) {
+    EXPECT_TRUE(ExportEngineV2::canHandle(pq, *qet, mediaType));
+    for (const auto& block : ExportEngineV2::computeResult(
+             pq, *qet, mediaType, std::move(handle))) {
       result += block;
     }
     return result;

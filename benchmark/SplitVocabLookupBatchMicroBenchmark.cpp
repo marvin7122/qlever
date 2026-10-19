@@ -39,15 +39,11 @@ struct MicroSplitFunc {
   }
 };
 
-struct MicroSplitFilenameFunc {
-  std::array<std::string, 2> operator()(std::string_view base) const {
-    return {std::string(base), std::string(base) + ".a"};
-  }
-};
+constexpr std::array<std::string_view, 2> microFilenameSuffixes{"", ".a"};
 
 class SplitVocabLookupBatchMicroBenchmark : public BenchmarkInterface {
  private:
-  using Vocab = SplitVocabulary<MicroSplitFunc, MicroSplitFilenameFunc,
+  using Vocab = SplitVocabulary<MicroSplitFunc, microFilenameSuffixes,
                                 VocabularyInMemory, VocabularyInMemory>;
 
   // Remove the files of a vocabulary basename. Best effort: failures (e.g.
