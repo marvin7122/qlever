@@ -672,7 +672,11 @@ struct RangeTask {
           state_->currentEpoch() != epoch) {
         RangeTask tail{*this};
         tail.begin_ = pos + 1;
-        EXPECT_TRUE(state_->trySubmitMorsel(tail));
+        // Check tail resubmit thread-safely; verify on main thread.
+        // e.g. store success in atomic<bool> or AD_CONTRACT_CHECK
+        auto ok = state_->trySubmitMorsel(tail);
+        AD_CONTRACT_CHECK(ok);
+        // or: tailSubmitOk->store(ok); and main thread ASSERT_TRUE(tailSubmitOk->load());
         return done;
       }
     }
@@ -711,8 +715,7 @@ TEST(ElasticExportSchedulerTest, FairThreadQuotaFormula) {
     for (size_t n = 1u; n <= m + size_t{1}; ++n) {
       size_t sum{0};
       for (size_t rank = 0; rank < n; ++rank) {
-        const size_t total =
-            ElasticExportScheduler::fairThreadQuota(m, n, rank);
+        const size_t total{ElasticExportScheduler::fairThreadQuota(m, n, rank)};
         EXPECT_EQ(total, m / n + (rank < m % n ? 1 : 0));
         // Earlier queries never get fewer threads than later ones.
         if (rank > 0) {
@@ -730,11 +733,13 @@ TEST(ElasticExportSchedulerTest, FairThreadQuotaFormula) {
     }
   }
   // m = 8: n = 1 -> 7 helpers; n = 3 -> 3,3,2 threads -> 2,2,1 helpers.
-  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 1, 0), 7u);
-  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 3, 0), 2u);
-  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 3, 1), 2u);
-  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 3, 2), 1u);
-  EXPECT_EQ(ElasticExportScheduler::fairHelperQuota(8, 9, 0), 0u);
+  const std::vector<size_t> actual = {
+      ElasticExportScheduler::fairHelperQuota(8, 1, 0),
+      ElasticExportScheduler::fairHelperQuota(8, 3, 0),
+      ElasticExportScheduler::fairHelperQuota(8, 3, 1),
+      ElasticExportScheduler::fairHelperQuota(8, 3, 2),
+      ElasticExportScheduler::fairHelperQuota(8, 9, 0)};
+  EXPECT_THAT(actual, ElementsAre(7u, 2u, 2u, 1u, 0u));
 }
 
 // Live sessions get their quota by start order; a finishing query hands its
