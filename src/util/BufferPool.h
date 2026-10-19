@@ -137,6 +137,9 @@ class BufferPool {
   static constexpr uint64_t versionOne = 8;
 
   size_t pageSize_ = defaultPageSize;
+  // `log2(pageSize_)`: the page of an offset is `offset >> pageShift_`, which
+  // is cheaper than a division on the hit path.
+  unsigned pageShift_ = 12;
   char* region_ = nullptr;
   size_t regionSize_ = 0;
   size_t fileSize_ = 0;
@@ -190,9 +193,15 @@ class BufferPool {
   // Return the memory of the evicted pages to the kernel.
   void releasePages(std::vector<size_t> pages);
 
+  // Prefetch the bytes of a read and the state word of its first page (the
+  // state array has one word per page, so for a large file it does not fit
+  // into the cache either).
   void prefetch(uint64_t offset, size_t numBytes) const {
     __builtin_prefetch(region_ + offset, 0, 3);
     __builtin_prefetch(region_ + offset + numBytes - 1, 0, 3);
+    if (offset < fileSize_) {
+      __builtin_prefetch(&states_[offset >> pageShift_], 0, 3);
+    }
   }
 };
 

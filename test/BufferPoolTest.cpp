@@ -284,6 +284,21 @@ TEST(BufferPool, largerPages) {
     EXPECT_EQ(pool.loadedBytes(), 4 * L);
     readAndCheck(pool, contents, {{L + 1, 2 * L}, {0, contents.size()}});
     EXPECT_EQ(pool.numPageLoads(), 10u);
+    // Hits only, with prefetching (which also prefetches the state word of
+    // the page, computed with a shift): within a large page, across large
+    // pages, in the incomplete last page, and empty reads, also at the end of
+    // the file.
+    const uint64_t hitsBefore = pool.numHits();
+    readAndCheck(pool, contents,
+                 {{L - 1, 2},
+                  {5 * L + 17, 3 * L},
+                  {9 * L + 999, 1},
+                  {contents.size(), 0},
+                  {4 * L, 0},
+                  {contents.size() - 1, 1}},
+                 nullptr, 3);
+    EXPECT_EQ(pool.numHits(), hitsBefore + 6);
+    EXPECT_EQ(pool.numPageLoads(), 10u);
   }
   {
     // A budget of one large page: every read still returns the right bytes.

@@ -71,6 +71,15 @@ void loadSynchronously(int fd, ql::span<const size_t> numBytes,
   }
 }
 
+// The exponent of the power of two `x` (C++17-compatible `countr_zero`).
+unsigned log2OfPowerOfTwo(size_t x) {
+  unsigned shift = 0;
+  while (shift < 63 && (size_t{1} << shift) < x) {
+    ++shift;
+  }
+  return shift;
+}
+
 // Wait until another thread has finished loading or evicting a page.
 void pause(size_t& spins) {
   if (++spins < 64) {
@@ -87,10 +96,13 @@ void pause(size_t& spins) {
 BufferPool::BufferPool([[maybe_unused]] const std::string& filename,
                        size_t fileSize, size_t budgetBytes,
                        size_t pageSize)
-    : pageSize_{pageSize}, budgetPages_{budgetBytes / pageSize} {
+    : pageSize_{pageSize},
+      pageShift_{log2OfPowerOfTwo(pageSize)},
+      budgetPages_{budgetBytes / pageSize} {
   AD_CONTRACT_CHECK(pageSize >= defaultPageSize &&
                     pageSize % defaultPageSize == 0 &&
                     (pageSize & (pageSize - 1)) == 0);
+  AD_CORRECTNESS_CHECK(size_t{1} << pageShift_ == pageSize_);
 #ifdef QL_BUFFER_POOL
   if (fileSize == 0) {
     return;
@@ -154,8 +166,8 @@ bool BufferPool::tryCopy(uint64_t offset, size_t numBytes, char* target) {
   if (numBytes == 0) {
     return true;
   }
-  const size_t first = offset / pageSize_;
-  const size_t last = (offset + numBytes - 1) / pageSize_;
+  const size_t first = offset >> pageShift_;
+  const size_t last = (offset + numBytes - 1) >> pageShift_;
   // The state words seen before the copy, without the reference bit (most
   // reads touch one or two pages).
   constexpr size_t numInline = 8;
