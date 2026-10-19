@@ -14,6 +14,7 @@
 
 #include "backports/concepts.h"
 #include "backports/functional.h"
+#include "util/CompilerExtensions.h"
 #include "util/SourceLocation.h"
 #include "util/TypeTraits.h"
 
@@ -139,18 +140,39 @@ std::string concatMessages(Args&&... messages) {
     return absl::StrCat(getMessageImpl(messages)..., ". ");
   }
 }
+
+// The failure path of `AD_CONTRACT_CHECK` and `AD_CORRECTNESS_CHECK`: build
+// the message and throw. It is out of line and cold, so that a check that
+// holds costs only the test of its condition: the code that builds the
+// message neither bloats the caller (which would keep small functions from
+// being inlined) nor sits on its hot path.
+#if defined(__GNUC__) || defined(__clang__)
+#define AD_CHECK_FAILURE_ATTRIBUTES [[noreturn, gnu::noinline, gnu::cold]]
+#else
+#define AD_CHECK_FAILURE_ATTRIBUTES [[noreturn]]
+#endif
+template <typename... AdditionalMessages>
+AD_CHECK_FAILURE_ATTRIBUTES void throwFailedCheck(
+    std::string_view conditionString, ad_utility::source_location location,
+    AdditionalMessages&&... additionalMessages) {
+  using namespace std::string_literals;
+  AD_THROW("Assertion `"s + std::string(conditionString) + "` failed. " +
+               concatMessages(AD_FWD(additionalMessages)...) +
+               "Please report this to the developers"s,
+           location);
+}
+#undef AD_CHECK_FAILURE_ATTRIBUTES
 }  // namespace ad_utility::detail
 
 // A macro for the common implementation of `AD_CONTRACT_CHECK` and
-// `AD_CORRECTNESS_CHECK` (see below).
-#define AD_CHECK_IMPL(condition, conditionString, sourceLocation, ...)      \
-  using namespace std::string_literals;                                     \
-  if (!(condition)) [[unlikely]] {                                          \
-    AD_THROW("Assertion `"s + std::string(conditionString) + "` failed. " + \
-                 ad_utility::detail::concatMessages(__VA_ARGS__) +          \
-                 "Please report this to the developers"s,                   \
-             sourceLocation);                                               \
-  }                                                                         \
+// `AD_CORRECTNESS_CHECK` (see below). The additional messages are only
+// evaluated if the check fails.
+#define AD_CHECK_IMPL(condition, conditionString, sourceLocation, ...)  \
+  using namespace std::string_literals;                                 \
+  if (!(condition)) [[unlikely]] {                                      \
+    ad_utility::detail::throwFailedCheck(                               \
+        conditionString, sourceLocation __VA_OPT__(, ) __VA_ARGS__);    \
+  }                                                                     \
   void(0)
 
 // Custom assert which does not abort but throws an exception. Use this for
@@ -184,8 +206,13 @@ std::string concatMessages(Args&&... messages) {
 namespace ad_utility::detail {
 // NOTE: This function has to be `constexpr`, else `AD_CORRECTNESS_CHECK` could
 // not be used inside `constexpr` functions, see the note on `constexpr` below.
+// It is always inlined: only the test of the condition remains at the call
+// site, and the failure path is the out-of-line `throwFailedCheck`. Without
+// the attribute, compilers kept it out of line, so that every check (e.g. per
+// word in the vocabulary decode path) was a function call. Coverage tools
+// still attribute the branch to this function, not to the call site.
 template <typename... AdditionalMessages>
-constexpr void adCorrectnessCheckImpl(
+AD_ALWAYS_INLINE constexpr void adCorrectnessCheckImpl(
     bool condition, std::string_view message,
     ad_utility::source_location location,
     AdditionalMessages&&... additionalMessages) {

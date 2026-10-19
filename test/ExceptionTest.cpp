@@ -241,3 +241,28 @@ TEST(Exception, AD_EXPENSIVE_CHECK) {
     ASSERT_NO_THROW(AD_EXPENSIVE_CHECK(3 > 5));
   }
 }
+
+// _____________________________________________________________________________
+// The failure path of the checks is an out-of-line function. A callable
+// message must still be invoked only if the check fails, and only once.
+TEST(Exception, messageCallablesAreOnlyInvokedOnFailure) {
+  size_t numCalls = 0;
+  auto message = [&numCalls] {
+    ++numCalls;
+    return std::string{"the message"};
+  };
+  AD_CONTRACT_CHECK(3 < 5, message);
+  AD_CORRECTNESS_CHECK(3 < 5, message);
+  EXPECT_EQ(numCalls, 0);
+
+  auto failContract = [&message] { AD_CONTRACT_CHECK(3 > 5, message); };
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      failContract(),
+      makeMatcher("Assertion `3 > 5` failed. the message. Please report"));
+  EXPECT_EQ(numCalls, 1);
+  auto failCorrectness = [&message] { AD_CORRECTNESS_CHECK(3 > 5, message); };
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      failCorrectness(),
+      makeMatcher("Assertion `3 > 5` failed. the message. Please report"));
+  EXPECT_EQ(numCalls, 2);
+}
