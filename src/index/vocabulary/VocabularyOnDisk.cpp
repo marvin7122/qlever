@@ -12,6 +12,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/bind_front.h>
+#include <absl/strings/str_cat.h>
 
 #include <fcntl.h>
 
@@ -34,6 +35,20 @@
 namespace ad_utility::vocabulary {
 
 using OffsetAndSize = VocabularyOnDisk::OffsetAndSize;
+
+// _____________________________________________________________________________
+std::string takeVocabularyOnDiskReadStats() {
+  auto& s = vocabularyOnDiskReadStats;
+  auto take = [](std::atomic<uint64_t>& c) {
+    return c.exchange(0, std::memory_order_relaxed);
+  };
+  return absl::StrCat(
+      "words=", take(s.words_), " offsets_from_ram=", take(s.offsetsFromRam_),
+      " offset_reads=", take(s.offsetReads_),
+      " offset_reads_to_manager=", take(s.offsetReadsToManager_),
+      " word_reads=", take(s.wordReads_),
+      " word_reads_to_manager=", take(s.wordReadsToManager_));
+}
 
 // ____________________________________________________________________________
 OffsetAndSize VocabularyOnDisk::getOffsetAndSize(uint64_t i) const {
@@ -378,6 +393,9 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
   // stay alive until `wait` returns.
   auto targets = builder.targets();
   ql::span<char*> targetSpan{targets};
+  auto& stats = vocabularyOnDiskReadStats;
+  stats.words_.fetch_add(numIndices, std::memory_order_relaxed);
+  stats.wordReads_.fetch_add(numIndices, std::memory_order_relaxed);
   if (wordsPool != nullptr) {
     auto loader = loaderFor(manager);
     wordsPool->readAll(
@@ -388,12 +406,15 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     const auto* mapping = residentReads ? &wordsMapping_ : nullptr;
     auto missed = readResidentOrPageCacheHits(mapping, file_.fd(), sizes,
                                               fileOffsets, targetSpan);
+    stats.wordReadsToManager_.fetch_add(missed.size(),
+                                        std::memory_order_relaxed);
     readThroughManager(manager, file_.fd(), sizes, fileOffsets, targetSpan,
                        missed, batchReadOptions(false));
     if (mapping != nullptr) {
       mapping->markAllResident(sizes, fileOffsets, missed);
     }
   } else {
+    stats.wordReadsToManager_.fetch_add(numIndices, std::memory_order_relaxed);
     manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targetSpan,
                                   batchReadOptions(false)));
   }
@@ -439,6 +460,8 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
       handle->offsetPairs_[i] = OffsetPair{offset, nextOffset};
     }
     handle->offsetsInRam_ = true;
+    vocabularyOnDiskReadStats.offsetsFromRam_.fetch_add(
+        numIndices, std::memory_order_relaxed);
     handle->bufferPools_ = bufferPools(
         getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolSize_>(),
         getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolAuto_>(),
@@ -483,6 +506,10 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
       handle->pageCacheFastPath_ &&
       getRuntimeParameter<&RuntimeParameters::vocabularyMmapResidentReads_>();
   if (!handle->pageCacheFastPath_) {
+    vocabularyOnDiskReadStats.offsetReads_.fetch_add(
+        numIndices, std::memory_order_relaxed);
+    vocabularyOnDiskReadStats.offsetReadsToManager_.fetch_add(
+        numIndices, std::memory_order_relaxed);
     handle->offsetBatch_ = handle->manager_->addBatch(
         offsetsFile_.fd(), sizes, fileOffsets, targets,
         batchReadOptions(true));
@@ -516,6 +543,8 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
   auto missedRuns = readResidentOrPageCacheHits(
       handle->residentReads_ ? &offsetsMapping_ : nullptr, offsetsFile_.fd(),
       runSizes, runFileOffsets, runTargets);
+  vocabularyOnDiskReadStats.offsetReads_.fetch_add(numRuns,
+                                                   std::memory_order_relaxed);
 
   // Fill the pairs of the served runs, and submit the pairs of the missed runs
   // to the `manager_` (without waiting, like the path without the fast path).
@@ -537,6 +566,8 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
           OffsetPair{runStart[i - begin], runStart[i - begin + 1]};
     }
   }
+  vocabularyOnDiskReadStats.offsetReadsToManager_.fetch_add(
+      missedPositions.size(), std::memory_order_relaxed);
   handle->offsetBatch_ = submitThroughManager(
       *handle->manager_, offsetsFile_.fd(), sizes, fileOffsets, targets,
       missedPositions, batchReadOptions(true));
@@ -582,6 +613,8 @@ VocabBatchLookupResult VocabularyOnDisk::LookupHandle::finish() {
       fileOffsets[i] = indices_[i] * sizeof(uint64_t);
       targets[i] = reinterpret_cast<char*>(&offsetPairs_[i]);
     }
+    vocabularyOnDiskReadStats.offsetReads_.fetch_add(
+        numIndices, std::memory_order_relaxed);
     auto loader = loaderFor(*manager_);
     bufferPools_->offsets_->readAll(
         sizes, fileOffsets, targets, &loader,

@@ -650,6 +650,20 @@ TEST(VocabularyOnDisk, OffsetsInRamAreByteIdentical) {
     ::close(fd);
 #endif
   };
+  // The read counters: offsets from RAM, no offset reads, one word read per
+  // index.
+  {
+    ad_utility::vocabulary::takeVocabularyOnDiskReadStats();
+    const auto& indices = batches.back();
+    vocab.lookupBatch(indices);
+    auto& stats = ad_utility::vocabulary::vocabularyOnDiskReadStats;
+    EXPECT_EQ(stats.offsetsFromRam_.load(), indices.size());
+    EXPECT_EQ(stats.offsetReads_.load(), 0u);
+    EXPECT_EQ(stats.wordReads_.load(), indices.size());
+    EXPECT_THAT(ad_utility::vocabulary::takeVocabularyOnDiskReadStats(),
+                ::testing::HasSubstr("offset_reads=0 "));
+    EXPECT_EQ(stats.words_.load(), 0u);
+  }
   for (bool fastPath : {true, false}) {
     auto c1 = setRuntimeParameterForTest<
         &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(fastPath);

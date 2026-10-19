@@ -35,6 +35,7 @@
 #include "engine/export_v2/ExportEngineV2.h"
 #include "engine/export_v2/ScatterGatherHttpBody.h"
 #include "global/RuntimeParameters.h"
+#include "index/vocabulary/VocabularyOnDisk.h"
 #include "libqlever/Qlever.h"
 #include "parser/ParsedQuery.h"
 #include "parser/SparqlParser.h"
@@ -1399,6 +1400,9 @@ CPP_template_def(typename RequestT, typename SendT)(
   // was computed.
   AD_LOG_INFO << "Done processing query and sending result"
               << ", total time was " << requestTimer.msecs().count() << " ms"
+              << std::endl;
+  AD_LOG_INFO << "Vocabulary on-disk reads of this query: "
+              << ad_utility::vocabulary::takeVocabularyOnDiskReadStats()
               << std::endl;
   metrics_->sparqlOperationDuration_->Record(
       static_cast<double>(requestTimer.msecs().count()),

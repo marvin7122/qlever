@@ -35,6 +35,26 @@
 
 namespace ad_utility::vocabulary {
 
+// Process-wide counters of the batch lookups of all `VocabularyOnDisk`s
+// (updated once per batch, relaxed), for measurements. A "read" is one
+// contiguous range requested from a file: in phase 1 the offset pairs (one
+// read per run of consecutive indices with the page-cache fast path, one per
+// index otherwise), in phase 2 the words. "To manager" counts the reads that
+// were not served from the resident mapping or the page cache and went to
+// the `BatchManager` (io_uring), i.e. to the disk.
+struct VocabularyOnDiskReadStats {
+  std::atomic<uint64_t> words_{0};
+  std::atomic<uint64_t> offsetsFromRam_{0};
+  std::atomic<uint64_t> offsetReads_{0};
+  std::atomic<uint64_t> offsetReadsToManager_{0};
+  std::atomic<uint64_t> wordReads_{0};
+  std::atomic<uint64_t> wordReadsToManager_{0};
+};
+inline VocabularyOnDiskReadStats vocabularyOnDiskReadStats;
+
+// Return the counters above as one line of text and reset them to zero.
+std::string takeVocabularyOnDiskReadStats();
+
 // On-disk vocabulary of strings. Each entry is a pair of <ID, String>. The IDs
 // are ascending, but not (necessarily) contiguous. If the strings are sorted,
 // then binary search for a string can be performed.
