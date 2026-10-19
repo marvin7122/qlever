@@ -2,6 +2,8 @@ addLinkAndDiscoverTestNoLibs(VocabularyInMemoryTest vocabulary)
 
 addLinkAndDiscoverTestNoLibs(VocabularyOnDiskTest vocabulary)
 
+addLinkAndDiscoverTestNoLibs(PackedWordOffsetsTest vocabulary)
+
 addLinkAndDiscoverTest(CompressedVocabularyTest vocabulary)
 
 addLinkAndDiscoverTestNoLibs(UnicodeVocabularyTest vocabulary)

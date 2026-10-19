@@ -294,6 +294,15 @@ struct RuntimeParameters {
   SizeT vocabularyBufferPoolPageSize_{4096,
                                       "vocabulary-buffer-pool-page-size"};
 
+  // If set to true, opening an on-disk vocabulary (`VocabularyOnDisk`) also
+  // loads the offsets of its words into RAM, in a compressed form of about 9
+  // bits per word (see `PackedWordOffsets`). A batch lookup then reads only
+  // the words from disk, one read per word instead of two (the offsets
+  // first, then the words). Costs one sequential read of the `.offsets` file
+  // at startup. Read when the vocabulary is opened, so it must be set at
+  // server start.
+  Bool vocabularyOffsetsInRam_{false, "vocabulary-offsets-in-ram"};
+
   // If set to true, loading a vocabulary that keeps some of its words in RAM
   // (`VocabularyInternalExternal`) also builds a bit vector with one bit per
   // vocabulary index plus rank counters (see `ad_utility::BitVectorWithRank`).

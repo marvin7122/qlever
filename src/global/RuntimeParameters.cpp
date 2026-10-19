@@ -128,6 +128,7 @@ RuntimeParameters::RuntimeParameters() {
   add(vocabularyBufferPoolAuto_);
   add(vocabularyBufferPoolReserve_);
   add(vocabularyBufferPoolPageSize_);
+  add(vocabularyOffsetsInRam_);
   add(vocabularyInternalRankLookup_);
   add(vocabularyInternalRankPrefetchDistance_);
   add(vocabularyInternalRankHugePages_);

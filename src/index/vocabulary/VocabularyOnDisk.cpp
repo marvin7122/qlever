@@ -13,8 +13,11 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/bind_front.h>
 
+#include <fcntl.h>
+
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <mutex>
 
 #include "backports/filesystem.h"
@@ -35,6 +38,10 @@ using OffsetAndSize = VocabularyOnDisk::OffsetAndSize;
 // ____________________________________________________________________________
 OffsetAndSize VocabularyOnDisk::getOffsetAndSize(uint64_t i) const {
   AD_CORRECTNESS_CHECK(i < size());
+  if (packedOffsets_ != nullptr) {
+    auto [offset, nextOffset] = packedOffsets_->offsetPair(i);
+    return {offset, nextOffset - offset};
+  }
   // Read the offset of the word at index `i` and the offset of the next word
   // (which marks the end of the word at index `i`) in a single `pread`.
   std::array<Offset, 2> offsets{};
@@ -413,6 +420,42 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
   // of the next batch to be in flight while the current batch is consumed.
   const size_t numIndices = handle->indices_.size();
   handle->offsetPairs_.resize(numIndices);
+  if (packedOffsets_ != nullptr) {
+    // The offsets are in RAM: phase 1 reads nothing. One cache line per
+    // index, prefetched a few indices ahead.
+    constexpr size_t prefetchDistance = 8;
+    const auto& indices = handle->indices_;
+    for (size_t i = 0; i < std::min(prefetchDistance, numIndices); ++i) {
+      AD_CONTRACT_CHECK(indices[i] < size());
+      packedOffsets_->prefetch(indices[i]);
+    }
+    for (size_t i = 0; i < numIndices; ++i) {
+      if (i + prefetchDistance < numIndices) {
+        AD_CONTRACT_CHECK(indices[i + prefetchDistance] < size());
+        packedOffsets_->prefetch(indices[i + prefetchDistance]);
+      }
+      AD_CONTRACT_CHECK(indices[i] < size());
+      auto [offset, nextOffset] = packedOffsets_->offsetPair(indices[i]);
+      handle->offsetPairs_[i] = OffsetPair{offset, nextOffset};
+    }
+    handle->offsetsInRam_ = true;
+    handle->bufferPools_ = bufferPools(
+        getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolSize_>(),
+        getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolAuto_>(),
+        getRuntimeParameter<
+            &RuntimeParameters::vocabularyBufferPoolReserve_>());
+    if (handle->bufferPools_ == nullptr) {
+      handle->pageCacheFastPath_ =
+          getRuntimeParameter<
+              &RuntimeParameters::vocabularyIouringPageCacheFastPath_>() &&
+          ad_utility::pageCacheFastPathIsSupported();
+      handle->residentReads_ =
+          handle->pageCacheFastPath_ &&
+          getRuntimeParameter<
+              &RuntimeParameters::vocabularyMmapResidentReads_>();
+    }
+    return handle;
+  }
   std::vector sizes(numIndices, sizeof(OffsetPair));
   std::vector<uint64_t> fileOffsets(numIndices);
   std::vector<char*> targets(numIndices);
@@ -521,6 +564,12 @@ VocabBatchLookupResult VocabularyOnDisk::LookupHandle::finish() {
                                   "returning the `IoManager` to the pool in "
                                   "`VocabularyOnDisk::LookupHandle::finish`");
   }};
+  if (offsetsInRam_) {
+    // `beginLookup` already filled `offsetPairs_` from RAM.
+    return vocab_->readStrings(
+        *manager_, offsetPairs_, pageCacheFastPath_, residentReads_,
+        bufferPools_ != nullptr ? bufferPools_->words_.get() : nullptr);
+  }
   if (bufferPools_ != nullptr) {
     // Phase 1 through the offsets pool (the pairs of consecutive indices
     // overlap in the file; the pool copies each pair separately), then phase 2
@@ -678,6 +727,11 @@ void VocabularyOnDisk::open(const std::string& filename) {
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
 
+  packedOffsets_.reset();
+  if (getRuntimeParameter<&RuntimeParameters::vocabularyOffsetsInRam_>()) {
+    loadOffsetsIntoRam(filename + std::string{offsetSuffix_});
+  }
+
   // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
@@ -686,6 +740,42 @@ void VocabularyOnDisk::open(const std::string& filename) {
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
     ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
   }
+}
+
+// _____________________________________________________________________________
+void VocabularyOnDisk::loadOffsetsIntoRam(const std::string& offsetsFilename) {
+  const auto start = std::chrono::steady_clock::now();
+  const size_t numOffsets = size_ + 1;
+  PackedWordOffsets::Builder builder{numOffsets};
+  // Read in chunks of 8 MiB, sequentially.
+  constexpr size_t chunk = size_t{1} << 20;
+  std::vector<uint64_t> buffer(std::min(chunk, numOffsets));
+  for (size_t first = 0; first < numOffsets; first += chunk) {
+    const size_t count = std::min(chunk, numOffsets - first);
+    const size_t bytes = count * sizeof(uint64_t);
+    auto numRead = offsetsFile_.read(buffer.data(), bytes,
+                                     static_cast<off_t>(first * sizeof(Offset)));
+    AD_CORRECTNESS_CHECK(static_cast<size_t>(numRead) == bytes);
+    for (size_t i = 0; i < count; ++i) {
+      builder.push(buffer[i]);
+    }
+  }
+  auto packed = std::move(builder).finish();
+  AD_CORRECTNESS_CHECK(packed.numOffsets() == numOffsets);
+  // The lookups no longer read the `.offsets` file; drop the pages this load
+  // brought into the page cache, so they neither take memory nor make the
+  // file look cached. Advisory, so a failure is ignored.
+  [[maybe_unused]] int ignored =
+      ::posix_fadvise(offsetsFile_.fd(), 0, 0, POSIX_FADV_DONTNEED);
+  const double seconds = std::chrono::duration<double>(
+                             std::chrono::steady_clock::now() - start)
+                             .count();
+  AD_LOG_INFO << "Offsets in RAM for " << offsetsFilename << ": "
+              << packed.numWords() << " words, " << packed.numBlocks()
+              << " blocks, " << packed.numEscapeBlocks() << " escape blocks, "
+              << packed.memoryBytes() << " bytes, built in " << seconds
+              << " s" << std::endl;
+  packedOffsets_ = std::make_unique<const PackedWordOffsets>(std::move(packed));
 }
 
 // _____________________________________________________________________________

@@ -581,6 +581,98 @@ TEST(VocabularyOnDisk, BufferPoolLargerPagesAreByteIdentical) {
   }
 }
 
+// _____________________________________________________________________________
+// With `vocabulary-offsets-in-ram` (read at `open`), the offsets are taken
+// from RAM and only the words are read from disk. `operator[]`, `lookupBatch`
+// and `scanAll` return the same words as the input, with the page-cache fast
+// path on and off, with the files evicted from the page cache, and with the
+// buffer pools. Some words are longer than 254 bytes (escape groups) and the
+// vocabulary spans many groups of 57 offsets.
+TEST(VocabularyOnDisk, OffsetsInRamAreByteIdentical) {
+  std::vector<std::string> words;
+  for (size_t i = 0; i < 4000; ++i) {
+    words.push_back(absl::StrCat("w", i, std::string(i % 31, 'z')));
+    if (i % 500 == 7) {
+      words.push_back(std::string(255 + i, 'L'));
+    }
+  }
+  words.push_back("");
+  words.push_back("last");
+  VocabularyCreator creator{absl::StrCat(gtestCurrentTestName(), ".dat")};
+  {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabularyOffsetsInRam_>(false);
+    auto vocab = creator.createVocabulary(words);
+    EXPECT_EQ(vocab.packedOffsets(), nullptr);
+  }
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyOffsetsInRam_>(true);
+  auto vocab = creator.createVocabulary(words);
+  ASSERT_NE(vocab.packedOffsets(), nullptr);
+  EXPECT_EQ(vocab.packedOffsets()->numWords(), words.size());
+  EXPECT_GT(vocab.packedOffsets()->numEscapeBlocks(), 0u);
+  ASSERT_EQ(vocab.size(), words.size());
+  for (size_t i = 0; i < words.size(); ++i) {
+    ASSERT_EQ(vocab[i], words[i]) << i;
+  }
+  EXPECT_THAT(scanAllToVector(vocab.scanAll()),
+              ::testing::ElementsAreArray(words));
+
+  std::mt19937_64 random{11};
+  std::vector<std::vector<size_t>> batches;
+  for (size_t b = 0; b < 20; ++b) {
+    std::vector<size_t> indices;
+    const size_t batchSize = 1 + random() % 300;
+    for (size_t i = 0; i < batchSize; ++i) {
+      indices.push_back(i % 4 == 0 ? random() % words.size()
+                                   : (indices.empty() ? 0 : indices.back() + 1) %
+                                         words.size());
+    }
+    batches.push_back(std::move(indices));
+  }
+  batches.push_back({words.size() - 1, words.size() - 2, 0, 56, 57, 113, 114});
+  auto checkAll = [&]() {
+    for (const auto& indices : batches) {
+      auto result = vocab.lookupBatch(indices);
+      ASSERT_EQ(result.size(), indices.size());
+      for (size_t i = 0; i < indices.size(); ++i) {
+        ASSERT_EQ(result[i], words[indices[i]]) << indices[i];
+      }
+    }
+  };
+  auto evict = [&]() {
+#ifdef POSIX_FADV_DONTNEED
+    auto filename = absl::StrCat(gtestCurrentTestName(), ".dat");
+    int fd = ::open(filename.c_str(), O_RDONLY);
+    ASSERT_GE(fd, 0);
+    ::fdatasync(fd);
+    ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+    ::close(fd);
+#endif
+  };
+  for (bool fastPath : {true, false}) {
+    auto c1 = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabularyIouringPageCacheFastPath_>(fastPath);
+    for (bool resident : {true, false}) {
+      auto c2 = setRuntimeParameterForTest<
+          &RuntimeParameters::vocabularyMmapResidentReads_>(resident);
+      evict();
+      checkAll();
+      checkAll();
+    }
+  }
+  for (size_t budget : {size_t{1} << 30, size_t{4096}}) {
+    auto c3 = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabularyBufferPoolSize_>(budget);
+    checkAll();
+    checkAll();
+  }
+  // Out-of-range indices still throw.
+  std::array<size_t, 2> bad{0, words.size()};
+  EXPECT_ANY_THROW(vocab.lookupBatch(bad));
+  checkAll();
+}
+
 // An empty batch is an invalid request and must throw.
 TEST(VocabularyOnDisk, LookupBatchEmptyThrows) {
   auto vocab = createExampleVocabulary();

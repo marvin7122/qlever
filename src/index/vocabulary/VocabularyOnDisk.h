@@ -19,6 +19,7 @@
 #include <string_view>
 #include <vector>
 
+#include "index/vocabulary/PackedWordOffsets.h"
 #include "index/vocabulary/VocabularyBinarySearchMixin.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Algorithm.h"
@@ -53,6 +54,11 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
   // The number of words stored in the vocabulary.
   size_t size_ = 0;
+
+  // The offsets of `offsetsFile_` in RAM (see `vocabulary-offsets-in-ram`),
+  // or null. When set, lookups take the offsets from here and read only the
+  // words from disk.
+  std::unique_ptr<const PackedWordOffsets> packedOffsets_;
 
   // Read-only mappings of `file_` and `offsetsFile_` with the pages that this
   // process has read before (see `vocabulary-mmap-resident-reads`).
@@ -178,6 +184,12 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // Get the number of words in the vocabulary.
   size_t size() const { return size_; }
 
+  // The in-RAM offsets (see `vocabulary-offsets-in-ram`), or null if the
+  // vocabulary was opened without them.
+  const PackedWordOffsets* packedOffsets() const {
+    return packedOffsets_.get();
+  }
+
   // Default constructor for an empty vocabulary.
   VocabularyOnDisk() = default;
 
@@ -224,6 +236,10 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   }
 
  private:
+  // Read the `.offsets` file sequentially into `packedOffsets_` (see
+  // `vocabulary-offsets-in-ram`), then drop its pages from the page cache.
+  void loadOffsetsIntoRam(const std::string& offsetsFilename);
+
   // Get the `OffsetAndSize` for the element with the `idx`. Return
   // `std::nullopt` if `idx` is not contained in the vocabulary.
   OffsetAndSize getOffsetAndSize(uint64_t idx) const;
@@ -305,6 +321,9 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     // null. With the pools, both phases run in `finish` and read through the
     // pools; the mappings and the page-cache fast path are not used.
     VocabularyOnDisk::BufferPools* bufferPools_ = nullptr;
+    // Set if `beginLookup` took the `offsetPairs_` from the in-RAM offsets
+    // (see `vocabulary-offsets-in-ram`); phase 1 then reads nothing.
+    bool offsetsInRam_ = false;
 
     // Hand the `manager_` back to the pool. Used by `finish` and the
     // destructor; the handle owns the manager until one of them runs.
