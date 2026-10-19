@@ -481,10 +481,29 @@ void expectRankDirectoryMatchesBinarySearch(
   }
   vocab.prefetchPositionOfIndex(std::numeric_limits<uint64_t>::max());
 
-  // A rebuild gives the same result; `close` removes the directory.
+  // A rebuild gives the same result.
   vocab.buildIndexRankDirectory();
   EXPECT_EQ(positionsOf(shuffled), expectedShuffled);
+
+  // The direct position table (on top of the rank directory, which it takes
+  // precedence over) agrees with the rank directory and the binary search.
+  ASSERT_FALSE(vocab.hasDirectPositionTable());
+  const bool built = vocab.buildDirectPositionTable();
+  EXPECT_EQ(built, !indices.empty());
+  EXPECT_EQ(vocab.hasDirectPositionTable(), !indices.empty());
+  EXPECT_EQ(vocab.directPositionTableNumBytes(), 4 * vocab.endIndex());
+  EXPECT_EQ(positionsOf(queries), expected);
+  EXPECT_EQ(positionsOf(shuffled), expectedShuffled);
+  EXPECT_EQ(positionsOf(repeated), expectedRepeated);
+  for (size_t position = 0; position < indices.size(); ++position) {
+    vocab.prefetchPositionOfIndex(indices[position]);
+    EXPECT_EQ(vocab[indices[position]], std::optional{words[position]});
+  }
+  vocab.prefetchPositionOfIndex(std::numeric_limits<uint64_t>::max());
+
+  // `close` removes the directory and the table.
   vocab.close();
+  EXPECT_FALSE(vocab.hasDirectPositionTable());
   EXPECT_FALSE(vocab.hasIndexRankDirectory());
   EXPECT_EQ(vocab.positionOfIndex(0), std::nullopt);
 }

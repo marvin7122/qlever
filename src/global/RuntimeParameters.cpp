@@ -118,6 +118,7 @@ RuntimeParameters::RuntimeParameters() {
   add(vocabularyInternalRankLookup_);
   add(vocabularyInternalRankPrefetchDistance_);
   add(vocabularyInternalRankHugePages_);
+  add(vocabularyInternalDirectPositionTable_);
   add(vocabularyDeduplicateBatchLookup_);
 
   // Propagate runtime log level changes immediately to the global atomic in

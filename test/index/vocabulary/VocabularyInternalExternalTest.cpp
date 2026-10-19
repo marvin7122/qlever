@@ -15,6 +15,7 @@
 #include <numeric>
 #include <random>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "../../util/RuntimeParametersTestHelpers.h"
@@ -301,16 +302,24 @@ TEST(VocabularyInternalExternal, LookupBatchIsIndependentOfInternalLookupMode) {
     ql::ranges::reverse(all);
     batches.push_back(all);
 
-    for (auto [rankLookup, hugePages] :
-         {std::pair{false, false}, std::pair{true, false},
-          std::pair{true, true}}) {
+    for (auto [rankLookup, hugePages, directTable] :
+         {std::tuple{false, false, false}, std::tuple{true, false, false},
+          std::tuple{true, true, false}, std::tuple{false, false, true},
+          std::tuple{true, false, true}}) {
       auto cleanupRank = setRuntimeParameterForTest<
           &RuntimeParameters::vocabularyInternalRankLookup_>(rankLookup);
       auto cleanupHugePages = setRuntimeParameterForTest<
           &RuntimeParameters::vocabularyInternalRankHugePages_>(hugePages);
+      auto cleanupDirect = setRuntimeParameterForTest<
+          &RuntimeParameters::vocabularyInternalDirectPositionTable_>(
+          directTable);
       VocabularyInternalExternal vocab;
       vocab.open(filename);
-      EXPECT_EQ(vocab.internalVocab().hasIndexRankDirectory(), rankLookup);
+      // The internal vocabulary always contains the first word, so the
+      // direct table can always be built, and then replaces the directory.
+      EXPECT_EQ(vocab.internalVocab().hasDirectPositionTable(), directTable);
+      EXPECT_EQ(vocab.internalVocab().hasIndexRankDirectory(),
+                rankLookup && !directTable);
       for (const auto& batch : batches) {
         std::vector<std::string> expected;
         for (size_t index : batch) {
@@ -326,6 +335,7 @@ TEST(VocabularyInternalExternal, LookupBatchIsIndependentOfInternalLookupMode) {
           EXPECT_THAT(vocab.lookupBatch(batch),
                       ::testing::ElementsAreArray(expected))
               << "rank lookup " << rankLookup << ", huge pages " << hugePages
+              << ", direct table " << directTable
               << ", prefetch distance " << prefetchDistance << ", density "
               << internalDensity;
         }

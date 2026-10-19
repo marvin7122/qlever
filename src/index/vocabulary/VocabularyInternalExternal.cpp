@@ -12,6 +12,7 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <chrono>
 #include <memory>
 #include <new>
 #include <optional>
@@ -71,7 +72,8 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyInternalExternal::beginLookup(
     }
   };
   const size_t distance =
-      internalVocab_.hasIndexRankDirectory()
+      (internalVocab_.hasIndexRankDirectory() ||
+       internalVocab_.hasDirectPositionTable())
           ? getRuntimeParameter<
                 &RuntimeParameters::vocabularyInternalRankPrefetchDistance_>()
           : 0;
@@ -184,7 +186,33 @@ void VocabularyInternalExternal::open(const std::string& filename) {
                  "of the external vocabulary): "
               << internalVocab_.size() << std::endl;
   if (getRuntimeParameter<
+          &RuntimeParameters::vocabularyInternalDirectPositionTable_>()) {
+    const auto start = std::chrono::steady_clock::now();
+    bool built = false;
+    try {
+      built = internalVocab_.buildDirectPositionTable();
+    } catch (const std::bad_alloc&) {
+      built = false;
+    }
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start)
+                        .count();
+    if (built) {
+      AD_LOG_INFO << "Direct position table of the internal vocabulary: "
+                  << internalVocab_.directPositionTableNumBytes()
+                  << " bytes for " << internalVocab_.endIndex()
+                  << " vocabulary indices, built in " << ms << " ms"
+                  << std::endl;
+      return;
+    }
+    AD_LOG_WARN << "Direct position table of the internal vocabulary could "
+                   "not be built, falling back to the rank directory or "
+                   "binary search"
+                << std::endl;
+  }
+  if (getRuntimeParameter<
           &RuntimeParameters::vocabularyInternalRankLookup_>()) {
+    const auto rankStart = std::chrono::steady_clock::now();
     const bool useHugePages = getRuntimeParameter<
         &RuntimeParameters::vocabularyInternalRankHugePages_>();
     try {
@@ -201,8 +229,11 @@ void VocabularyInternalExternal::open(const std::string& filename) {
     }
     AD_LOG_INFO << "Rank directory of the internal vocabulary: "
                 << internalVocab_.indexRankDirectoryNumBytes() << " bytes for "
-                << internalVocab_.endIndex() << " vocabulary indices"
-                << std::endl;
+                << internalVocab_.endIndex() << " vocabulary indices, built in "
+                << std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - rankStart)
+                       .count()
+                << " ms" << std::endl;
     if (useHugePages) {
       const auto [begin, size] = internalVocab_.indexRankDirectoryAllocation();
       const auto hugeBytes = ad_utility::anonHugePageBytes(begin, size);

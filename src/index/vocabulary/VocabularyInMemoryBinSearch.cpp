@@ -25,6 +25,7 @@ void VocabularyInMemoryBinSearch::open(const string& fileName) {
   // A directory built on previous (e.g. empty) contents must not survive
   // into the newly loaded vocabulary, where every lookup would then miss.
   indexRankDirectory_.reset();
+  directPositionTable_ = {};
   AD_CORRECTNESS_CHECK(
       words_.size() == 0 && indices().empty(),
       "Calling open on the same vocabulary twice is probably a bug");
@@ -42,6 +43,16 @@ void VocabularyInMemoryBinSearch::open(const string& fileName) {
 // _____________________________________________________________________________
 std::optional<size_t> VocabularyInMemoryBinSearch::positionOfIndex(
     uint64_t index) const {
+  if (!directPositionTable_.empty()) {
+    if (index >= directPositionTable_.size()) {
+      return std::nullopt;
+    }
+    const uint32_t position = directPositionTable_[index];
+    if (position == notInVocab) {
+      return std::nullopt;
+    }
+    return static_cast<size_t>(position);
+  }
   if (indexRankDirectory_.has_value()) {
     return indexRankDirectory_->rankIfContained(index);
   }
@@ -62,6 +73,21 @@ void VocabularyInMemoryBinSearch::buildIndexRankDirectory(bool useHugePages) {
     return;
   }
   indexRankDirectory_.emplace(indices(), endIndex(), useHugePages);
+}
+
+// _____________________________________________________________________________
+bool VocabularyInMemoryBinSearch::buildDirectPositionTable() {
+  directPositionTable_ = {};
+  auto indices = this->indices();
+  if (indices.empty() || endIndex() == 0 || indices.size() >= notInVocab) {
+    return false;
+  }
+  std::vector<uint32_t> table(endIndex(), notInVocab);
+  for (size_t position = 0; position < indices.size(); ++position) {
+    table[indices[position]] = static_cast<uint32_t>(position);
+  }
+  directPositionTable_ = std::move(table);
+  return true;
 }
 
 // _____________________________________________________________________________
@@ -130,6 +156,7 @@ void VocabularyInMemoryBinSearch::close() {
   words_.clear();
   indices_.emplace<Indices>();
   indexRankDirectory_.reset();
+  directPositionTable_ = {};
 }
 
 // _____________________________________________________________________________

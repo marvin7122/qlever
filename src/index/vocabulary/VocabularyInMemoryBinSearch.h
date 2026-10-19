@@ -7,8 +7,11 @@
 
 #include <string>
 #include <string_view>
+#include <cstdint>
+#include <limits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "backports/algorithm.h"
 #include "backports/span.h"
@@ -62,6 +65,14 @@ class VocabularyInMemoryBinSearch
   // Optional constant-time replacement for the binary search in
   // `positionOfIndex` (see `buildIndexRankDirectory`).
   std::optional<ad_utility::BitVectorWithRank> indexRankDirectory_;
+  // Optional direct table over `[0, endIndex())`: the position of the word
+  // with the given index, or `notInVocab` (see `buildDirectPositionTable`).
+  // Takes precedence over the rank directory.
+  std::vector<uint32_t> directPositionTable_;
+
+ public:
+  // The entry of `directPositionTable_` for an index that is not contained.
+  static constexpr uint32_t notInVocab = std::numeric_limits<uint32_t>::max();
 
  public:
   // Construct an empty vocabulary
@@ -118,13 +129,30 @@ class VocabularyInMemoryBinSearch
   // if the system allows it (see `ad_utility::BitVectorWithRank`).
   void buildIndexRankDirectory(bool useHugePages = false);
 
+  // Build a direct table over `[0, endIndex())` with one 32-bit entry per
+  // vocabulary index (the position of its word, or `notInVocab`), which
+  // `positionOfIndex` then reads instead of the rank directory or the binary
+  // search. Costs `32 * endIndex()` bits. Returns false (and builds nothing)
+  // if the positions do not fit below `notInVocab` or `endIndex()` wraps.
+  bool buildDirectPositionTable();
+  bool hasDirectPositionTable() const {
+    return !directPositionTable_.empty();
+  }
+  size_t directPositionTableNumBytes() const {
+    return directPositionTable_.size() * sizeof(uint32_t);
+  }
+
   // Prefetch hints for a batch of lookups (no effect on results): load what
   // `positionOfIndex(index)` reads (the rank directory block, nothing without
   // the directory), the offsets of the word at `position`, and the first
   // bytes of that word. `prefetchWordAtPosition` reads the offsets, so they
   // should have been prefetched before.
   void prefetchPositionOfIndex(uint64_t index) const {
-    if (indexRankDirectory_.has_value()) {
+    if (!directPositionTable_.empty()) {
+      if (index < directPositionTable_.size()) {
+        __builtin_prefetch(&directPositionTable_[index]);
+      }
+    } else if (indexRankDirectory_.has_value()) {
       indexRankDirectory_->prefetch(index);
     }
   }
@@ -268,6 +296,7 @@ class VocabularyInMemoryBinSearch
       auto& indices = arg.indices_.template emplace<Indices>();
       serializer | indices;
       arg.indexRankDirectory_.reset();
+      arg.directPositionTable_ = {};
     }
   }
 

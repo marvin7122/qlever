@@ -267,6 +267,16 @@ struct RuntimeParameters {
   // is loaded; changing it later has no effect.
   Bool vocabularyInternalRankLookup_{true, "vocabulary-internal-rank-lookup"};
 
+  // Research alternative to the rank directory above: if set to true, loading
+  // a `VocabularyInternalExternal` builds a direct table with one 32-bit entry
+  // per vocabulary index of the full index range: the position of the word in
+  // RAM, or a "not in RAM" marker. A probe then reads one entry. Costs 32 bits
+  // per vocabulary index (28 times the rank directory). Takes precedence over
+  // the rank directory, which is then not built. Read when the index is
+  // loaded; changing it later has no effect.
+  Bool vocabularyInternalDirectPositionTable_{
+      false, "vocabulary-internal-direct-position-table"};
+
   // With the rank directory above, `VocabularyInternalExternal::lookupBatch`
   // prefetches the rank directory block of the index this many positions ahead
   // in the batch, and (in a second pass) the offsets and the first bytes of
