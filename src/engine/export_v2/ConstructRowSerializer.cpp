@@ -33,15 +33,7 @@ using ad_utility::triple_component::LiteralOrIriView;
 using qlever::constructExport::EvaluatedTermData;
 using qlever::constructExport::formatTerm;
 
-// True when Legacy's `RdfEscaping::validRDFLiteralFromNormalized` would change
-// the literal `text` (or reject it). Mirrors its early return: a literal with
-// exactly two quotes and no backslash or line break is already valid.
-bool literalNeedsEscaping(std::string_view text) {
-  const size_t posSecondQuote = text.find('"', 1);
-  return posSecondQuote == std::string_view::npos ||
-         posSecondQuote != text.rfind('"') ||
-         text.find_first_of("\\\n\r") != std::string_view::npos;
-}
+using detail::literalNeedsEscaping;
 
 // Append `text` as an escaped term: like Legacy, a literal (text starting
 // with `"`) is escaped, everything else is written as is. Legacy escapes the
@@ -113,6 +105,29 @@ void resolveTermColumn(ResolvedColumn& column, const Index& index,
 constexpr size_t kBlankNodeRowIdBytes = 20;
 
 }  // namespace
+
+// _____________________________________________________________________________
+bool detail::literalNeedsEscaping(std::string_view text) {
+  // The same as: no quote after the first character, or a quote after the
+  // second quote (`text.find('"', 1) != text.rfind('"')`), or a backslash or
+  // line break anywhere. One counting pass without early exits (which
+  // compilers can vectorize) replaces the three searches; the words of an
+  // export are short and almost never need escaping.
+  auto isSpecial = [](char c) {
+    return static_cast<size_t>(c == '\\') + static_cast<size_t>(c == '\n') +
+           static_cast<size_t>(c == '\r');
+  };
+  if (text.empty()) {
+    return true;
+  }
+  size_t numQuotesAfterFirst = 0;
+  size_t numSpecial = isSpecial(text[0]);
+  for (size_t i = 1; i < text.size(); ++i) {
+    numQuotesAfterFirst += static_cast<size_t>(text[i] == '"');
+    numSpecial += isSpecial(text[i]);
+  }
+  return numQuotesAfterFirst != 1 || numSpecial != 0;
+}
 
 // _____________________________________________________________________________
 bool ConstructRowSerializer::supportsMediaType(

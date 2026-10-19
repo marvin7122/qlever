@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "engine/VariableToColumnMap.h"
@@ -24,6 +25,14 @@
 namespace ql::engine::export_v2 {
 
 using qlever::export_v2::ScatterGatherChunkBuilder;
+
+namespace detail {
+// True when Legacy's `RdfEscaping::validRDFLiteralFromNormalized` would change
+// the literal `text` (or reject it). Mirrors its early return: a literal with
+// exactly two quotes (the first character and one more) and no backslash or
+// line break is already valid. One pass over `text`.
+bool literalNeedsEscaping(std::string_view text);
+}  // namespace detail
 
 // Instantiates a CONSTRUCT template for a window of result rows and writes one
 // Turtle or N-Triples line per instantiated triple, with the same bytes as

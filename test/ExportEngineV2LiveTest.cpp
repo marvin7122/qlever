@@ -15,6 +15,7 @@
 // (unordered helper threads) the CONSTRUCT lines must be the same multiset, and
 // the same bytes for LIMIT/OFFSET (ordered session).
 
+#include <absl/strings/escaping.h>
 #include <absl/strings/str_split.h>
 #include <gmock/gmock.h>
 
@@ -25,9 +26,11 @@
 #include "backports/algorithm.h"
 #include "engine/ExportQueryExecutionTrees.h"
 #include "engine/QueryPlanner.h"
+#include "engine/export_v2/ConstructRowSerializer.h"
 #include "engine/export_v2/ExportEngineV2.h"
 #include "index/IndexImpl.h"
 #include "parser/SparqlParser.h"
+#include "rdfTypes/RdfEscaping.h"
 #include "util/GTestHelpers.h"
 #include "util/IndexTestHelpers.h"
 #include "util/RuntimeParametersTestHelpers.h"
@@ -446,6 +449,48 @@ TEST(ExportEngineV2LiveTest, ConstructManyRowsMatchLegacy) {
         "<http://example.org/v> ?o } WHERE { ?s <http://example.org/label> ?o "
         ". ?s ?p ?x } LIMIT 9000 OFFSET 333");
   }
+}
+
+// _____________________________________________________________________________
+// The one-pass `literalNeedsEscaping` agrees with the three searches it
+// replaced on every string up to length 7 over the characters that matter
+// (and one that does not), and a literal that it lets through unescaped is
+// indeed unchanged by Legacy's escaping.
+TEST(ExportEngineV2LiveTest, LiteralNeedsEscapingMatchesThreeSearches) {
+  using ql::engine::export_v2::detail::literalNeedsEscaping;
+  auto reference = [](std::string_view text) {
+    const size_t posSecondQuote = text.find('"', 1);
+    return posSecondQuote == std::string_view::npos ||
+           posSecondQuote != text.rfind('"') ||
+           text.find_first_of("\\\n\r") != std::string_view::npos;
+  };
+  const std::string alphabet = "\"\\\n\ra";
+  std::vector<std::string> strings{""};
+  size_t numChecked = 0;
+  for (size_t length = 0; length <= 7; ++length) {
+    std::vector<std::string> longer;
+    for (const auto& text : strings) {
+      ASSERT_EQ(literalNeedsEscaping(text), reference(text))
+          << absl::CEscape(text);
+      ++numChecked;
+      if (!text.empty() && text[0] == '"' && !literalNeedsEscaping(text)) {
+        EXPECT_EQ(RdfEscaping::validRDFLiteralFromNormalized(text), text)
+            << absl::CEscape(text);
+      }
+      for (char c : alphabet) {
+        longer.push_back(text + c);
+      }
+    }
+    strings = std::move(longer);
+  }
+  EXPECT_EQ(numChecked, 97656u);  // 5^0 + ... + 5^7
+  // Typical export words: a plain and a language-tagged label, and words
+  // that need escaping.
+  EXPECT_FALSE(literalNeedsEscaping("\"Ada Lovelace\"@en"));
+  EXPECT_FALSE(literalNeedsEscaping("\"42\"^^<http://example.org/int>"));
+  EXPECT_TRUE(literalNeedsEscaping("\"say \"hi\"\"@en"));
+  EXPECT_TRUE(literalNeedsEscaping("\"a\\b\""));
+  EXPECT_TRUE(literalNeedsEscaping("\"line\nbreak\""));
 }
 
 }  // namespace
