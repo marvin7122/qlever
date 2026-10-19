@@ -581,6 +581,72 @@ TEST(VocabularyOnDisk, BufferPoolLargerPagesAreByteIdentical) {
   }
 }
 
+// _____________________________________________________________________________
+// With `vocabulary-buffer-pool-fixed-buffers`, the pools load into fixed
+// frames that the I/O managers register as io_uring fixed buffers. Random
+// batches return the same words as without the pools, for pages of 4 KiB and
+// 16 KiB, for a budget that holds the files and budgets of one page and below
+// one page (the frames are then the minimum per partition, and the pools keep
+// nothing). The parameters are set before the vocabulary is opened (as at
+// server start), so `open` creates the pools.
+TEST(VocabularyOnDisk, BufferPoolFixedBuffersAreByteIdentical) {
+  std::vector<std::string> words;
+  for (size_t i = 0; i < 4000; ++i) {
+    words.push_back(absl::StrCat("f", i, std::string(i % 19, 'z')));
+  }
+  words.push_back(std::string(30000, 'L'));
+  words.push_back("end");
+  auto fixedCleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyBufferPoolFixedBuffers_>(true);
+  std::mt19937_64 random{5};
+  for (size_t pageSize : {size_t{4096}, size_t{16384}}) {
+    auto pageSizeCleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabularyBufferPoolPageSize_>(pageSize);
+    auto sizeCleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabularyBufferPoolSize_>(size_t{8} << 20);
+    VocabularyCreator creator{
+        absl::StrCat(gtestCurrentTestName(), "-", pageSize)};
+    auto vocab = creator.createVocabulary(words);
+    for (size_t budget : {size_t{8} << 20, pageSize, size_t{100}}) {
+      auto cleanup = setRuntimeParameterForTest<
+          &RuntimeParameters::vocabularyBufferPoolSize_>(budget);
+      for (size_t rep = 0; rep < 2; ++rep) {
+        for (size_t b = 0; b < 20; ++b) {
+          std::vector<size_t> indices;
+          const size_t batchSize = 1 + random() % 400;
+          for (size_t i = 0; i < batchSize; ++i) {
+            indices.push_back(random() % words.size());
+          }
+          indices.push_back(words.size() - 2);
+          auto result = vocab.lookupBatch(indices);
+          vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+              vocab, result, indices);
+        }
+      }
+    }
+  }
+}
+
+// _____________________________________________________________________________
+// With the elastic budget, fixed buffers are not used (they need a fixed
+// budget); the lookups are unchanged.
+TEST(VocabularyOnDisk, BufferPoolFixedBuffersIgnoredWithElasticBudget) {
+  std::vector<std::string> words;
+  for (size_t i = 0; i < 2000; ++i) {
+    words.push_back(absl::StrCat("e", i));
+  }
+  VocabularyCreator creator{gtestCurrentTestName()};
+  auto vocab = creator.createVocabulary(words);
+  auto fixedCleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyBufferPoolFixedBuffers_>(true);
+  auto autoCleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyBufferPoolAuto_>(true);
+  std::vector<size_t> indices{5, 1999, 0, 700, 701, 702};
+  auto result = vocab.lookupBatch(indices);
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(vocab, result,
+                                                                indices);
+}
+
 // An empty batch is an invalid request and must throw.
 TEST(VocabularyOnDisk, LookupBatchEmptyThrows) {
   auto vocab = createExampleVocabulary();

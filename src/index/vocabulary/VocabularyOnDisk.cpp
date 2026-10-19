@@ -13,8 +13,12 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/bind_front.h>
 
+#include <sys/resource.h>
+
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <limits>
 #include <mutex>
 
 #include "backports/filesystem.h"
@@ -214,10 +218,31 @@ VocabularyOnDisk::BufferPools* VocabularyOnDisk::bufferPools(
   if (pools.failed_) {
     return nullptr;
   }
+  const size_t requestedBudget = totalBudget;
   if (elastic) {
     // Start at the floor; the controller grows the budget while memory is
     // free.
     totalBudget = ad_utility::BufferPoolBudgetConfig{}.floorBytes;
+  }
+  // Fixed frames are read when the pools are created, and only with a fixed
+  // budget. The registered memory must fit into `RLIMIT_MEMLOCK`.
+  const bool fixedFrames =
+      pools.words_ == nullptr ? !elastic && getRuntimeParameter<
+                                    &RuntimeParameters::
+                                        vocabularyBufferPoolFixedBuffers_>()
+                              : pools.fixedFrames_;
+  if (pools.words_ == nullptr && elastic &&
+      getRuntimeParameter<
+          &RuntimeParameters::vocabularyBufferPoolFixedBuffers_>()) {
+    AD_LOG_WARN << "vocabulary-buffer-pool-fixed-buffers needs a fixed "
+                   "budget; the elastic buffer pools do not use it"
+                << std::endl;
+  }
+  if (fixedFrames && totalBudget > fixedFramesLimit()) {
+    AD_LOG_INFO << "Vocabulary buffer pools with fixed buffers: budget "
+                << totalBudget << " bytes capped at " << fixedFramesLimit()
+                << " bytes (RLIMIT_MEMLOCK minus a reserve)" << std::endl;
+    totalBudget = fixedFramesLimit();
   }
   const auto wordsSize =
       static_cast<size_t>(ql::filesystem::file_size(pools.filename_));
@@ -232,11 +257,13 @@ VocabularyOnDisk::BufferPools* VocabularyOnDisk::bufferPools(
   if (pools.words_ == nullptr) {
     const size_t pageSize = getRuntimeParameter<
         &RuntimeParameters::vocabularyBufferPoolPageSize_>();
+    const size_t numPartitions =
+        fixedFrames ? NUM_VOCAB_BATCH_IO_MANAGERS : size_t{0};
     auto words = std::make_unique<ad_utility::BufferPool>(
-        pools.filename_, wordsSize, wordsBudget, pageSize);
+        pools.filename_, wordsSize, wordsBudget, pageSize, numPartitions);
     auto offsets = std::make_unique<ad_utility::BufferPool>(
         pools.filename_ + std::string{offsetSuffix_}, offsetsSize,
-        offsetsBudget, pageSize);
+        offsetsBudget, pageSize, numPartitions);
     if (!words->isValid() || !offsets->isValid()) {
       AD_LOG_WARN << "Could not create the vocabulary buffer pools for "
                   << pools.filename_ << "; reading without them" << std::endl;
@@ -249,6 +276,20 @@ VocabularyOnDisk::BufferPools* VocabularyOnDisk::bufferPools(
                 << ", pages of " << pageSize << " bytes, "
                 << (words->usesDirectIo() ? "O_DIRECT" : "page cache")
                 << std::endl;
+    if (fixedFrames) {
+      AD_LOG_INFO << "Vocabulary buffer pools with fixed buffers: "
+                  << words->numFrames() << " + " << offsets->numFrames()
+                  << " frames ("
+                  << (words->numFrames() + offsets->numFrames()) * pageSize
+                  << " bytes) in " << numPartitions
+                  << " partitions, faulted in in "
+                  << static_cast<long>(1000 * words->prefaultSeconds())
+                  << " + "
+                  << static_cast<long>(1000 * offsets->prefaultSeconds())
+                  << " ms with " << words->prefaultThreads() << " + "
+                  << offsets->prefaultThreads() << " threads" << std::endl;
+    }
+    pools.fixedFrames_ = fixedFrames;
     pools.words_ = std::move(words);
     pools.offsets_ = std::move(offsets);
   } else if (!elastic) {
@@ -268,9 +309,49 @@ VocabularyOnDisk::BufferPools* VocabularyOnDisk::bufferPools(
     pools.elastic_ = true;
     pools.budget_ = 0;
   } else {
-    pools.budget_ = totalBudget;
+    // The requested budget (also if it was capped above), which the fast
+    // path at the top compares with.
+    pools.budget_ = requestedBudget;
   }
   return &pools;
+}
+
+// _____________________________________________________________________________
+size_t VocabularyOnDisk::fixedFramesLimit() {
+  ::rlimit limit{};
+  if (::getrlimit(RLIMIT_MEMLOCK, &limit) != 0 ||
+      limit.rlim_cur == RLIM_INFINITY) {
+    return std::numeric_limits<size_t>::max();
+  }
+  const auto bytes = static_cast<size_t>(limit.rlim_cur);
+  return bytes - std::min(bytes / 2, size_t{256} << 20);
+}
+
+// _____________________________________________________________________________
+void VocabularyOnDisk::ensureFixedBuffers(
+    BufferPools& pools, ad_utility::BatchManagerBase& manager) {
+  if (!pools.fixedFrames_ || manager.fixedBuffersOwner() == &pools) {
+    return;
+  }
+  const size_t partition = manager.id() % NUM_VOCAB_BATCH_IO_MANAGERS;
+  std::vector<::iovec> iovecs;
+  size_t bytes = 0;
+  for (const auto* pool : {pools.words_.get(), pools.offsets_.get()}) {
+    for (auto [base, size] : pool->fixedBufferIovecs(partition)) {
+      iovecs.push_back(::iovec{base, size});
+      bytes += size;
+    }
+  }
+  const auto start = std::chrono::steady_clock::now();
+  const bool registered = manager.registerFixedBuffers(iovecs, &pools);
+  const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - start)
+                          .count();
+  AD_LOG_INFO << "Vocabulary buffer pool frames of partition " << partition
+              << " (" << iovecs.size() << " buffers, " << bytes << " bytes) "
+              << (registered ? "registered as io_uring fixed buffers"
+                             : "not registered (no io_uring or refused)")
+              << " in " << millis << " ms" << std::endl;
 }
 
 // _____________________________________________________________________________
@@ -376,7 +457,8 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     wordsPool->readAll(
         sizes, fileOffsets, targetSpan, &loader,
         getRuntimeParameter<
-            &RuntimeParameters::vocabularyMmapPrefetchDistance_>());
+            &RuntimeParameters::vocabularyMmapPrefetchDistance_>(),
+        manager.id());
   } else if (pageCacheFastPath) {
     const auto* mapping = residentReads ? &wordsMapping_ : nullptr;
     auto missed = readResidentOrPageCacheHits(mapping, file_.fd(), sizes,
@@ -533,11 +615,13 @@ VocabBatchLookupResult VocabularyOnDisk::LookupHandle::finish() {
       fileOffsets[i] = indices_[i] * sizeof(uint64_t);
       targets[i] = reinterpret_cast<char*>(&offsetPairs_[i]);
     }
+    ensureFixedBuffers(*bufferPools_, *manager_);
     auto loader = loaderFor(*manager_);
     bufferPools_->offsets_->readAll(
         sizes, fileOffsets, targets, &loader,
         getRuntimeParameter<
-            &RuntimeParameters::vocabularyMmapPrefetchDistance_>());
+            &RuntimeParameters::vocabularyMmapPrefetchDistance_>(),
+        manager_->id());
     return vocab_->readStrings(*manager_, offsetPairs_, false, false,
                                bufferPools_->words_.get());
   }
@@ -683,8 +767,37 @@ void VocabularyOnDisk::open(const std::string& filename) {
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
   bool preferIoUring = true;
+  std::vector<std::unique_ptr<ad_utility::BatchManagerBase>> managers;
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
+    managers.push_back(ad_utility::makeBatchManager(preferIoUring));
+    managers.back()->setId(i);
+  }
+
+  // With fixed buffers (a fixed budget set at server start), create the pools
+  // now, so that faulting in their frames and registering them with the rings
+  // happens at startup and not in the first query.
+  const size_t poolSize =
+      getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolSize_>();
+  if (poolSize > 0 &&
+      getRuntimeParameter<
+          &RuntimeParameters::vocabularyBufferPoolFixedBuffers_>() &&
+      !getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolAuto_>()) {
+    const auto start = std::chrono::steady_clock::now();
+    auto* pools = bufferPools(poolSize);
+    if (pools != nullptr) {
+      for (auto& manager : managers) {
+        ensureFixedBuffers(*pools, *manager);
+      }
+      AD_LOG_INFO << "Vocabulary buffer pools with fixed buffers set up at "
+                     "startup in "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - start)
+                         .count()
+                  << " ms" << std::endl;
+    }
+  }
+  for (auto& manager : managers) {
+    ioManagers_->push(std::move(manager));
   }
 }
 

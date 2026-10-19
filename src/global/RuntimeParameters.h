@@ -294,6 +294,19 @@ struct RuntimeParameters {
   SizeT vocabularyBufferPoolPageSize_{4096,
                                       "vocabulary-buffer-pool-page-size"};
 
+  // If set to true (and `vocabulary-buffer-pool-size` is positive and
+  // `vocabulary-buffer-pool-auto` is false): the buffer pools allocate their
+  // whole size as fixed frames that are faulted in at server start and never
+  // returned to the kernel, and each io_uring ring of the vocabulary registers
+  // its share of the frames as fixed buffers (`IORING_REGISTER_BUFFERS`). A
+  // missing page is then read with `IORING_OP_READ_FIXED` into a pinned
+  // frame, which needs no page fault and no page pinning per read. The size
+  // is capped at the `RLIMIT_MEMLOCK` of the process (minus 256 MiB), to which
+  // the kernel charges the registered memory. Read when the pools are created
+  // (at server start if set from the command line).
+  Bool vocabularyBufferPoolFixedBuffers_{
+      false, "vocabulary-buffer-pool-fixed-buffers"};
+
   // If set to true, loading a vocabulary that keeps some of its words in RAM
   // (`VocabularyInternalExternal`) also builds a bit vector with one bit per
   // vocabulary index plus rank counters (see `ad_utility::BitVectorWithRank`).

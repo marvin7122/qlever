@@ -12,8 +12,10 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <iterator>
+#include <optional>
 #include <limits>
 #include <thread>
 #include <utility>
@@ -25,6 +27,10 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #define QL_BUFFER_POOL
+// `MADV_POPULATE_WRITE` (Linux 5.14) is missing in older headers.
+#ifndef MADV_POPULATE_WRITE
+#define MADV_POPULATE_WRITE 23
+#endif
 #endif
 
 namespace ad_utility {
@@ -85,8 +91,8 @@ void pause(size_t& spins) {
 
 // _____________________________________________________________________________
 BufferPool::BufferPool([[maybe_unused]] const std::string& filename,
-                       size_t fileSize, size_t budgetBytes,
-                       size_t pageSize)
+                       size_t fileSize, size_t budgetBytes, size_t pageSize,
+                       size_t numFramePartitions)
     : pageSize_{pageSize}, budgetPages_{budgetBytes / pageSize} {
   AD_CONTRACT_CHECK(pageSize >= defaultPageSize &&
                     pageSize % defaultPageSize == 0 &&
@@ -113,20 +119,114 @@ BufferPool::BufferPool([[maybe_unused]] const std::string& filename,
   for (size_t i = 0; i < numPages_; ++i) {
     states_[i].store(evicted, std::memory_order_relaxed);
   }
-  regionSize_ = numPages_ * pageSize_;
-  void* region = ::mmap(nullptr, regionSize_, PROT_READ | PROT_WRITE,
-                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-  if (region == MAP_FAILED || fd_ < 0) {
-    if (region != MAP_FAILED) {
-      ::munmap(region, regionSize_);
-    }
+  if (fd_ < 0) {
     return;
   }
-  region_ = static_cast<char*>(region);
+  if (numFramePartitions > 0) {
+    // Fixed frames: the budget in whole frames per partition (a frame number
+    // must fit into the 32 bits of the state word).
+    numFramePartitions_ = numFramePartitions;
+    framesPerPartition_ = std::max(
+        minFramesPerPartition,
+        std::min(budgetPages_.load(), numPages_) / numFramePartitions);
+    numFrames_ = framesPerPartition_ * numFramePartitions;
+    AD_CONTRACT_CHECK(numFrames_ <= std::numeric_limits<uint32_t>::max());
+    framesPerChunk_ = std::max<size_t>(1, maxFixedBufferBytes / pageSize_);
+    void* frames = ::mmap(nullptr, numFrames_ * pageSize_,
+                          PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
+                          -1, 0);
+    if (frames == MAP_FAILED) {
+      return;
+    }
+    frames_ = static_cast<char*>(frames);
+    prefaultFrames();
+    // Hand out the low frames of each partition first, so that consecutive
+    // pages get consecutive frames.
+    freeFrames_ = std::make_unique<FreeFrames[]>(numFramePartitions_);
+    for (size_t p = 0; p < numFramePartitions_; ++p) {
+      auto& free = freeFrames_[p].frames_;
+      free.resize(framesPerPartition_);
+      for (size_t i = 0; i < framesPerPartition_; ++i) {
+        free[i] = static_cast<uint32_t>((p + 1) * framesPerPartition_ - 1 - i);
+      }
+    }
+    versionMask_ = fixedVersionMask;
+    budgetPages_ = std::min(budgetPages_.load(), numFrames_);
+  } else {
+    regionSize_ = numPages_ * pageSize_;
+    void* region = ::mmap(nullptr, regionSize_, PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (region == MAP_FAILED) {
+      return;
+    }
+    region_ = static_cast<char*>(region);
+  }
   fileSize_ = fileSize;
+  valid_ = true;
 #else
   (void)fileSize;
+  (void)numFramePartitions;
 #endif
+}
+
+// _____________________________________________________________________________
+void BufferPool::prefaultFrames() {
+#ifdef QL_BUFFER_POOL
+  // Fault in every frame now (allocate, zero, map), in parallel slices of
+  // whole pages. `MADV_POPULATE_WRITE` does this in one call per slice; where
+  // the kernel lacks it, touch one byte per page instead.
+  const auto start = std::chrono::steady_clock::now();
+  const size_t bytes = numFrames_ * pageSize_;
+  constexpr size_t osPage = 4096;
+  constexpr size_t minBytesPerThread = size_t{64} << 20;
+  const size_t numThreads = std::clamp<size_t>(
+      bytes / minBytesPerThread, 1,
+      std::clamp<size_t>(std::thread::hardware_concurrency(), 1, 16));
+  const size_t numOsPages = bytes / osPage;
+  auto populate = [this, numOsPages, numThreads](size_t t) {
+    const size_t begin = numOsPages * t / numThreads * osPage;
+    const size_t end = numOsPages * (t + 1) / numThreads * osPage;
+    if (end == begin) {
+      return;
+    }
+    if (::madvise(frames_ + begin, end - begin, MADV_POPULATE_WRITE) == 0) {
+      return;
+    }
+    for (size_t offset = begin; offset < end; offset += osPage) {
+      *static_cast<volatile char*>(frames_ + offset) = 0;
+    }
+  };
+  std::vector<std::thread> threads;
+  for (size_t t = 1; t < numThreads; ++t) {
+    threads.emplace_back(populate, t);
+  }
+  populate(0);
+  for (auto& thread : threads) {
+    thread.join();
+  }
+  prefaultThreads_ = numThreads;
+  prefaultSeconds_ = std::chrono::duration<double>(
+                         std::chrono::steady_clock::now() - start)
+                         .count();
+#endif
+}
+
+// _____________________________________________________________________________
+std::vector<std::pair<char*, size_t>> BufferPool::fixedBufferIovecs(
+    size_t partition) const {
+  std::vector<std::pair<char*, size_t>> result;
+  if (!usesFixedFrames()) {
+    return result;
+  }
+  AD_CONTRACT_CHECK(partition < numFramePartitions_);
+  const size_t firstFrame = partition * framesPerPartition_;
+  for (size_t frame = 0; frame < framesPerPartition_;
+       frame += framesPerChunk_) {
+    const size_t n = std::min(framesPerChunk_, framesPerPartition_ - frame);
+    result.emplace_back(frames_ + (firstFrame + frame) * pageSize_,
+                        n * pageSize_);
+  }
+  return result;
 }
 
 // _____________________________________________________________________________
@@ -134,6 +234,9 @@ BufferPool::~BufferPool() {
 #ifdef QL_BUFFER_POOL
   if (region_ != nullptr) {
     ::munmap(region_, regionSize_);
+  }
+  if (frames_ != nullptr) {
+    ::munmap(frames_, numFrames_ * pageSize_);
   }
   if (fd_ >= 0) {
     ::close(fd_);
@@ -146,7 +249,48 @@ BufferPool::~BufferPool() {
 
 // _____________________________________________________________________________
 void BufferPool::setBudget(size_t budgetBytes) {
-  budgetPages_.store(budgetBytes / pageSize_);
+  size_t pages = budgetBytes / pageSize_;
+  if (usesFixedFrames()) {
+    pages = std::min(pages, numFrames_);
+  }
+  budgetPages_.store(pages);
+}
+
+// _____________________________________________________________________________
+void BufferPool::copyFromPages(const uint64_t* words, uint64_t offset,
+                               size_t numBytes, char* target) const {
+  if (!usesFixedFrames()) {
+    std::memcpy(target, region_ + offset, numBytes);
+    return;
+  }
+  // Page by page, each from its frame.
+  size_t done = 0;
+  for (size_t k = 0; done < numBytes; ++k) {
+    const uint64_t position = offset + done;
+    const size_t inPage = position % pageSize_;
+    const size_t n = std::min(numBytes - done, pageSize_ - inPage);
+    std::memcpy(target + done, frameAddress(words[k]) + inPage, n);
+    done += n;
+  }
+}
+
+// _____________________________________________________________________________
+void BufferPool::copyOwned(uint64_t offset, size_t numBytes,
+                           char* target) const {
+  if (!usesFixedFrames()) {
+    std::memcpy(target, region_ + offset, numBytes);
+    return;
+  }
+  size_t done = 0;
+  while (done < numBytes) {
+    const uint64_t position = offset + done;
+    const size_t inPage = position % pageSize_;
+    const size_t n = std::min(numBytes - done, pageSize_ - inPage);
+    const uint64_t word =
+        states_[position / pageSize_].load(std::memory_order_relaxed);
+    std::memcpy(target + done, frameAddress(word) + inPage, n);
+    done += n;
+  }
 }
 
 // _____________________________________________________________________________
@@ -173,9 +317,11 @@ bool BufferPool::tryCopy(uint64_t offset, size_t numBytes, char* target) {
     }
     seen[page - first] = word & ~referenceBit;
   }
-  std::memcpy(target, region_ + offset, numBytes);
+  copyFromPages(seen, offset, numBytes, target);
   // The copy is valid if no page was evicted in the meantime: an eviction
-  // changes the state and the version (seqlock-style validation).
+  // changes the state and the version (seqlock-style validation). With fixed
+  // frames, a frame is reused only after its page was evicted, so a copy
+  // from a reused frame also fails this check.
   std::atomic_thread_fence(std::memory_order_acquire);
   for (size_t page = first; page <= last; ++page) {
     const uint64_t word = states_[page].load(std::memory_order_relaxed);
@@ -193,7 +339,7 @@ bool BufferPool::tryCopy(uint64_t offset, size_t numBytes, char* target) {
 void BufferPool::readAll(ql::span<const size_t> numBytes,
                          ql::span<const uint64_t> offsets,
                          ql::span<char*> buffers, const Loader* loader,
-                         size_t prefetchDistance) {
+                         size_t prefetchDistance, size_t partition) {
   AD_CONTRACT_CHECK(offsets.size() == numBytes.size() &&
                     buffers.size() == numBytes.size());
   AD_CONTRACT_CHECK(isValid());
@@ -205,12 +351,35 @@ void BufferPool::readAll(ql::span<const size_t> numBytes,
 
   // Hits: copy from the region, prefetching ahead (see `io/08`).
   std::vector<size_t> pending;
+  const bool fixed = usesFixedFrames();
+  if (fixed) {
+    partition %= numFramePartitions_;
+  }
+  // With fixed frames: the state words `prefetchDistance` reads ahead, the
+  // bytes half as far ahead.
+  const size_t frameDistance = prefetchDistance / 2;
   for (size_t i = 0; i < std::min(prefetchDistance, n); ++i) {
-    prefetch(offsets[i], numBytes[i]);
+    if (fixed) {
+      prefetchState(offsets[i], numBytes[i]);
+    } else {
+      prefetch(offsets[i], numBytes[i]);
+    }
+  }
+  for (size_t i = 0; fixed && i < std::min(frameDistance, n); ++i) {
+    prefetchFrame(offsets[i], numBytes[i]);
   }
   for (size_t i = 0; i < n; ++i) {
     if (prefetchDistance > 0 && i + prefetchDistance < n) {
-      prefetch(offsets[i + prefetchDistance], numBytes[i + prefetchDistance]);
+      if (fixed) {
+        prefetchState(offsets[i + prefetchDistance],
+                      numBytes[i + prefetchDistance]);
+      } else {
+        prefetch(offsets[i + prefetchDistance],
+                 numBytes[i + prefetchDistance]);
+      }
+    }
+    if (fixed && frameDistance > 0 && i + frameDistance < n) {
+      prefetchFrame(offsets[i + frameDistance], numBytes[i + frameDistance]);
     }
     if (!tryCopy(offsets[i], numBytes[i], buffers[i])) {
       pending.push_back(i);
@@ -266,14 +435,27 @@ void BufferPool::readAll(ql::span<const size_t> numBytes,
       }
     }
 
+    // With fixed frames: whether a claimed page found no frame in this
+    // round. The reads that are not served then are read directly.
+    bool framesExhausted = false;
     if (!claimed.empty()) {
       evictFor(claimed.size());
+      std::vector<size_t> withoutFrame;
       try {
-        loadClaimed(claimed, loader);
+        if (fixed) {
+          withoutFrame = loadClaimedIntoFrames(claimed, loader, partition);
+        } else {
+          loadClaimed(claimed, loader);
+        }
       } catch (...) {
         unclaim(claimed);
         unpin(pinned);
         throw;
+      }
+      if (!withoutFrame.empty()) {
+        framesExhausted = true;
+        unclaim(withoutFrame);
+        claimed.resize(claimed.size() - withoutFrame.size());
       }
     }
     // Copy the reads whose pages all belong to this thread: they cannot be
@@ -292,13 +474,23 @@ void BufferPool::readAll(ql::span<const size_t> numBytes,
         }
       }
       if (allOwned) {
-        std::memcpy(buffers[i], region_ + offsets[i], numBytes[i]);
+        copyOwned(offsets[i], numBytes[i], buffers[i]);
       } else {
         stillPending.push_back(i);
       }
     }
     publish(claimed);
     unpin(pinned);
+
+    // No free frame: read the remaining reads from the file, past the pool
+    // (only with fixed frames, when all frames are being loaded or read).
+    if (framesExhausted) {
+      for (size_t i : stillPending) {
+        preadFully(bufferedFd_, buffers[i], numBytes[i], offsets[i]);
+      }
+      bypassedReads_.fetch_add(stillPending.size(), std::memory_order_relaxed);
+      break;
+    }
 
     // Wait for the pages that other threads are loading, pinning or evicting
     // (after releasing our own, so no two threads wait for each other).
@@ -369,6 +561,103 @@ void BufferPool::loadClaimed(ql::span<const size_t> pages,
 }
 
 // _____________________________________________________________________________
+void BufferPool::takeFreeFrames(size_t n, size_t partition,
+                                std::vector<uint32_t>& out) {
+  for (size_t k = 0; k < numFramePartitions_ && out.size() < n; ++k) {
+    auto& free = freeFrames_[(partition + k) % numFramePartitions_];
+    std::lock_guard lock{free.mutex_};
+    while (!free.frames_.empty() && out.size() < n) {
+      out.push_back(free.frames_.back());
+      free.frames_.pop_back();
+    }
+  }
+}
+
+// _____________________________________________________________________________
+std::vector<uint32_t> BufferPool::takeFrames(size_t n, size_t partition) {
+  std::vector<uint32_t> frames;
+  frames.reserve(n);
+  takeFreeFrames(n, partition, frames);
+  if (frames.size() < n) {
+    // Evict as many loaded pages as frames are missing (their frames go back
+    // to their partitions), then try again.
+    const size_t missing = n - frames.size();
+    const size_t loaded = numLoaded_.load();
+    evictDownTo(loaded > missing ? loaded - missing : 0, missing);
+    takeFreeFrames(n, partition, frames);
+  }
+  return frames;
+}
+
+// _____________________________________________________________________________
+std::vector<size_t> BufferPool::loadClaimedIntoFrames(
+    ql::span<const size_t> pages, const Loader* loader, size_t partition) {
+  auto frames = takeFrames(pages.size(), partition);
+  const size_t numLoading = frames.size();
+  std::vector<size_t> withoutFrame(pages.begin() + numLoading, pages.end());
+  // Record the frame of each page in its state word (the page is claimed by
+  // this thread, so only a reader's reference bit can change concurrently).
+  constexpr uint64_t frameMask = ~uint64_t{0} << frameShift;
+  for (size_t k = 0; k < numLoading; ++k) {
+    uint64_t word = states_[pages[k]].load(std::memory_order_relaxed);
+    while (!states_[pages[k]].compare_exchange_weak(
+        word, (word & ~frameMask) | (uint64_t{frames[k]} << frameShift),
+        std::memory_order_relaxed)) {
+    }
+  }
+  // Adjacent pages in consecutive frames of the same registered buffer are
+  // read as one range; the incomplete last page of the file is read through
+  // the page cache (see `loadClaimed`).
+  auto chunkOf = [this](uint32_t frame) {
+    return frame / framesPerPartition_ * framesPerPartition_ +
+           frame % framesPerPartition_ / framesPerChunk_;
+  };
+  const bool lastPageIsPartial = fileSize_ % pageSize_ != 0;
+  auto isPartialLastPage = [&](size_t page) {
+    return lastPageIsPartial && page == numPages_ - 1;
+  };
+  std::vector<size_t> runBytes;
+  std::vector<uint64_t> runOffsets;
+  std::vector<char*> runTargets;
+  std::optional<size_t> partialLastPage;
+  for (size_t k = 0; k < numLoading;) {
+    if (isPartialLastPage(pages[k])) {
+      partialLastPage = k;
+      ++k;
+      continue;
+    }
+    size_t end = k + 1;
+    while (end < numLoading && pages[end] == pages[end - 1] + 1 &&
+           frames[end] == frames[end - 1] + 1 &&
+           chunkOf(frames[end]) == chunkOf(frames[k]) &&
+           !isPartialLastPage(pages[end])) {
+      ++end;
+    }
+    runBytes.push_back((end - k) * pageSize_);
+    runOffsets.push_back(pages[k] * pageSize_);
+    runTargets.push_back(frames_ + size_t{frames[k]} * pageSize_);
+    k = end;
+  }
+  // If a load fails, the frames are not reused (a read of the batch may still
+  // be in flight into them); the caller unclaims the pages.
+  if (!runBytes.empty()) {
+    if (loader != nullptr) {
+      (*loader)(fd_, runBytes, runOffsets, runTargets);
+    } else {
+      loadSynchronously(fd_, runBytes, runOffsets, runTargets);
+    }
+  }
+  if (partialLastPage.has_value()) {
+    const uint64_t offset = (numPages_ - 1) * pageSize_;
+    preadFully(bufferedFd_,
+               frames_ + size_t{frames[partialLastPage.value()]} * pageSize_,
+               fileSize_ - offset, offset);
+  }
+  pageLoads_.fetch_add(numLoading, std::memory_order_relaxed);
+  return withoutFrame;
+}
+
+// _____________________________________________________________________________
 void BufferPool::publish(ql::span<const size_t> pages) {
   if (pages.empty()) {
     return;
@@ -402,8 +691,18 @@ void BufferPool::unclaim(ql::span<const size_t> pages) {
   // The pages may hold part of a read: discard them like evicted pages.
   for (size_t page : pages) {
     const uint64_t word = states_[page].load(std::memory_order_relaxed);
-    states_[page].store(((word & ~stateMask) + versionOne) | evicting,
+    states_[page].store((nextVersion(word) & ~stateMask) | evicting,
                         std::memory_order_release);
+  }
+  if (usesFixedFrames()) {
+    // The frames are not given back: after a failed load, a read may still be
+    // in flight into them (and a page without a frame has none).
+    for (size_t page : pages) {
+      const uint64_t word = states_[page].load(std::memory_order_relaxed);
+      states_[page].store((word & ~stateMask) | evicted,
+                          std::memory_order_release);
+    }
+    return;
   }
   releasePages({pages.begin(), pages.end()});
 }
@@ -456,7 +755,7 @@ size_t BufferPool::evictDownTo(size_t target, size_t maxVictims) {
         continue;
       }
       const uint64_t evictedWord =
-          ((word & ~(stateMask | referenceBit)) + versionOne) | evicting;
+          (nextVersion(word) & ~(stateMask | referenceBit)) | evicting;
       if (!states_[page].compare_exchange_strong(word, evictedWord,
                                                  std::memory_order_acq_rel)) {
         // A reader set the reference bit: look at this page again.
@@ -480,8 +779,28 @@ size_t BufferPool::evictDownTo(size_t target, size_t maxVictims) {
 // _____________________________________________________________________________
 void BufferPool::releasePages(std::vector<size_t> pages) {
   std::sort(pages.begin(), pages.end());
+  if (usesFixedFrames()) {
+    // The memory stays: the frames go back to their partitions for reuse
+    // (pushed in descending order, so that runs of consecutive frames are
+    // handed out in ascending order again).
+    std::vector<std::vector<uint32_t>> freed(numFramePartitions_);
+    for (size_t page : pages) {
+      const auto frame = static_cast<uint32_t>(
+          states_[page].load(std::memory_order_relaxed) >> frameShift);
+      freed[frame / framesPerPartition_].push_back(frame);
+    }
+    for (size_t p = 0; p < numFramePartitions_; ++p) {
+      if (freed[p].empty()) {
+        continue;
+      }
+      std::sort(freed[p].begin(), freed[p].end(), std::greater<>{});
+      std::lock_guard lock{freeFrames_[p].mutex_};
+      auto& free = freeFrames_[p].frames_;
+      free.insert(free.end(), freed[p].begin(), freed[p].end());
+    }
+  }
 #ifdef QL_BUFFER_POOL
-  for (size_t k = 0; k < pages.size();) {
+  for (size_t k = 0; !usesFixedFrames() && k < pages.size();) {
     size_t end = k + 1;
     while (end < pages.size() && pages[end] == pages[end - 1] + 1) {
       ++end;

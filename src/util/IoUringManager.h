@@ -19,7 +19,9 @@
 #include <limits>
 #include <optional>
 #include <tuple>
+#include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "backports/algorithm.h"
@@ -120,7 +122,50 @@ class BatchManagerBase {
   }
 
   virtual void wait(BatchHandle handle) = 0;
+
+  // The number of this manager within its pool of managers (see
+  // `VocabularyOnDisk`); it selects the partition of a buffer pool's fixed
+  // frames that this manager registers and loads into.
+  size_t id() const { return id_; }
+  void setId(size_t id) { id_ = id; }
+
+  // Register `buffers` with the ring as fixed buffers
+  // (`IORING_REGISTER_BUFFERS`), replacing earlier ones. Afterwards every
+  // plain read (default `BatchReadOptions`) whose target range lies within one
+  // of them is submitted as `IORING_OP_READ_FIXED`, which needs no page
+  // pinning per read. `owner` names the set of buffers (see
+  // `fixedBuffersOwner`), also if the registration fails. Must be called
+  // while no read is in flight. Return false if the backend has no fixed
+  // buffers or the kernel refused them (e.g. `RLIMIT_MEMLOCK`); all reads then
+  // stay plain.
+  bool registerFixedBuffers(ql::span<const ::iovec> buffers,
+                            const void* owner) {
+    fixedBuffersOwner_ = owner;
+    fixedBuffersRegistered_ = doRegisterFixedBuffers(buffers);
+    return fixedBuffersRegistered_;
+  }
+  // The `owner` of the last `registerFixedBuffers`, and whether it succeeded.
+  const void* fixedBuffersOwner() const { return fixedBuffersOwner_; }
+  bool fixedBuffersRegistered() const { return fixedBuffersRegistered_; }
+
+ private:
+  virtual bool doRegisterFixedBuffers(ql::span<const ::iovec>) {
+    return false;
+  }
+  size_t id_ = 0;
+  const void* fixedBuffersOwner_ = nullptr;
+  bool fixedBuffersRegistered_ = false;
 };
+
+namespace detail {
+// Whether the read policy `P` supports `registerFixedBuffers`.
+template <typename P, typename = void>
+struct HasFixedBuffers : std::false_type {};
+template <typename P>
+struct HasFixedBuffers<
+    P, std::void_t<decltype(std::declval<P&>().registerFixedBuffers(
+           std::declval<ql::span<const ::iovec>>()))>> : std::true_type {};
+}  // namespace detail
 
 // `BatchManager` owns the batch bookkeeping (minting a `BatchHandle` per batch,
 // validating the input spans) and delegates the reads from the underlying
@@ -166,6 +211,15 @@ class BatchManager final : public BatchManagerBase {
   void wait(BatchHandle handle) override { policy_.wait(handle); }
 
  private:
+  bool doRegisterFixedBuffers(ql::span<const ::iovec> buffers) override {
+    if constexpr (detail::HasFixedBuffers<ReadPolicy>::value) {
+      return policy_.registerFixedBuffers(buffers);
+    } else {
+      (void)buffers;
+      return false;
+    }
+  }
+
   [[no_unique_address]] ReadPolicy policy_;
   BatchHandle nextBatchHandle_ = 0;
 
@@ -211,6 +265,9 @@ struct SyncIoPolicy {
   void wait(BatchHandle) const {
     // No-op: `addBatch` already completed all reads synchronously.
   }
+
+  // There is no ring: no fixed buffers.
+  bool registerFixedBuffers(ql::span<const ::iovec>) const { return false; }
 
   // Read exactly `numBytes` bytes from file descriptor `fd` at `fileOffset`
   // (from the start of the file) into `targetBuffer`. Throws exception if the
@@ -319,6 +376,16 @@ class IoUringPolicy {
   // these blocks do.
   bool registeredBuffersAvailable(size_t slotSize);
 
+  // The buffers registered by `registerFixedBuffers` (begin and end address,
+  // in the order of registration, i.e. by buffer index). While non-empty, the
+  // arena of `registeredBuffersAvailable` is not used (a ring has one
+  // registration).
+  std::vector<std::pair<const char*, const char*>> fixedBuffers_;
+
+  // The index of the fixed buffer that holds `[target, target + numBytes)`,
+  // or -1.
+  int fixedBufferIndex(const char* target, size_t numBytes) const;
+
   // Return an SQE for the next read, first submitting the prepared SQEs and
   // draining completions if the ring is full.
   io_uring_sqe* claimSqe();
@@ -388,6 +455,10 @@ class IoUringPolicy {
   // completed. (The `handle` was submitted along the read requests using
   // `addBatch`.) Throws on any I/O error.
   void wait(BatchHandle handle);
+
+  // See `BatchManagerBase::registerFixedBuffers`. Replaces the arena of
+  // `BatchReadOptions::useRegisteredBuffers` if it was registered.
+  bool registerFixedBuffers(ql::span<const ::iovec> buffers);
 };
 
 using BatchIoManager = BatchManager<IoUringPolicy>;

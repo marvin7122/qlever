@@ -91,6 +91,9 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     std::atomic<bool> failed_{false};
     std::unique_ptr<ad_utility::BufferPool> words_;
     std::unique_ptr<ad_utility::BufferPool> offsets_;
+    // Whether the pools use fixed frames that the I/O managers register as
+    // fixed buffers (see `vocabulary-buffer-pool-fixed-buffers`).
+    bool fixedFrames_ = false;
     // With `vocabulary-buffer-pool-auto`: the registration with the elastic
     // budget controller. Declared after the pools, so it is destroyed (and
     // the controller stops using the pools) before them.
@@ -340,6 +343,17 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // A `BufferPool::Loader` that reads the missing pages through `manager`.
   static ad_utility::BufferPool::Loader loaderFor(
       ad_utility::BatchManagerBase& manager);
+
+  // If `pools` use fixed frames and `manager` has not registered them yet:
+  // register its partition of the frames of both pools (partition
+  // `manager.id()`) as fixed buffers of its ring. `manager` must be idle.
+  static void ensureFixedBuffers(BufferPools& pools,
+                                 ad_utility::BatchManagerBase& manager);
+
+  // The largest total size of fixed frames that the kernel lets this process
+  // register: `RLIMIT_MEMLOCK` minus 256 MiB (or half of it, if smaller) for
+  // other locked memory, or no limit.
+  static size_t fixedFramesLimit();
 
   // Serve the reads whose pages are known resident in `mapping` (if not null)
   // from the mapping, then the others with `readPageCacheHits`; mark the pages

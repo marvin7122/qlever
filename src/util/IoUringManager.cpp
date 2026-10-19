@@ -237,6 +237,10 @@ IoUringPolicy::~IoUringPolicy() {
 
 //______________________________________________________________________________
 bool IoUringPolicy::registeredBuffersAvailable(size_t slotSize) {
+  // The ring's registration holds the fixed buffers of a buffer pool.
+  if (!fixedBuffers_.empty()) {
+    return false;
+  }
   // Registering buffers while reads are in flight would make the kernel
   // quiesce the ring; defer to a batch that starts on an idle ring. The same
   // holds for replacing the arena by one with another slot size.
@@ -285,6 +289,57 @@ bool IoUringPolicy::registeredBuffersAvailable(size_t slotSize) {
     }
   }
   return registration_ == Registration::Registered;
+}
+
+//______________________________________________________________________________
+bool IoUringPolicy::registerFixedBuffers(ql::span<const ::iovec> buffers) {
+  // Registering while reads are in flight would quiesce the ring.
+  if (numInFlightReadRequests_ != 0) {
+    return false;
+  }
+  // One registration per ring: drop the earlier one (the fixed buffers of
+  // another pool, or the arena of `useRegisteredBuffers`).
+  if (!fixedBuffers_.empty() || registration_ == Registration::Registered) {
+    io_uring_unregister_buffers(&ring_);
+    fixedBuffers_.clear();
+    arena_.reset();
+    registration_ = Registration::NotTried;
+  }
+  if (buffers.empty()) {
+    return false;
+  }
+  // `IORING_REGISTER_BUFFERS` pins the pages and charges them to the user's
+  // `RLIMIT_MEMLOCK` (`io_sqe_buffer_register` and `io_account_mem` in
+  // `io_uring/rsrc.c`, `fs/io_uring.c` before Linux 6.0).
+  std::vector<::iovec> iovecs(buffers.begin(), buffers.end());
+  const int ret = io_uring_register_buffers(
+      &ring_, iovecs.data(), static_cast<unsigned>(iovecs.size()));
+  if (ret < 0) {
+    AD_LOG_WARN << "io_uring_register_buffers of " << iovecs.size()
+                << " fixed buffers failed (" << strerror(-ret)
+                << "); reading into the buffer pool without them" << std::endl;
+    return false;
+  }
+  for (const auto& iov : iovecs) {
+    const char* begin = static_cast<const char*>(iov.iov_base);
+    fixedBuffers_.emplace_back(begin, begin + iov.iov_len);
+  }
+  // The arena of `useRegisteredBuffers` cannot be registered next to them.
+  registration_ = Registration::Failed;
+  return true;
+}
+
+//______________________________________________________________________________
+int IoUringPolicy::fixedBufferIndex(const char* target, size_t numBytes) const {
+  // Few buffers per ring (one per GiB of frames): a linear scan.
+  for (size_t i = 0; i < fixedBuffers_.size(); ++i) {
+    const auto& [begin, end] = fixedBuffers_[i];
+    if (target >= begin && target < end &&
+        numBytes <= static_cast<size_t>(end - target)) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
 }
 
 //______________________________________________________________________________
@@ -511,6 +566,16 @@ void IoUringPolicy::addBatch(int fd,
                                static_cast<int>(read.slot));
       copiesPerSlot_[read.slot].push_back(
           CopyFromSlot{targetBuf, 0, numBytesToRead});
+    } else if (const int fixedIndex =
+                   fixedBuffers_.empty()
+                       ? -1
+                       : fixedBufferIndex(targetBuf, numBytesToRead);
+               fixedIndex >= 0) {
+      // The target lies in a registered buffer (a frame of a buffer pool):
+      // the kernel uses the pages pinned at registration.
+      io_uring_prep_read_fixed(sqe, fd, targetBuf,
+                               static_cast<unsigned>(numBytesToRead),
+                               static_cast<__u64>(fileOffset), fixedIndex);
     } else {
       io_uring_prep_read(sqe, fd, targetBuf,
                          static_cast<unsigned>(numBytesToRead),

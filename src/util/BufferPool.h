@@ -40,9 +40,21 @@ namespace ad_utility {
 // addresses costs no RAM; RAM is used only for pages that are loaded, and
 // `madvise(MADV_DONTNEED)` returns it when a page is evicted.
 //
+// Fixed frames (optional, see the constructor): instead of the region above,
+// the pool owns an arena of frames of `pageSize` bytes that is faulted in once
+// when the pool is created and never returned to the kernel. A loaded page
+// lives in some frame (its number is part of the page's state word), an
+// evicted page's frame is reused for the next page. The frames are split into
+// `numFramePartitions` partitions, one per io_uring ring, so that each ring
+// can register its own partition as fixed buffers (`fixedBufferIovecs`,
+// `IORING_REGISTER_BUFFERS`): a read into a registered frame then needs
+// neither a page fault nor pinning of the target pages. A read that names a
+// partition takes its frames from that partition first.
+//
 // Every page has one atomic state word: its state (evicted, loading,
 // resident), a CLOCK reference bit, and a version that changes whenever the
-// page is evicted. A reader copies a resident page optimistically and then
+// page is evicted (with fixed frames: the version in bits 3-31 and the frame
+// in bits 32-63). A reader copies a resident page optimistically and then
 // checks that the state and version have not changed (the file is immutable,
 // so only a concurrent eviction can invalidate the copy; then the read is
 // retried).
@@ -73,8 +85,21 @@ class BufferPool {
   // `defaultPageSize`; larger pages mean fewer, larger reads (like readahead)
   // but more bytes read for scattered ranges. The file is opened with
   // `O_DIRECT` if the file system supports it, otherwise with the page cache.
+  //
+  // If `numFramePartitions` is positive, the pool uses fixed frames (see
+  // above): `budgetBytes` (rounded down to whole frames per partition, but at
+  // least `minFramesPerPartition` frames per partition) is allocated and
+  // faulted in right here, and the budget can later only be lowered.
   BufferPool(const std::string& filename, size_t fileSize, size_t budgetBytes,
-             size_t pageSize = defaultPageSize);
+             size_t pageSize = defaultPageSize, size_t numFramePartitions = 0);
+
+  // The minimal number of frames per partition (so that a tiny budget still
+  // leaves frames to load into).
+  static constexpr size_t minFramesPerPartition = 16;
+
+  // The largest registered buffer that the kernel accepts
+  // (`io_validate_user_buf_range` in `io_uring/rsrc.c`: at most 1 GiB).
+  static constexpr size_t maxFixedBufferBytes = size_t{1} << 30;
   ~BufferPool();
 
   BufferPool(const BufferPool&) = delete;
@@ -84,7 +109,23 @@ class BufferPool {
 
   // Whether the region could be reserved and the file opened. If not, every
   // `readAll` throws.
-  bool isValid() const { return region_ != nullptr; }
+  bool isValid() const { return valid_; }
+
+  // Whether the pool uses fixed frames (see above), and their number.
+  bool usesFixedFrames() const { return frames_ != nullptr; }
+  size_t numFrames() const { return numFrames_; }
+  size_t numFramePartitions() const { return numFramePartitions_; }
+
+  // The frames of `partition` as buffers for `IORING_REGISTER_BUFFERS`
+  // (contiguous chunks of at most `maxFixedBufferBytes`). Empty without fixed
+  // frames. Loads never merge pages across two of these buffers.
+  std::vector<std::pair<char*, size_t>> fixedBufferIovecs(
+      size_t partition) const;
+
+  // How long faulting in the frames took in the constructor (seconds), and
+  // with how many threads.
+  double prefaultSeconds() const { return prefaultSeconds_; }
+  size_t prefaultThreads() const { return prefaultThreads_; }
 
   // Whether the file is read with `O_DIRECT`.
   bool usesDirectIo() const { return directIo_; }
@@ -97,6 +138,7 @@ class BufferPool {
   // `readAll` calls that are running; the next `readAll` evicts the excess.
   // A budget of zero keeps no page beyond the end of the `readAll` that
   // loaded it.
+  // With fixed frames, the budget is at most the size of the frames.
   void setBudget(size_t budgetBytes);
   size_t budgetBytes() const { return budgetPages_.load() * pageSize_; }
 
@@ -115,10 +157,15 @@ class BufferPool {
   // pages of all ranges are loaded with one call of `loader` (adjacent pages
   // as one read; `nullptr` = synchronous `pread`), then copied. While read `i`
   // is copied, the region addresses of read `i + prefetchDistance` are
-  // prefetched (0 = no prefetch).
+  // prefetched (0 = no prefetch). With fixed frames, missing pages are loaded
+  // into frames of `partition` (modulo the number of partitions) if it has
+  // free ones; if no frame can be freed for a page (all frames are being
+  // loaded or read by other calls), the reads that need it are read from the
+  // file directly into their buffers.
   void readAll(ql::span<const size_t> numBytes,
                ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-               const Loader* loader = nullptr, size_t prefetchDistance = 0);
+               const Loader* loader = nullptr, size_t prefetchDistance = 0,
+               size_t partition = 0);
 
   // Statistics, for logging and tests.
   size_t numLoadedPages() const { return numLoaded_.load(); }
@@ -126,6 +173,8 @@ class BufferPool {
   uint64_t numPageLoads() const { return pageLoads_.load(); }
   uint64_t numEvictions() const { return evictions_.load(); }
   size_t numPages() const { return numPages_; }
+  // Reads that were read from the file directly, because no frame was free.
+  uint64_t numBypassedReads() const { return bypassedReads_.load(); }
 
  private:
   // The layout of a page's state word.
@@ -136,8 +185,32 @@ class BufferPool {
   static constexpr uint64_t referenceBit = 4;
   static constexpr uint64_t versionOne = 8;
 
+  // Bits of the version in the state word, and with fixed frames the position
+  // of the frame number.
+  static constexpr uint64_t fullVersionMask = ~uint64_t{7};
+  static constexpr uint64_t fixedVersionMask = 0xFFFF'FFF8;
+  static constexpr unsigned frameShift = 32;
+
   size_t pageSize_ = defaultPageSize;
+  bool valid_ = false;
+  uint64_t versionMask_ = fullVersionMask;
   char* region_ = nullptr;
+  // Fixed frames (see above): the arena, the number of frames (a multiple of
+  // the number of partitions), and the free frames of each partition (used
+  // as stacks, so that consecutive frames are handed out together).
+  char* frames_ = nullptr;
+  size_t numFrames_ = 0;
+  size_t numFramePartitions_ = 0;
+  size_t framesPerPartition_ = 0;
+  size_t framesPerChunk_ = 0;
+  double prefaultSeconds_ = 0;
+  size_t prefaultThreads_ = 0;
+  struct FreeFrames {
+    std::mutex mutex_;
+    std::vector<uint32_t> frames_;
+  };
+  std::unique_ptr<FreeFrames[]> freeFrames_;
+  std::atomic<uint64_t> bypassedReads_{0};
   size_t regionSize_ = 0;
   size_t fileSize_ = 0;
   size_t numPages_ = 0;
@@ -169,6 +242,43 @@ class BufferPool {
   // (state `loading`).
   void loadClaimed(ql::span<const size_t> pages, const Loader* loader);
 
+  // The same with fixed frames: first assign a frame to each page (from
+  // `partition` first, evicting if needed). The pages for which no frame
+  // could be found are not loaded and returned (the caller unclaims them).
+  std::vector<size_t> loadClaimedIntoFrames(ql::span<const size_t> pages,
+                                            const Loader* loader,
+                                            size_t partition);
+
+  // Take up to `n` free frames, from `partition` first, then from the other
+  // partitions; evict loaded pages once if that is not enough.
+  std::vector<uint32_t> takeFrames(size_t n, size_t partition);
+
+  // Take up to `n` free frames without evicting.
+  void takeFreeFrames(size_t n, size_t partition, std::vector<uint32_t>& out);
+
+  // The address of the page whose state word is `word` (fixed frames: in its
+  // frame; otherwise at its place in the region).
+  char* frameAddress(uint64_t word) const {
+    return frames_ + (word >> frameShift) * pageSize_;
+  }
+
+  // Copy `numBytes` at `offset` of the file into `target` from the loaded
+  // pages, whose state words (from `first` on) are `words`.
+  void copyFromPages(const uint64_t* words, uint64_t offset, size_t numBytes,
+                     char* target) const;
+
+  // Copy a read whose pages this thread owns (claimed or pinned).
+  void copyOwned(uint64_t offset, size_t numBytes, char* target) const;
+
+  // The state word after an eviction: the next version (within the version
+  // bits; the frame bits stay).
+  uint64_t nextVersion(uint64_t word) const {
+    return (word & ~versionMask_) | ((word + versionOne) & versionMask_);
+  }
+
+  // Fault in the frames (in parallel), see the constructor.
+  void prefaultFrames();
+
   // Publish the claimed pages as loaded (and add them to the CLOCK).
   void publish(ql::span<const size_t> pages);
 
@@ -193,6 +303,25 @@ class BufferPool {
   void prefetch(uint64_t offset, size_t numBytes) const {
     __builtin_prefetch(region_ + offset, 0, 3);
     __builtin_prefetch(region_ + offset + numBytes - 1, 0, 3);
+  }
+
+  // With fixed frames the address of a page is only known from its state
+  // word: prefetch the state words of a read far ahead, and the bytes of a
+  // read closer ahead (its state word is then likely in the cache).
+  void prefetchState(uint64_t offset, size_t numBytes) const {
+    __builtin_prefetch(&states_[offset / pageSize_], 0, 3);
+    __builtin_prefetch(&states_[(offset + numBytes) / pageSize_], 0, 3);
+  }
+  void prefetchFrame(uint64_t offset, size_t numBytes) const {
+    // An empty read may start at the end of the file (past the last page).
+    if (numBytes == 0) {
+      return;
+    }
+    const uint64_t word =
+        states_[offset / pageSize_].load(std::memory_order_relaxed);
+    if ((word & stateMask) == resident) {
+      __builtin_prefetch(frameAddress(word) + offset % pageSize_, 0, 3);
+    }
   }
 };
 
