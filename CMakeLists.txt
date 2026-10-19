@@ -265,6 +265,10 @@ if ("${CMAKE_GENERATOR}" STREQUAL "Ninja")
     )
 endif ()
 
+# PROFILING ONLY (research/io08-userspace-fp, never merge): keep frame pointers
+# so that `perf record --call-graph fp` unwinds the query threads.
+add_compile_options(-fno-omit-frame-pointer -mno-omit-leaf-frame-pointer)
+
 # Enable the manual usage of the C++ 17 backports (currently `range-v3` instead
 # of `std::ranges` and the `std::enable_if_t` based expansion of the concept
 # macros from `range-v3`.
