@@ -653,7 +653,7 @@ TEST(PmrVocabBatchLookupData, DecompressedWordsArePackedBehindEachOther) {
   ArenaVocabBatchBuilder builder(numWords + 3);
   for (size_t i = 0; i < numWords; ++i) {
     std::string word = absl::StrCat("word", i);
-    builder.appendDecompressedWord(bound, [&word](ql::span<char> out) {
+    builder.appendDecompressedWord(bound, [&word, bound](ql::span<char> out) {
       EXPECT_EQ(out.size(), bound);
       // Scribble over the whole bound first, then write the word.
       std::fill(out.begin(), out.end(), '#');
@@ -668,7 +668,7 @@ TEST(PmrVocabBatchLookupData, DecompressedWordsArePackedBehindEachOther) {
   expected.emplace_back();
   const size_t largeBound = 3 * ArenaVocabBatchBuilder::decodeChunkSize;
   std::string large(largeBound - 1, 'L');
-  builder.appendDecompressedWord(largeBound, [&large](ql::span<char> out) {
+  builder.appendDecompressedWord(largeBound, [&large, largeBound](ql::span<char> out) {
     EXPECT_EQ(out.size(), largeBound);
     std::memcpy(out.data(), large.data(), large.size());
     return large.size();
