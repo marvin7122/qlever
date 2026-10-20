@@ -232,15 +232,37 @@ CPP_template(typename UnderlyingVocabulary,
     }
   }
 
-  // Convenience overload that decodes into a builder on the default
-  // (untracked) PMR resource and returns the finalized result. Callers that
-  // must charge the decoded bytes against a memory limit have to use the
-  // overload above with a builder that uses the query's `AllocatorWithLimit`.
+  // Convenience overload. Measurement variant (colloquium,
+  // research/step1-no-arena): the compressed words of the whole batch are
+  // still fetched with one `lookupBatch` call on the underlying vocabulary,
+  // but each word is decoded into its own `std::string` (as `operator[]`
+  // does), not into one shared arena per batch. This isolates the effect of
+  // the batched reads from the effect of the shared decode buffer.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
-    ArenaVocabBatchBuilder builder(indices.size());
-    lookupBatch(indices, builder);
-    return std::move(builder).finalize();
+    auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
+    AD_CORRECTNESS_CHECK(compressedWords.size() == indices.size());
+
+    std::vector<std::string> words;
+    words.reserve(indices.size());
+    for (const auto& [idx, compressedWord] :
+         ::ranges::views::zip(indices, compressedWords)) {
+      size_t decoderIdx;
+      if constexpr (underlyingHasHoles) {
+        const auto position = underlyingVocabulary_.positionOfIndex(idx);
+        if (!position.has_value()) {
+          words.push_back(
+              ad_utility::vocabulary::placeholderForMissingVocabIndex(idx));
+          continue;
+        }
+        decoderIdx = getDecoderIdxFromPosition(position.value());
+      } else {
+        decoderIdx = getDecoderIdx(idx);
+      }
+      words.push_back(
+          compressionWrapper_.decompress(compressedWord, decoderIdx));
+    }
+    return StringVectorVocabBatchLookupData::fromWords(std::move(words));
   }
 
   //____________________________________________________________________________
