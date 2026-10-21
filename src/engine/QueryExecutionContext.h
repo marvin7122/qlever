@@ -122,6 +122,12 @@ class QueryExecutionContext
 
   [[nodiscard]] const Index& getIndex() const { return *_index; }
 
+  // Shared ownership of the index, for work that may outlive this context
+  // (e.g. export helper tasks that still run after the request finished).
+  [[nodiscard]] std::shared_ptr<const Index> getIndexSharedPtr() const {
+    return _index;
+  }
+
   const LocatedTriplesState& locatedTriplesState() const {
     AD_CORRECTNESS_CHECK(locatedTriplesSharedState_ != nullptr);
     return *locatedTriplesSharedState_;

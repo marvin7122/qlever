@@ -272,6 +272,31 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // If set, the Export V2 SELECT CSV/TSV serializer writes rows with
+  // `MonomorphicRowSerializer` (one compile-time schema per window) instead of
+  // the generic per-cell assembly loop. Output bytes are identical; only
+  // SELECTs with at most three columns take this path.
+  Bool exportV2MonomorphicRows_{false, "export-v2-monomorphic-rows"};
+
+  // How Export V2 shares the query thread pool among concurrent queries (see
+  // `HelperPolicy` in `ElasticExportScheduler.h`). "fair": each of the `n`
+  // running queries gets floor(m/n) of the `m` pool threads (the first m mod n
+  // queries one more), its coordinator included (default). "exclusive":
+  // helpers only while no other query is running.
+  String exportV2HelperPolicy_{"fair", "export-v2-helper-policy"};
+
+  // If positive, every Export V2 session logs its active helper count at most
+  // this often (milliseconds); 0 disables the trace.
+  SizeT exportV2HelperLogIntervalMs_{0, "export-v2-helper-log-interval-ms"};
+
+  // If set, Export V2 sizes SELECT CSV/TSV morsels adaptively
+  // (`AdaptiveChunkSizer`): the first morsel targets a small 64 KB buffer for
+  // low time-to-first-byte, then the target doubles on every morsel up to a
+  // 4 MB plateau for sustained throughput. Default off: morsels keep the
+  // fixed 8192-row size, and output bytes are identical either way; only the
+  // chunk boundaries (and thus the number/timing of HTTP writes) change.
+  Bool exportV2AdaptiveChunkSizing_{false, "export-v2-adaptive-chunk-sizing"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.
