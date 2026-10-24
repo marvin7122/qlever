@@ -12,11 +12,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <random>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "./util/BufferPoolTestHelpers.h"
 #include "util/BufferPool.h"
 #include "util/BufferPoolBudget.h"
 #include "util/File.h"
@@ -28,46 +30,13 @@ using ad_utility::BufferPoolBudgetController;
 using ad_utility::bufferPoolBudgetShare;
 using ad_utility::BufferPoolSignals;
 using ad_utility::nextBufferPoolTarget;
+using ad_utility::testing::makeBufferPoolTestContents;
+using ad_utility::testing::readAndCheckBufferPool;
+using ad_utility::testing::writeBufferPoolTestFile;
 // The host's OS page size (a run-time value where the kernel chooses it).
 const size_t P = BufferPool::hostPageSize();
-constexpr size_t MiB = BufferPoolBudgetConfig::MiB;
-constexpr size_t GiB = BufferPoolBudgetConfig::GiB;
-
-// Write `contents` to `filename`.
-void writeFile(const std::string& filename, const std::string& contents) {
-  ad_utility::File file(filename, "w");
-  file.write(contents.data(), contents.size());
-}
-
-// Distinct bytes per page, so a copy from a wrong page is noticed.
-std::string makeContents(size_t numPages) {
-  std::string contents;
-  for (size_t i = 0; i < numPages * P; ++i) {
-    contents.push_back(static_cast<char>('a' + (i + i / P) % 26));
-  }
-  return contents;
-}
-
-// Read the ranges `(offset, size)` through `pool` and check the bytes.
-void readAndCheck(BufferPool& pool, const std::string& contents,
-                  const std::vector<std::pair<uint64_t, size_t>>& ranges) {
-  std::vector<size_t> numBytes;
-  std::vector<uint64_t> offsets;
-  std::vector<std::string> buffers;
-  for (auto [offset, size] : ranges) {
-    offsets.push_back(offset);
-    numBytes.push_back(size);
-    buffers.emplace_back(size, 'X');
-  }
-  std::vector<char*> targets;
-  for (auto& buffer : buffers) {
-    targets.push_back(buffer.data());
-  }
-  pool.readAll(numBytes, offsets, targets);
-  for (size_t i = 0; i < ranges.size(); ++i) {
-    ASSERT_EQ(buffers[i], contents.substr(offsets[i], numBytes[i]));
-  }
-}
+constexpr size_t MIB = BufferPoolBudgetConfig::MIB;
+constexpr size_t GIB = BufferPoolBudgetConfig::GIB;
 
 // Wait up to `timeout` for `condition`.
 template <typename F>
@@ -101,64 +70,146 @@ TEST(BufferPoolBudget, budgetShareIsProportionalWithBoundaries) {
 }
 
 // _____________________________________________________________________________
+// The parsers behind `BufferPoolSignals::system`, fed with fake `/proc` and
+// cgroup trees (the production signal correctness that injected-signal
+// policy tests cannot cover): meminfo, cgroup v2 and v1, and PSI.
+TEST(BufferPoolBudget, systemSignalParsersOnFakeTrees) {
+  namespace fs = std::filesystem;
+  namespace detail = ad_utility::detail;
+  const fs::path root = fs::temp_directory_path() / "bufferPoolBudgetFakeProc";
+  absl::Cleanup removeTree{[&root] { fs::remove_all(root); }};
+  auto write = [&root](const std::string& relative, const std::string& text) {
+    const fs::path path = root / relative;
+    fs::create_directories(path.parent_path());
+    writeBufferPoolTestFile(path.string(), text);
+    return path.string();
+  };
+
+  // meminfo: value in kB, missing key and missing file give no signal.
+  const std::string meminfo =
+      write("meminfo", "MemTotal: 16384 kB\nMemAvailable: 8192 kB\n");
+  EXPECT_EQ(detail::meminfoBytesFrom(meminfo, "MemAvailable"), 8192 * 1024u);
+  EXPECT_EQ(detail::meminfoBytesFrom(meminfo, "Nope"), std::nullopt);
+  EXPECT_EQ(detail::meminfoBytesFrom(root.string() + "/absent", "MemTotal"),
+            std::nullopt);
+
+  // Cgroup byte counts: plain value, v2 "max", the v1 no-limit sentinel,
+  // garbage, and a missing file all parse without throwing.
+  EXPECT_EQ(detail::cgroupBytesFrom(write("v", "12345\n")), 12345u);
+  EXPECT_EQ(detail::cgroupBytesFrom(write("v", "max\n")), std::nullopt);
+  EXPECT_EQ(detail::cgroupBytesFrom(write("v", "9223372036854771712\n")),
+            std::nullopt);
+  EXPECT_EQ(detail::cgroupBytesFrom(write("v", "junk\n")), std::nullopt);
+  EXPECT_EQ(detail::cgroupBytesFrom(root.string() + "/absent"), std::nullopt);
+
+  // PSI: the `some avg10` field.
+  EXPECT_EQ(detail::psiSomeAvg10From(
+                write("pressure",
+                      "some avg10=1.25 avg60=0.50 avg300=0.10 total=42\n"
+                      "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")),
+            1.25);
+  EXPECT_EQ(detail::psiSomeAvg10From(root.string() + "/absent"), std::nullopt);
+
+  // Location: v2 wins when present, else the v1 memory controller.
+  auto location = detail::ownCgroupLocation(
+      write("cgroup", "9:memory:/legacy\n0::/user.slice\n"),
+      (root / "cg2").string(), (root / "cg1").string());
+  ASSERT_TRUE(location.has_value());
+  EXPECT_TRUE(location->version2_);
+  EXPECT_EQ(location->dir_, (root / "cg2/user.slice").string());
+  location = detail::ownCgroupLocation(
+      write("cgroup", "5:cpu,memory:/docker/abc\n"), (root / "cg2").string(),
+      (root / "cg1").string());
+  ASSERT_TRUE(location.has_value());
+  EXPECT_FALSE(location->version2_);
+  EXPECT_EQ(location->dir_, (root / "cg1/docker/abc").string());
+
+  // Limits v2: headroom counts inactive file fully and active file half as
+  // reclaimable; the tighter ancestor wins.
+  const std::string sg = "cg2/user.slice/";
+  write(sg + "memory.max", "1000\n");
+  write(sg + "memory.current", "800\n");
+  write(sg + "memory.stat", "inactive_file 100\nactive_file 100\n");
+  write("cg2/memory.max", "5000\n");
+  write("cg2/memory.current", "900\n");
+  write("cg2/memory.stat", "inactive_file 0\nactive_file 0\n");
+  auto limits = detail::cgroupLimitsFrom(detail::CgroupLocation{
+      (root / "cg2/user.slice").string(), (root / "cg2").string(), true});
+  EXPECT_EQ(limits.limit_, 1000u);
+  EXPECT_EQ(limits.headroom_, 350u);
+
+  // Limits v1: `limit_in_bytes`/`usage_in_bytes`, hierarchical total_ stat
+  // keys, and the sentinel at the root means no limit there.
+  const std::string lg = "cg1/docker/abc/";
+  write(lg + "memory.limit_in_bytes", "2000\n");
+  write(lg + "memory.usage_in_bytes", "1500\n");
+  write(lg + "memory.stat", "total_inactive_file 500\ntotal_active_file 0\n");
+  write("cg1/memory.limit_in_bytes", "9223372036854771712\n");
+  limits = detail::cgroupLimitsFrom(detail::CgroupLocation{
+      (root / "cg1/docker/abc").string(), (root / "cg1").string(), false});
+  EXPECT_EQ(limits.limit_, 2000u);
+  EXPECT_EQ(limits.headroom_, 1000u);
+}
+
+// _____________________________________________________________________________
 TEST(BufferPoolBudget, policyGrowsToTheCeiling) {
-  const size_t floor = 256 * MiB;
-  const size_t ceiling = 3 * GiB;
+  const size_t floor = 256 * MIB;
+  const size_t ceiling = 3 * GIB;
   size_t target = floor;
   // Plenty of free memory, no pressure: one step per tick, then the ceiling.
-  for (size_t expected : {floor + GiB, floor + 2 * GiB, 3 * GiB, 3 * GiB}) {
-    target = nextBufferPoolTarget(target, target, ceiling, floor, 2 * GiB, GiB,
-                                  100 * GiB, 0.0, 10.0);
+  for (size_t expected : {floor + GIB, floor + 2 * GIB, 3 * GIB, 3 * GIB}) {
+    target = nextBufferPoolTarget(target, target, ceiling, floor, 2 * GIB, GIB,
+                                  100 * GIB, 0.0, 10.0);
     EXPECT_EQ(target, expected);
   }
   // No growth unless the free memory exceeds the reserve by more than a step.
-  EXPECT_EQ(nextBufferPoolTarget(floor, 0, ceiling, floor, 2 * GiB, GiB,
-                                 3 * GiB, 0.0, 10.0),
+  EXPECT_EQ(nextBufferPoolTarget(floor, 0, ceiling, floor, 2 * GIB, GIB,
+                                 3 * GIB, 0.0, 10.0),
             floor);
   // Unknown signals: unchanged.
-  EXPECT_EQ(nextBufferPoolTarget(GiB, GiB, ceiling, floor, 2 * GiB, GiB,
+  EXPECT_EQ(nextBufferPoolTarget(GIB, GIB, ceiling, floor, 2 * GIB, GIB,
                                  std::nullopt, std::nullopt, 10.0),
-            GiB);
+            GIB);
 }
 
 // _____________________________________________________________________________
 TEST(BufferPoolBudget, policyShrinksOnLowMemoryAndPressure) {
-  const size_t floor = 256 * MiB;
-  const size_t ceiling = 16 * GiB;
+  const size_t floor = 256 * MIB;
+  const size_t ceiling = 16 * GIB;
   // Low free memory: shrink by the deficit (1 GiB) when it is more than 10 %.
-  EXPECT_EQ(nextBufferPoolTarget(4 * GiB, 4 * GiB, ceiling, floor, 2 * GiB, GiB,
-                                 1 * GiB, 0.0, 10.0),
-            3 * GiB);
+  EXPECT_EQ(nextBufferPoolTarget(4 * GIB, 4 * GIB, ceiling, floor, 2 * GIB, GIB,
+                                 1 * GIB, 0.0, 10.0),
+            3 * GIB);
   // A small deficit still shrinks by 10 %.
-  EXPECT_EQ(nextBufferPoolTarget(10 * GiB, 10 * GiB, ceiling, floor, 2 * GiB,
-                                 GiB, 2 * GiB - MiB, 0.0, 10.0),
-            9 * GiB);
+  EXPECT_EQ(nextBufferPoolTarget(10 * GIB, 10 * GIB, ceiling, floor, 2 * GIB,
+                                 GIB, 2 * GIB - MIB, 0.0, 10.0),
+            9 * GIB);
   // Pressure with plenty of free memory: 10 %.
-  EXPECT_EQ(nextBufferPoolTarget(10 * GiB, 10 * GiB, ceiling, floor, 2 * GiB,
-                                 GiB, 50 * GiB, 25.0, 10.0),
-            9 * GiB);
+  EXPECT_EQ(nextBufferPoolTarget(10 * GIB, 10 * GIB, ceiling, floor, 2 * GIB,
+                                 GIB, 50 * GIB, 25.0, 10.0),
+            9 * GIB);
   // Shrinking starts from what is loaded: lowering an unused target would
   // free nothing.
-  EXPECT_EQ(nextBufferPoolTarget(8 * GiB, 1 * GiB, ceiling, floor, 2 * GiB, GiB,
-                                 50 * GiB, 25.0, 10.0),
-            1 * GiB - (1 * GiB) / 10);
+  EXPECT_EQ(nextBufferPoolTarget(8 * GIB, 1 * GIB, ceiling, floor, 2 * GIB, GIB,
+                                 50 * GIB, 25.0, 10.0),
+            1 * GIB - (1 * GIB) / 10);
 }
 
 // _____________________________________________________________________________
 TEST(BufferPoolBudget, policyStaysWithinFloorAndCeiling) {
-  const size_t floor = 256 * MiB;
+  const size_t floor = 256 * MIB;
   // A huge deficit never goes below the floor.
-  EXPECT_EQ(nextBufferPoolTarget(300 * MiB, 300 * MiB, 16 * GiB, floor, 2 * GiB,
-                                 GiB, 0, 99.0, 10.0),
+  EXPECT_EQ(nextBufferPoolTarget(300 * MIB, 300 * MIB, 16 * GIB, floor, 2 * GIB,
+                                 GIB, 0, 99.0, 10.0),
             floor);
   // A target above the ceiling (e.g. the free memory dropped) is clamped.
-  EXPECT_EQ(nextBufferPoolTarget(8 * GiB, 8 * GiB, 5 * GiB, floor, 2 * GiB, GiB,
-                                 100 * GiB, 0.0, 10.0),
-            5 * GiB);
+  EXPECT_EQ(nextBufferPoolTarget(8 * GIB, 8 * GIB, 5 * GIB, floor, 2 * GIB, GIB,
+                                 100 * GIB, 0.0, 10.0),
+            5 * GIB);
   // A ceiling below the floor wins.
-  EXPECT_EQ(nextBufferPoolTarget(GiB, GiB, 100 * MiB, floor, 2 * GiB, GiB,
-                                 100 * GiB, 0.0, 10.0),
-            100 * MiB);
+  EXPECT_EQ(nextBufferPoolTarget(GIB, GIB, 100 * MIB, floor, 2 * GIB, GIB,
+                                 100 * GIB, 0.0, 10.0),
+            100 * MIB);
 }
 
 // _____________________________________________________________________________
@@ -167,11 +218,11 @@ TEST(BufferPoolBudget, evictTowardsBudgetIsBounded) {
   GTEST_SKIP() << "BufferPool needs Linux";
 #endif
   const std::string filename = "bufferPoolBudgetTestBounded.dat";
-  const std::string contents = makeContents(20);
-  writeFile(filename, contents);
+  const std::string contents = makeBufferPoolTestContents(20);
+  writeBufferPoolTestFile(filename, contents);
   absl::Cleanup cleanup{[&filename]() { ::unlink(filename.c_str()); }};
   BufferPool pool{filename, contents.size(), 20 * P};
-  readAndCheck(pool, contents, {{0, 20 * P}});
+  readAndCheckBufferPool(pool, contents, {{0, 20 * P}});
   ASSERT_EQ(pool.loadedBytes(), 20 * P);
   pool.setBudget(5 * P);
   EXPECT_EQ(pool.evictTowardsBudget(4), 4u);
@@ -180,7 +231,7 @@ TEST(BufferPoolBudget, evictTowardsBudgetIsBounded) {
   EXPECT_EQ(pool.loadedBytes(), 5 * P);
   EXPECT_EQ(pool.evictTowardsBudget(100), 0u);
   // The remaining pages are still read correctly.
-  readAndCheck(pool, contents, {{0, 20 * P}});
+  readAndCheckBufferPool(pool, contents, {{0, 20 * P}});
 }
 
 // _____________________________________________________________________________
@@ -190,8 +241,8 @@ TEST(BufferPoolBudget, backgroundEvictionWithConcurrentReaders) {
 #endif
   const size_t numPages = 256;
   const std::string filename = "bufferPoolBudgetTestBackground.dat";
-  const std::string contents = makeContents(numPages);
-  writeFile(filename, contents);
+  const std::string contents = makeBufferPoolTestContents(numPages);
+  writeBufferPoolTestFile(filename, contents);
   absl::Cleanup cleanup{[&filename]() { ::unlink(filename.c_str()); }};
   BufferPool pool{filename, contents.size(), 4 * P};
 
@@ -213,7 +264,7 @@ TEST(BufferPoolBudget, backgroundEvictionWithConcurrentReaders) {
   ASSERT_TRUE(
       waitFor([&]() { return controller.targetBytes() == numPages * P; },
               std::chrono::milliseconds{5000}));
-  readAndCheck(pool, contents, {{0, numPages * P}});
+  readAndCheckBufferPool(pool, contents, {{0, numPages * P}});
   EXPECT_EQ(pool.loadedBytes(), numPages * P);
 
   // Readers that keep checking random ranges while the budget shrinks.
@@ -233,7 +284,7 @@ TEST(BufferPoolBudget, backgroundEvictionWithConcurrentReaders) {
               offset,
               std::min<size_t>(1 + offset % (2 * P), contents.size() - offset));
         }
-        readAndCheck(pool, contents, ranges);
+        readAndCheckBufferPool(pool, contents, ranges);
         ++rounds;
       }
     });
@@ -254,7 +305,7 @@ TEST(BufferPoolBudget, backgroundEvictionWithConcurrentReaders) {
   EXPECT_TRUE(waitFor([&]() { return pool.loadedBytes() <= 4 * P; },
                       std::chrono::milliseconds{5000}));
   EXPECT_GT(pool.numEvictions(), 0u);
-  readAndCheck(pool, contents, {{0, numPages * P}});
+  readAndCheckBufferPool(pool, contents, {{0, numPages * P}});
 }
 
 // _____________________________________________________________________________
@@ -263,8 +314,8 @@ TEST(BufferPoolBudget, unregisteringStopsTheThread) {
   GTEST_SKIP() << "BufferPool needs Linux";
 #endif
   const std::string filename = "bufferPoolBudgetTestStop.dat";
-  const std::string contents = makeContents(8);
-  writeFile(filename, contents);
+  const std::string contents = makeBufferPoolTestContents(8);
+  writeBufferPoolTestFile(filename, contents);
   absl::Cleanup cleanup{[&filename]() { ::unlink(filename.c_str()); }};
 
   std::atomic<size_t> calls{0};

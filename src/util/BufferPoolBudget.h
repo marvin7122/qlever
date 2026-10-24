@@ -38,19 +38,19 @@ namespace ad_utility {
 
 // The tunables of the controller.
 struct BufferPoolBudgetConfig {
-  static constexpr size_t MiB = size_t{1} << 20;
-  static constexpr size_t GiB = size_t{1} << 30;
+  static constexpr size_t MIB = size_t{1} << 20;
+  static constexpr size_t GIB = size_t{1} << 30;
   // The target never goes below this (unless the ceiling is lower), so the
   // pools do not thrash completely.
-  size_t floorBytes = 256 * MiB;
+  size_t floorBytes = 256 * MIB;
   // Free memory to leave for everything else. 0 = the default
   // `max(256 MiB, 5 % of the RAM or of the cgroup's memory limit)`.
   size_t reserveBytes = 0;
   // How much the target grows per tick while memory is free.
-  size_t stepBytes = GiB;
+  size_t stepBytes = GIB;
   // At most this much is evicted per tick (spread over all pools), so that
   // eviction happens in bounded chunks off the query path.
-  size_t maxEvictBytesPerTick = 256 * MiB;
+  size_t maxEvictBytesPerTick = 256 * MIB;
   // Memory pressure above this share of time (PSI `some avg10`, in percent)
   // shrinks the target.
   double pressureThreshold = 10.0;
@@ -73,10 +73,54 @@ struct BufferPoolSignals {
   // limit); used for the default reserve.
   std::function<std::optional<size_t>()> totalBytes;
 
-  // The signals of this machine (`/proc/meminfo`, cgroup v2 files,
+  // The signals of this machine (`/proc/meminfo`, cgroup v2 or v1 files,
   // `/proc/pressure/memory`).
   static BufferPoolSignals system();
 };
+
+namespace detail {
+// The parsers behind `BufferPoolSignals::system`, with explicit file
+// arguments so tests can feed them fake `/proc` and cgroup trees. Every
+// function returns `std::nullopt` (never throws) when its input is missing
+// or unparsable: a missing signal must not break the controller.
+
+// Return the value of `key` in the meminfo file at `path`, in bytes.
+std::optional<size_t> meminfoBytesFrom(const std::string& path,
+                                       const std::string& key);
+
+// Return the byte count in the cgroup file at `path`. `"max"` (v2) and the
+// v1 no-limit sentinel (`PAGE_COUNTER_MAX`, about 2^63) both mean no limit
+// and return `std::nullopt`.
+std::optional<size_t> cgroupBytesFrom(const std::string& path);
+
+// Return PSI `some avg10` (percent) from the pressure file at `path`.
+std::optional<double> psiSomeAvg10From(const std::string& path);
+
+// Where this process's memory cgroup is: its directory, the hierarchy root
+// (ancestors are followed up to and including it), and the hierarchy
+// version, which selects the file names (`memory.max` vs
+// `memory.limit_in_bytes` etc.).
+struct CgroupLocation {
+  std::string dir_;
+  std::string root_;
+  bool version2_ = true;
+};
+
+// Return this process's cgroup location from a `/proc/self/cgroup` file at
+// `procSelfCgroupPath`: the v2 entry (`0::...`) under `version2Root` if
+// present, else the v1 `memory` controller entry under `version1Root`.
+std::optional<CgroupLocation> ownCgroupLocation(
+    const std::string& procSelfCgroupPath, const std::string& version2Root,
+    const std::string& version1Root);
+
+// The smallest headroom (limit minus non-reclaimable usage) and the smallest
+// limit over a cgroup and its ancestors up to the hierarchy root.
+struct CgroupLimits {
+  std::optional<size_t> headroom_;
+  std::optional<size_t> limit_;
+};
+CgroupLimits cgroupLimitsFrom(const CgroupLocation& location);
+}  // namespace detail
 
 // The policy, as a pure function: the next target given the current one, the
 // loaded bytes of the pools and the signals. Grows by `step` while
@@ -152,7 +196,7 @@ class BufferPoolBudgetController {
     }
   }
 
-  // The current total target (all pools together).
+  // Return the current total target in bytes (all pools together).
   size_t targetBytes() const { return target_.load(); }
 
   // Run one step of the background thread synchronously (for tests, with a

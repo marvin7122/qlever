@@ -1,6 +1,6 @@
 // Copyright 2024 - 2026, The QLever Authors, in particular:
 //
-// 2024 Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
+// 2024 - 2026 Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
 // 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
@@ -262,16 +262,17 @@ struct RuntimeParameters {
   SizeT vocabularyMmapPrefetchDistance_{16,
                                         "vocabulary-mmap-prefetch-distance"};
 
-  // If positive: the size in bytes of the buffer pools of the on-disk
-  // vocabulary (see `ad_utility::BufferPool`), split between the words and the
-  // offsets file in proportion to their sizes. Both phases of a batch lookup
-  // then read through the pools: a word whose pages are in a pool is copied
-  // from memory, the missing pages of a batch are read in one batch with
-  // `O_DIRECT`, and the pools evict pages (CLOCK) to stay within the size.
-  // Unlike `vocabulary-mmap-resident-reads`, the cached pages are memory of
-  // this process, so the kernel cannot evict them under memory pressure. 0
-  // (the default) disables the pools.
-  SizeT vocabularyBufferPoolSize_{0, "vocabulary-buffer-pool-size"};
+  // If positive: the size of the buffer pools of the on-disk vocabulary (see
+  // `ad_utility::BufferPool`), per vocabulary, split between the words and
+  // the offsets file in proportion to their sizes. Both phases of a batch
+  // lookup then read through the pools: a word whose pages are in a pool is
+  // copied from memory, the missing pages of a batch are read in one batch
+  // with `O_DIRECT`, and the pools evict pages (CLOCK) to stay within the
+  // size. Unlike `vocabulary-mmap-resident-reads`, the cached pages are
+  // memory of this process, so the kernel cannot evict them under memory
+  // pressure. 0 (the default) disables the pools.
+  MemorySizeParameter vocabularyBufferPoolSize_{
+      ad_utility::MemorySize::bytes(0), "vocabulary-buffer-pool-size"};
 
   // If set to true, the buffer pools above get an elastic budget instead of a
   // fixed one (see `ad_utility::BufferPoolBudgetController`): a background
@@ -281,10 +282,11 @@ struct RuntimeParameters {
   // upper bound. A separate flag, because a size cannot also hold "auto".
   Bool vocabularyBufferPoolAuto_{false, "vocabulary-buffer-pool-auto"};
 
-  // The free memory that the elastic budget leaves for everything else, in
-  // bytes. 0 (the default) means max(256 MiB, 5 % of the RAM or of the
-  // cgroup's memory limit).
-  SizeT vocabularyBufferPoolReserve_{0, "vocabulary-buffer-pool-reserve"};
+  // The free memory that the elastic budget leaves for everything else. 0
+  // (the default) means max(256 MiB, 5 % of the RAM or of the cgroup's
+  // memory limit).
+  MemorySizeParameter vocabularyBufferPoolReserve_{
+      ad_utility::MemorySize::bytes(0), "vocabulary-buffer-pool-reserve"};
 
   // If set to true, loading a vocabulary that keeps some of its words in RAM
   // (`VocabularyInternalExternal`) also builds a bit vector with one bit per

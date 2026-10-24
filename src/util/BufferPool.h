@@ -41,7 +41,7 @@ namespace ad_utility {
 // `madvise(MADV_DONTNEED)` returns it when a page is evicted.
 //
 // Every page has one atomic state word: its state (evicted, loading,
-// resident), a CLOCK reference bit, and a version that changes whenever the
+// RESIDENT), a CLOCK reference bit, and a version that changes whenever the
 // page is evicted. A reader copies a resident page optimistically and then
 // checks that the state and version have not changed (the file is immutable,
 // so only a concurrent eviction can invalidate the copy; then the read is
@@ -56,16 +56,17 @@ class BufferPool {
   // granularity: `madvise(MADV_DONTNEED)` discards whole OS pages, so a pool
   // page that were smaller than the OS page (e.g. a hard-coded 4096 on a
   // 16 KiB- or 64 KiB-page ARM kernel) would silently zero neighboring pool
-  // pages that still look resident. Where the architecture fixes the OS page
+  // pages that still look RESIDENT. Where the architecture fixes the OS page
   // size (x86: always 4096), the value is a compile-time constant; where the
   // kernel chooses it at boot time (ARM), it is queried once via `sysconf`.
-  // Returns 0 if the page size cannot be determined (pools are then invalid).
+  // Return 0 if the page size cannot be determined (constructing a pool
+  // then throws).
   static size_t hostPageSize();
 
-  // The page size of this pool (see `hostPageSize`).
+  // Return the page size of this pool, in bytes (see `hostPageSize`).
   size_t pageSize() const { return pageSize_; }
 
-  // Reads the page-aligned ranges `[offsets[i], offsets[i] + numBytes[i])` of
+  // Read the page-aligned ranges `[offsets[i], offsets[i] + numBytes[i])` of
   // the file into `targets[i]` (page-aligned, `numBytes[i]` a multiple of
   // `pageSize`, all within the file) from the descriptor `fd`, and returns
   // only when all of them are complete. Must throw on an error.
@@ -87,11 +88,11 @@ class BufferPool {
   BufferPool(BufferPool&&) = delete;
   BufferPool& operator=(BufferPool&&) = delete;
 
-  // Whether the file is read with `O_DIRECT`.
+  // Return true if the file is read with `O_DIRECT`.
   bool usesDirectIo() const { return directIo_; }
 
-  // The descriptor that missing pages are read from (opened with `O_DIRECT`
-  // if `usesDirectIo()`).
+  // Return the descriptor that missing pages are read from (opened with
+  // `O_DIRECT` if `usesDirectIo()`). The pool keeps owning it.
   int fd() const { return fd_; }
 
   // Change the budget. The loaded pages may exceed it by the pages of the
@@ -99,6 +100,7 @@ class BufferPool {
   // A budget of zero keeps no page beyond the end of the `readAll` that
   // loaded it.
   void setBudget(size_t budgetBytes);
+  // Return the current budget, in bytes.
   size_t budgetBytes() const { return budgetPages_.load() * pageSize_; }
 
   // Evict loaded pages (CLOCK) until at most the budget remains, but at most
@@ -107,7 +109,7 @@ class BufferPool {
   // queries rarely have to evict themselves (see `BufferPoolBudget`).
   size_t evictTowardsBudget(size_t maxPages);
 
-  // The bytes of the pages that are currently loaded.
+  // Return the bytes of the pages that are currently loaded.
   size_t loadedBytes() const { return numLoaded_.load() * pageSize_; }
 
   // Read `numBytes[i]` bytes at `offsets[i]` of the file into `buffers[i]`
@@ -121,7 +123,8 @@ class BufferPool {
                ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                const Loader* loader = nullptr, size_t prefetchDistance = 0);
 
-  // Statistics, for logging and tests.
+  // Statistics, for logging and tests. Each returns a snapshot of the
+  // respective counter (pages loaded right now, resp. cumulative counts).
   size_t numLoadedPages() const { return numLoaded_.load(); }
   uint64_t numHits() const { return hits_.load(); }
   uint64_t numPageLoads() const { return pageLoads_.load(); }
@@ -130,12 +133,12 @@ class BufferPool {
 
  private:
   // The layout of a page's state word.
-  static constexpr uint64_t stateMask = 3;
-  static constexpr uint64_t evicted = 0;
-  static constexpr uint64_t loading = 1;
-  static constexpr uint64_t resident = 2;
-  static constexpr uint64_t referenceBit = 4;
-  static constexpr uint64_t versionOne = 8;
+  static constexpr uint64_t STATE_MASK = 3;
+  static constexpr uint64_t EVICTED = 0;
+  static constexpr uint64_t LOADING = 1;
+  static constexpr uint64_t RESIDENT = 2;
+  static constexpr uint64_t REFERENCE_BIT = 4;
+  static constexpr uint64_t VERSION_ONE = 8;
 
   // The OS page size and its binary logarithm, for the page arithmetic
   // below (shifts instead of divisions by a run-time value).
@@ -180,7 +183,7 @@ class BufferPool {
   bool tryCopy(uint64_t offset, size_t numBytes, char* target);
 
   // Load the pages `pages` (sorted, unique) that this thread has claimed
-  // (state `loading`).
+  // (state `LOADING`).
   void loadClaimed(ql::span<const size_t> pages, const Loader* loader);
 
   // Publish the claimed pages as loaded (and add them to the CLOCK).
@@ -209,6 +212,9 @@ class BufferPool {
   void releasePages(ql::span<const size_t> sortedPages);
 
   void prefetch(uint64_t offset, size_t numBytes) const {
+    if (numBytes == 0) {
+      return;
+    }
     __builtin_prefetch(region_ + offset, 0, 3);
     __builtin_prefetch(region_ + offset + numBytes - 1, 0, 3);
   }

@@ -1,6 +1,6 @@
-// Copyright 2022 - 2026 The QLever Authors, in particular:
+// Copyright 2022 - 2026, The QLever Authors, in particular:
 //
-// 2022-2026 Johannes Kalmbach (kalmbach@informatik.uni-freiburg.de), UFR
+// 2022 - 2026 Johannes Kalmbach <kalmbach@informatik.uni-freiburg.de>, UFR
 // 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
@@ -538,7 +538,8 @@ TEST(VocabularyOnDisk, BufferPoolReadsAreByteIdentical) {
   batches.push_back({words.size() - 2, words.size() - 1, 0});
   for (size_t budget : {size_t{1} << 30, size_t{4096}, size_t{100}}) {
     auto cleanup = setRuntimeParameterForTest<
-        &RuntimeParameters::vocabularyBufferPoolSize_>(budget);
+        &RuntimeParameters::vocabularyBufferPoolSize_>(
+        ad_utility::MemorySize::bytes(budget));
     for (size_t rep = 0; rep < 2; ++rep) {
       for (const auto& indices : batches) {
         auto result = vocab.lookupBatch(indices);

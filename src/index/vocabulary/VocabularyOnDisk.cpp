@@ -439,9 +439,11 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
   // hits from memory and loads the misses in one batch), so nothing is
   // submitted here.
   handle->bufferPools_ = bufferPools(BufferPoolSettings{
-      getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolSize_>(),
+      getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolSize_>()
+          .getBytes(),
       getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolAuto_>(),
-      getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolReserve_>()});
+      getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolReserve_>()
+          .getBytes()});
   if (handle->bufferPools_ != nullptr) {
     return handle;
   }

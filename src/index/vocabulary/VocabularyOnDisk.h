@@ -91,7 +91,12 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // Buffer pools for `file_` and `offsetsFile_` (see
   // `vocabulary-buffer-pool-size`), created on first use and shared by all
   // lookups. The total budget is split between the two files in proportion to
-  // their sizes.
+  // their sizes. Only batch lookups (`lookupBatch`) read through the pools:
+  // they are the export hot path, where one batched load serves many words.
+  // Single-word lookups (`operator[]`, binary search, `scanAll`) keep the
+  // direct paths on purpose; for one word there is no batch to amortize a
+  // page load over. With a fixed budget the size is per vocabulary instance;
+  // the elastic budget is shared process-wide by its controller.
   struct BufferPools {
     std::string filename_;
     std::mutex mutex_;

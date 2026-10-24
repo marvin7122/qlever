@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <initializer_list>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -20,9 +21,46 @@
 namespace ad_utility {
 
 namespace {
-// The value of `key` (in kB) in `/proc/meminfo`, in bytes.
-std::optional<size_t> meminfoBytes(const std::string& key) {
-  std::ifstream in{"/proc/meminfo"};
+// The first token of a file, or `std::nullopt` if it cannot be read.
+std::optional<std::string> firstToken(const std::string& path) {
+  std::ifstream in{path};
+  std::string token;
+  if (in >> token) {
+    return token;
+  }
+  return std::nullopt;
+}
+
+// The value of `key` in the `memory.stat` file of the cgroup directory
+// `dir`, trying each of `keys` in order (v1 and v2 name some counters
+// differently, and v1 has hierarchical `total_*` variants).
+std::optional<size_t> cgroupStat(const std::string& dir,
+                                 std::initializer_list<std::string> keys) {
+  std::ifstream in{dir + "/memory.stat"};
+  std::string name;
+  size_t value = 0;
+  std::optional<size_t> totalVariant;
+  while (in >> name >> value) {
+    size_t rank = 0;
+    for (const auto& key : keys) {
+      if (name == key) {
+        if (rank == 0) {
+          return value;
+        }
+        totalVariant = value;
+      }
+      ++rank;
+    }
+  }
+  return totalVariant;
+}
+}  // namespace
+
+namespace detail {
+// _____________________________________________________________________________
+std::optional<size_t> meminfoBytesFrom(const std::string& path,
+                                       const std::string& key) {
+  std::ifstream in{path};
   std::string name;
   size_t value = 0;
   std::string unit;
@@ -35,107 +73,26 @@ std::optional<size_t> meminfoBytes(const std::string& key) {
   return std::nullopt;
 }
 
-// The first token of a file, or `std::nullopt` if it cannot be read.
-std::optional<std::string> firstToken(const std::string& path) {
-  std::ifstream in{path};
-  std::string token;
-  if (in >> token) {
-    return token;
-  }
-  return std::nullopt;
-}
-
-// A byte count from a cgroup file (`memory.max`, `memory.high`,
-// `memory.current`); `std::nullopt` for "max" (no limit) or if not readable.
-std::optional<size_t> cgroupBytes(const std::string& path) {
+// _____________________________________________________________________________
+std::optional<size_t> cgroupBytesFrom(const std::string& path) {
   auto token = firstToken(path);
   if (!token.has_value() || token.value() == "max") {
     return std::nullopt;
   }
   try {
-    return static_cast<size_t>(std::stoull(token.value()));
+    const auto value = std::stoull(token.value());
+    // cgroup v1 writes `PAGE_COUNTER_MAX` (just below 2^63) for no limit.
+    if (value >= (uint64_t{1} << 62)) {
+      return std::nullopt;
+    }
+    return static_cast<size_t>(value);
   } catch (const std::exception&) {
     return std::nullopt;
   }
 }
 
-// The value of `key` in the `memory.stat` file of the cgroup directory `dir`.
-std::optional<size_t> cgroupStat(const std::string& dir,
-                                 const std::string& key) {
-  std::ifstream in{dir + "/memory.stat"};
-  std::string name;
-  size_t value = 0;
-  while (in >> name >> value) {
-    if (name == key) {
-      return value;
-    }
-  }
-  return std::nullopt;
-}
-
-// The directory of this process's cgroup (v2), or `std::nullopt` (no unified
-// hierarchy, e.g. not Linux or cgroup v1).
-std::optional<std::string> ownCgroupDir() {
-  std::ifstream in{"/proc/self/cgroup"};
-  std::string line;
-  while (std::getline(in, line)) {
-    if (line.rfind("0::", 0) == 0) {
-      return "/sys/fs/cgroup" + line.substr(3);
-    }
-  }
-  return std::nullopt;
-}
-
-// The smallest headroom (limit minus usage) and the smallest limit over this
-// process's cgroup and its ancestors. A limit can be set at any level (e.g. on
-// a systemd scope or on a container's slice).
-struct CgroupLimits {
-  std::optional<size_t> headroom_;
-  std::optional<size_t> limit_;
-};
-CgroupLimits cgroupLimits() {
-  CgroupLimits result;
-  auto dir = ownCgroupDir();
-  if (!dir.has_value()) {
-    return result;
-  }
-  std::string current = dir.value();
-  while (current.size() >= std::string{"/sys/fs/cgroup"}.size()) {
-    std::optional<size_t> limit = cgroupBytes(current + "/memory.max");
-    auto high = cgroupBytes(current + "/memory.high");
-    if (high.has_value() &&
-        (!limit.has_value() || high.value() < limit.value())) {
-      limit = high;
-    }
-    if (limit.has_value()) {
-      // `memory.current` includes the cgroup's page cache, which fills up to
-      // the limit but is reclaimable. Count it as available like
-      // `MemAvailable` does: the inactive file pages fully, the active ones
-      // half.
-      const size_t used = cgroupBytes(current + "/memory.current").value_or(0);
-      const size_t reclaimable =
-          cgroupStat(current, "inactive_file").value_or(0) +
-          cgroupStat(current, "active_file").value_or(0) / 2;
-      const size_t usedNotReclaimable =
-          used > reclaimable ? used - reclaimable : 0;
-      const size_t headroom = limit.value() > usedNotReclaimable
-                                  ? limit.value() - usedNotReclaimable
-                                  : 0;
-      result.headroom_ =
-          std::min(result.headroom_.value_or(headroom), headroom);
-      result.limit_ =
-          std::min(result.limit_.value_or(limit.value()), limit.value());
-    }
-    if (current == "/sys/fs/cgroup") {
-      break;
-    }
-    current = current.substr(0, current.rfind('/'));
-  }
-  return result;
-}
-
-// PSI `some avg10` (percent) from a pressure file.
-std::optional<double> psiSomeAvg10(const std::string& path) {
+// _____________________________________________________________________________
+std::optional<double> psiSomeAvg10From(const std::string& path) {
   std::ifstream in{path};
   std::string line;
   while (std::getline(in, line)) {
@@ -156,31 +113,135 @@ std::optional<double> psiSomeAvg10(const std::string& path) {
   }
   return std::nullopt;
 }
+
+// _____________________________________________________________________________
+std::optional<CgroupLocation> ownCgroupLocation(
+    const std::string& procSelfCgroupPath, const std::string& version2Root,
+    const std::string& version1Root) {
+  std::ifstream in{procSelfCgroupPath};
+  std::string line;
+  std::optional<CgroupLocation> version1;
+  while (std::getline(in, line)) {
+    // Each line is `<id>:<controllers>:<path>`; the path itself starts at
+    // the second colon.
+    const size_t firstColon = line.find(':');
+    const size_t secondColon = firstColon == std::string::npos
+                                   ? firstColon
+                                   : line.find(':', firstColon + 1);
+    if (secondColon == std::string::npos) {
+      continue;
+    }
+    const std::string controllers =
+        line.substr(firstColon + 1, secondColon - firstColon - 1);
+    const std::string path = line.substr(secondColon + 1);
+    if (line.rfind("0::", 0) == 0) {
+      return CgroupLocation{version2Root + path, version2Root, true};
+    }
+    // A v1 hierarchy lists its controllers comma-separated, e.g.
+    // `9:memory:/docker/...` or `5:cpu,memory:/...`.
+    for (size_t begin = 0; begin <= controllers.size();) {
+      const size_t comma = controllers.find(',', begin);
+      const std::string controller = controllers.substr(
+          begin, comma == std::string::npos ? comma : comma - begin);
+      if (controller == "memory") {
+        version1 = CgroupLocation{version1Root + path, version1Root, false};
+      }
+      if (comma == std::string::npos) {
+        break;
+      }
+      begin = comma + 1;
+    }
+  }
+  return version1;
+}
+
+// _____________________________________________________________________________
+CgroupLimits cgroupLimitsFrom(const CgroupLocation& location) {
+  CgroupLimits result;
+  const std::string limitFile =
+      location.version2_ ? "/memory.max" : "/memory.limit_in_bytes";
+  const std::string usageFile =
+      location.version2_ ? "/memory.current" : "/memory.usage_in_bytes";
+  std::string current = location.dir_;
+  while (current.size() >= location.root_.size()) {
+    std::optional<size_t> limit = cgroupBytesFrom(current + limitFile);
+    if (location.version2_) {
+      // `memory.high` is the soft throttle point: the effective ceiling.
+      auto high = cgroupBytesFrom(current + "/memory.high");
+      if (high.has_value() &&
+          (!limit.has_value() || high.value() < limit.value())) {
+        limit = high;
+      }
+    }
+    if (limit.has_value()) {
+      // The usage includes the cgroup's page cache, which fills up to the
+      // limit but is reclaimable. Count it as available like
+      // `MemAvailable` does: the inactive file pages fully, the active ones
+      // half.
+      const size_t used = cgroupBytesFrom(current + usageFile).value_or(0);
+      const size_t reclaimable =
+          cgroupStat(current, {"inactive_file", "total_inactive_file"})
+              .value_or(0) +
+          cgroupStat(current, {"active_file", "total_active_file"})
+                  .value_or(0) /
+              2;
+      const size_t usedNotReclaimable =
+          used > reclaimable ? used - reclaimable : 0;
+      const size_t headroom = limit.value() > usedNotReclaimable
+                                  ? limit.value() - usedNotReclaimable
+                                  : 0;
+      result.headroom_ =
+          std::min(result.headroom_.value_or(headroom), headroom);
+      result.limit_ =
+          std::min(result.limit_.value_or(limit.value()), limit.value());
+    }
+    if (current == location.root_) {
+      break;
+    }
+    current = current.substr(0, current.rfind('/'));
+  }
+  return result;
+}
+}  // namespace detail
+
+namespace {
+// The cgroup limits of this process on this machine.
+detail::CgroupLimits ownCgroupLimits() {
+  auto location = detail::ownCgroupLocation(
+      "/proc/self/cgroup", "/sys/fs/cgroup", "/sys/fs/cgroup/memory");
+  if (!location.has_value()) {
+    return {};
+  }
+  return detail::cgroupLimitsFrom(location.value());
+}
 }  // namespace
 
 // _____________________________________________________________________________
 BufferPoolSignals BufferPoolSignals::system() {
   BufferPoolSignals signals;
   signals.availableBytes = []() -> std::optional<size_t> {
-    auto available = meminfoBytes("MemAvailable");
-    auto headroom = cgroupLimits().headroom_;
+    auto available = detail::meminfoBytesFrom("/proc/meminfo", "MemAvailable");
+    auto headroom = ownCgroupLimits().headroom_;
     if (available.has_value() && headroom.has_value()) {
       return std::min(available.value(), headroom.value());
     }
     return available.has_value() ? available : headroom;
   };
   signals.pressurePercent = []() -> std::optional<double> {
-    if (auto dir = ownCgroupDir(); dir.has_value()) {
-      if (auto psi = psiSomeAvg10(dir.value() + "/memory.pressure");
+    if (auto location = detail::ownCgroupLocation(
+            "/proc/self/cgroup", "/sys/fs/cgroup", "/sys/fs/cgroup/memory");
+        location.has_value() && location->version2_) {
+      if (auto psi =
+              detail::psiSomeAvg10From(location->dir_ + "/memory.pressure");
           psi.has_value()) {
         return psi;
       }
     }
-    return psiSomeAvg10("/proc/pressure/memory");
+    return detail::psiSomeAvg10From("/proc/pressure/memory");
   };
   signals.totalBytes = []() -> std::optional<size_t> {
-    auto total = meminfoBytes("MemTotal");
-    auto limit = cgroupLimits().limit_;
+    auto total = detail::meminfoBytesFrom("/proc/meminfo", "MemTotal");
+    auto limit = ownCgroupLimits().limit_;
     if (total.has_value() && limit.has_value()) {
       return std::min(total.value(), limit.value());
     }
@@ -324,7 +385,7 @@ size_t BufferPoolBudgetController::reserveBytes() const {
   // Relative to the memory this process may use, so that a tight memory
   // limit is not eaten up by a fixed minimum (#5537: a 2 GiB minimum left the
   // pool at about 1.6 GiB under a limit with about 4 GiB of headroom).
-  return std::max(256 * BufferPoolBudgetConfig::MiB, total / 20);
+  return std::max(256 * BufferPoolBudgetConfig::MIB, total / 20);
 }
 
 // _____________________________________________________________________________
