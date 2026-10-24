@@ -23,6 +23,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <exception>
+#include <memory>
 #include <random>
 #include <string>
 #include <thread>
@@ -181,11 +183,15 @@ int main(int argc, char** argv) {
   // 8 reader threads.
   for (size_t budgetDivisor : {size_t{1}, size_t{16}}) {
     for (size_t numThreads : {size_t{1}, size_t{8}}) {
-      BufferPool pool(filename, fileBytes, fileBytes / budgetDivisor);
-      if (!pool.isValid()) {
-        std::fprintf(stderr, "pool invalid (needs Linux)\n");
+      std::unique_ptr<BufferPool> poolOwner;
+      try {
+        poolOwner = std::make_unique<BufferPool>(filename, fileBytes,
+                                                 fileBytes / budgetDivisor);
+      } catch (const std::exception& e) {
+        std::fprintf(stderr, "pool creation failed: %s\n", e.what());
         return 1;
       }
+      BufferPool& pool = *poolOwner;
       std::vector<std::vector<Ranges>> perThread(numThreads);
       for (size_t t = 0; t < numThreads; ++t) {
         std::mt19937_64 random{1000 + t};

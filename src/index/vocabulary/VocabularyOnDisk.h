@@ -77,6 +77,17 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   };
   mutable std::unique_ptr<DirectIoFiles> directIoFiles_;
 
+  // The buffer-pool runtime parameters of one lookup, resolved in one place
+  // (`beginLookup`) from `vocabulary-buffer-pool-size`, `-auto`, and
+  // `-reserve`, so the mode logic (off / fixed / elastic) lives here and in
+  // `bufferPools` only, not in three parallel values at every call site.
+  struct BufferPoolSettings {
+    size_t totalBudget_ = 0;
+    bool elastic_ = false;
+    size_t reserve_ = 0;
+    bool enabled() const { return totalBudget_ > 0 || elastic_; }
+  };
+
   // Buffer pools for `file_` and `offsetsFile_` (see
   // `vocabulary-buffer-pool-size`), created on first use and shared by all
   // lookups. The total budget is split between the two files in proportion to
@@ -329,13 +340,13 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
       bool residentReads, ad_utility::BufferPool* wordsPool = nullptr) const;
 
   // The buffer pools (created on first use), or null if they are off or
-  // cannot be created. With `elastic` false, the pools have the fixed total
-  // budget `totalBudget` (off if zero; budgets updated when it changes). With
-  // `elastic` true, the pools are registered with the process-wide
-  // `BufferPoolBudgetController`, which sets their budgets; `totalBudget`, if
-  // positive, is its upper bound, and `reserve` the free memory it leaves.
-  BufferPools* bufferPools(size_t totalBudget, bool elastic = false,
-                           size_t reserve = 0) const;
+  // cannot be created. Without `settings.elastic_`, the pools have the fixed
+  // total budget `settings.totalBudget_` (off if zero; budgets updated when
+  // it changes). With it, the pools are registered with the process-wide
+  // `BufferPoolBudgetController`, which sets their budgets;
+  // `settings.totalBudget_`, if positive, is its upper bound, and
+  // `settings.reserve_` the free memory it leaves.
+  BufferPools* bufferPools(BufferPoolSettings settings) const;
 
   // A `BufferPool::Loader` that reads the missing pages through `manager`.
   static ad_utility::BufferPool::Loader loaderFor(

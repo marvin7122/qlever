@@ -76,7 +76,6 @@ TEST(BufferPool, hitsAndMisses) {
   absl::Cleanup removeFile{[&filename]() { ad_utility::deleteFile(filename); }};
   writeFile(filename, contents);
   BufferPool pool(filename, contents.size(), 100 * P);
-  ASSERT_TRUE(pool.isValid());
   EXPECT_EQ(pool.numPages(), 4u);
   // Within a page, across a page boundary, the incomplete last page, empty.
   std::vector<std::pair<uint64_t, size_t>> ranges{
@@ -105,7 +104,6 @@ TEST(BufferPool, loaderGetsMergedAlignedRuns) {
   absl::Cleanup removeFile{[&filename]() { ad_utility::deleteFile(filename); }};
   writeFile(filename, contents);
   BufferPool pool(filename, contents.size(), 100 * P);
-  ASSERT_TRUE(pool.isValid());
   std::vector<std::pair<uint64_t, size_t>> calls;
   BufferPool::Loader loader = [&calls](int fd, ql::span<const size_t> numBytes,
                                        ql::span<const uint64_t> offsets,
@@ -136,11 +134,10 @@ TEST(BufferPool, budgetAndEviction) {
   const std::string contents = makeContents(8, 0);
   absl::Cleanup removeFile{[&filename]() { ad_utility::deleteFile(filename); }};
   writeFile(filename, contents);
-  BufferPool pool(filename, contents.size(), 2 * P);
 #ifndef __linux__
   GTEST_SKIP() << "BufferPool needs Linux";
 #endif
-  ASSERT_TRUE(pool.isValid());
+  BufferPool pool(filename, contents.size(), 2 * P);
   for (size_t round = 0; round < 3; ++round) {
     for (size_t page = 0; page < 8; ++page) {
       readAndCheck(pool, contents, {{page * P + 3, 100}});
@@ -172,11 +169,10 @@ TEST(BufferPool, failedLoadLeavesPoolUsable) {
   const std::string contents = makeContents(4, 0);
   absl::Cleanup removeFile{[&filename]() { ad_utility::deleteFile(filename); }};
   writeFile(filename, contents);
-  BufferPool pool(filename, contents.size(), 4 * P);
 #ifndef __linux__
   GTEST_SKIP() << "BufferPool needs Linux";
 #endif
-  ASSERT_TRUE(pool.isValid());
+  BufferPool pool(filename, contents.size(), 4 * P);
   BufferPool::Loader failing = [](int, ql::span<const size_t>,
                                   ql::span<const uint64_t>, ql::span<char*>) {
     throw std::runtime_error{"simulated I/O error"};
@@ -192,12 +188,16 @@ TEST(BufferPool, failedLoadLeavesPoolUsable) {
 }
 
 // _____________________________________________________________________________
-TEST(BufferPool, emptyFile) {
+TEST(BufferPool, constructionFailuresThrow) {
+  // Existence means usable: an empty file (contract), a missing file, and an
+  // unsupported platform all fail at construction instead of producing a
+  // pool whose reads fail later.
   const std::string filename = "bufferPoolTestEmpty.dat";
   absl::Cleanup removeFile{[&filename]() { ad_utility::deleteFile(filename); }};
   writeFile(filename, "");
-  BufferPool pool(filename, 0, 4 * P);
-  EXPECT_FALSE(pool.isValid());
+  EXPECT_THROW(BufferPool(filename, 0, 4 * P), std::exception);
+  EXPECT_THROW(BufferPool("bufferPoolTestDoesNotExist.dat", P, 4 * P),
+               std::exception);
 }
 
 // _____________________________________________________________________________
@@ -214,7 +214,6 @@ TEST(BufferPool, concurrentReadersUnderEviction) {
   writeFile(filename, contents);
   for (size_t budgetPages : {size_t{0}, size_t{3}, size_t{16}, size_t{100}}) {
     BufferPool pool(filename, contents.size(), budgetPages * P);
-    ASSERT_TRUE(pool.isValid());
     std::atomic<size_t> errors = 0;
     std::vector<std::thread> threads;
     for (size_t t = 0; t < 8; ++t) {
@@ -279,11 +278,10 @@ TEST(BufferPool, pageSizeIsOsPageSizeAndEvictionSparesNeighbors) {
   // A one-page budget forces an eviction (and thus a `madvise`) for almost
   // every read. Read every page in full, repeatedly; each read must still
   // see its own bytes, never zeroes or a neighbor's bytes.
-  BufferPool pool(filename, contents.size(), P);
 #ifndef __linux__
   GTEST_SKIP() << "BufferPool needs Linux";
 #endif
-  ASSERT_TRUE(pool.isValid());
+  BufferPool pool(filename, contents.size(), P);
   EXPECT_EQ(pool.pageSize(), BufferPool::hostPageSize());
   for (size_t round = 0; round < 3; ++round) {
     for (size_t page = 0; page < 8; ++page) {

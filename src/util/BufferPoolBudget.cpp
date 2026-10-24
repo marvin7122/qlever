@@ -190,6 +190,17 @@ BufferPoolSignals BufferPoolSignals::system() {
 }
 
 // _____________________________________________________________________________
+size_t bufferPoolBudgetShare(size_t totalBytes, size_t partBytes,
+                             size_t wholeBytes) {
+  if (wholeBytes == 0) {
+    return 0;
+  }
+  return static_cast<size_t>(static_cast<double>(totalBytes) *
+                             static_cast<double>(partBytes) /
+                             static_cast<double>(wholeBytes));
+}
+
+// _____________________________________________________________________________
 size_t nextBufferPoolTarget(size_t target, size_t loaded, size_t ceiling,
                             size_t floor, size_t reserve, size_t step,
                             std::optional<size_t> available,
@@ -353,9 +364,7 @@ void BufferPoolBudgetController::tickLocked() {
   for (const auto& group : groups_) {
     for (BufferPool* pool : group.pools_) {
       const size_t poolBytes = pool->numPages() * pool->pageSize();
-      pool->setBudget(static_cast<size_t>(static_cast<double>(target) *
-                                          static_cast<double>(poolBytes) /
-                                          static_cast<double>(fileBytes)));
+      pool->setBudget(bufferPoolBudgetShare(target, poolBytes, fileBytes));
     }
   }
   for (const auto& group : groups_) {

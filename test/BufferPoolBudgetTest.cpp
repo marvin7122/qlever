@@ -25,6 +25,7 @@ namespace {
 using ad_utility::BufferPool;
 using ad_utility::BufferPoolBudgetConfig;
 using ad_utility::BufferPoolBudgetController;
+using ad_utility::bufferPoolBudgetShare;
 using ad_utility::BufferPoolSignals;
 using ad_utility::nextBufferPoolTarget;
 // The host's OS page size (a run-time value where the kernel chooses it).
@@ -81,6 +82,23 @@ bool waitFor(F condition, std::chrono::milliseconds timeout) {
   return condition();
 }
 }  // namespace
+
+// _____________________________________________________________________________
+TEST(BufferPoolBudget, budgetShareIsProportionalWithBoundaries) {
+  // The one split rule shared by the fixed and elastic paths.
+  EXPECT_EQ(bufferPoolBudgetShare(100, 0, 300), 0u);
+  EXPECT_EQ(bufferPoolBudgetShare(100, 300, 300), 100u);
+  EXPECT_EQ(bufferPoolBudgetShare(100, 75, 300), 25u);
+  EXPECT_EQ(bufferPoolBudgetShare(0, 75, 300), 0u);
+  // No whole (both files empty): no share, and no division by zero.
+  EXPECT_EQ(bufferPoolBudgetShare(100, 0, 0), 0u);
+  EXPECT_EQ(bufferPoolBudgetShare(100, 75, 0), 0u);
+  // The shares of a two-way split add up to at most the total.
+  const size_t total = 1234567;
+  const size_t words = bufferPoolBudgetShare(total, 1980, 1980 + 1260);
+  EXPECT_LE(words + bufferPoolBudgetShare(total, 1260, 1980 + 1260), total);
+  EXPECT_GT(words, total / 2);
+}
 
 // _____________________________________________________________________________
 TEST(BufferPoolBudget, policyGrowsToTheCeiling) {
@@ -153,7 +171,6 @@ TEST(BufferPoolBudget, evictTowardsBudgetIsBounded) {
   writeFile(filename, contents);
   absl::Cleanup cleanup{[&filename]() { ::unlink(filename.c_str()); }};
   BufferPool pool{filename, contents.size(), 20 * P};
-  ASSERT_TRUE(pool.isValid());
   readAndCheck(pool, contents, {{0, 20 * P}});
   ASSERT_EQ(pool.loadedBytes(), 20 * P);
   pool.setBudget(5 * P);
@@ -177,7 +194,6 @@ TEST(BufferPoolBudget, backgroundEvictionWithConcurrentReaders) {
   writeFile(filename, contents);
   absl::Cleanup cleanup{[&filename]() { ::unlink(filename.c_str()); }};
   BufferPool pool{filename, contents.size(), 4 * P};
-  ASSERT_TRUE(pool.isValid());
 
   std::atomic<size_t> available{1000 * numPages * P};
   BufferPoolSignals signals;

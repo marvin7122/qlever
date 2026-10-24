@@ -169,13 +169,11 @@ VocabularyScanRange VocabularyOnDisk::scanAll() const {
 
 // _____________________________________________________________________________
 std::optional<ad_utility::BatchManagerBase::BatchHandle>
-VocabularyOnDisk::submitThroughManager(ad_utility::BatchManagerBase& manager,
-                                       int fd, ql::span<const size_t> numBytes,
-                                       ql::span<const uint64_t> offsets,
-                                       ql::span<char*> buffers,
-                                       ql::span<const size_t> positions,
-                                       const ad_utility::BatchReadOptions&
-                                           options) {
+VocabularyOnDisk::submitThroughManager(
+    ad_utility::BatchManagerBase& manager, int fd,
+    ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
+    ql::span<char*> buffers, ql::span<const size_t> positions,
+    const ad_utility::BatchReadOptions& options) {
   if (positions.empty()) {
     return std::nullopt;
   }
@@ -193,12 +191,14 @@ VocabularyOnDisk::submitThroughManager(ad_utility::BatchManagerBase& manager,
 
 // _____________________________________________________________________________
 VocabularyOnDisk::BufferPools* VocabularyOnDisk::bufferPools(
-    size_t totalBudget, bool elastic, size_t reserve) const {
+    BufferPoolSettings settings) const {
   if (bufferPools_ == nullptr || bufferPools_->failed_) {
     return nullptr;
   }
   auto& pools = *bufferPools_;
-  if (totalBudget == 0 && !elastic) {
+  const bool elastic = settings.elastic_;
+  size_t totalBudget = settings.totalBudget_;
+  if (!settings.enabled()) {
     std::lock_guard lock{pools.mutex_};
     pools.elasticRegistration_.reset();
     pools.elastic_ = false;
@@ -216,7 +216,7 @@ VocabularyOnDisk::BufferPools* VocabularyOnDisk::bufferPools(
     // The controller sets the budgets; keep its bounds current (cheap).
     auto& controller = ad_utility::BufferPoolBudgetController::global();
     controller.setExplicitCeiling(totalBudget);
-    controller.setReserve(reserve);
+    controller.setReserve(settings.reserve_);
     if (pools.elastic_.load()) {
       return &pools;
     }
@@ -238,19 +238,25 @@ VocabularyOnDisk::BufferPools* VocabularyOnDisk::bufferPools(
       ql::filesystem::file_size(pools.filename_ + std::string{offsetSuffix_}));
   // Split the budget in proportion to the file sizes (each lookup reads from
   // both files, and the words file is the larger one).
-  const auto wordsBudget = static_cast<size_t>(
-      static_cast<double>(totalBudget) * static_cast<double>(wordsSize) /
-      static_cast<double>(wordsSize + offsetsSize));
+  const size_t wordsBudget = ad_utility::bufferPoolBudgetShare(
+      totalBudget, wordsSize, wordsSize + offsetsSize);
   const size_t offsetsBudget = totalBudget - wordsBudget;
   if (pools.words_ == nullptr) {
-    auto words = std::make_unique<ad_utility::BufferPool>(
-        pools.filename_, wordsSize, wordsBudget);
-    auto offsets = std::make_unique<ad_utility::BufferPool>(
-        pools.filename_ + std::string{offsetSuffix_}, offsetsSize,
-        offsetsBudget);
-    if (!words->isValid() || !offsets->isValid()) {
+    // A constructed pool is always usable; creation failures (unreadable
+    // file, no address space, unsupported platform) throw, and reading
+    // continues without pools.
+    std::unique_ptr<ad_utility::BufferPool> words;
+    std::unique_ptr<ad_utility::BufferPool> offsets;
+    try {
+      words = std::make_unique<ad_utility::BufferPool>(pools.filename_,
+                                                       wordsSize, wordsBudget);
+      offsets = std::make_unique<ad_utility::BufferPool>(
+          pools.filename_ + std::string{offsetSuffix_}, offsetsSize,
+          offsetsBudget);
+    } catch (const std::exception& e) {
       AD_LOG_WARN << "Could not create the vocabulary buffer pools for "
-                  << pools.filename_ << "; reading without them" << std::endl;
+                  << pools.filename_ << " (" << e.what()
+                  << "); reading without them" << std::endl;
       pools.failed_ = true;
       return nullptr;
     }
@@ -295,14 +301,11 @@ ad_utility::BufferPool::Loader VocabularyOnDisk::loaderFor(
 }
 
 // _____________________________________________________________________________
-void VocabularyOnDisk::readThroughManager(ad_utility::BatchManagerBase& manager,
-                                          int fd,
-                                          ql::span<const size_t> numBytes,
-                                          ql::span<const uint64_t> offsets,
-                                          ql::span<char*> buffers,
-                                          ql::span<const size_t> positions,
-                                          const ad_utility::BatchReadOptions&
-                                              options) {
+void VocabularyOnDisk::readThroughManager(
+    ad_utility::BatchManagerBase& manager, int fd,
+    ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
+    ql::span<char*> buffers, ql::span<const size_t> positions,
+    const ad_utility::BatchReadOptions& options) {
   auto batch = submitThroughManager(manager, fd, numBytes, offsets, buffers,
                                     positions, options);
   if (batch.has_value()) {
@@ -435,10 +438,10 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
   // With the buffer pools, both phases run in `finish` (the pool serves the
   // hits from memory and loads the misses in one batch), so nothing is
   // submitted here.
-  handle->bufferPools_ = bufferPools(
+  handle->bufferPools_ = bufferPools(BufferPoolSettings{
       getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolSize_>(),
       getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolAuto_>(),
-      getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolReserve_>());
+      getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolReserve_>()});
   if (handle->bufferPools_ != nullptr) {
     return handle;
   }
@@ -451,8 +454,7 @@ std::unique_ptr<VocabLookupHandleBase> VocabularyOnDisk::beginLookup(
       getRuntimeParameter<&RuntimeParameters::vocabularyMmapResidentReads_>();
   if (!handle->pageCacheFastPath_) {
     handle->offsetBatch_ = handle->manager_->addBatch(
-        offsetsFile_.fd(), sizes, fileOffsets, targets,
-        batchReadOptions(true));
+        offsetsFile_.fd(), sizes, fileOffsets, targets, batchReadOptions(true));
     return handle;
   }
 
@@ -708,13 +710,12 @@ ad_utility::BatchReadOptions VocabularyOnDisk::batchReadOptions(
       directIoFiles_ != nullptr) {
     auto& files = *directIoFiles_;
     std::call_once(files.opened_, [&files] {
-      files.words_ = ad_utility::export_prototypes::DirectIoFile{
-          files.filename_, true};
+      files.words_ =
+          ad_utility::export_prototypes::DirectIoFile{files.filename_, true};
       files.offsets_ = ad_utility::export_prototypes::DirectIoFile{
           files.filename_ + std::string{offsetSuffix_}, true};
     });
-    const auto& file =
-        forOffsetsFile ? files.offsets_ : files.words_;
+    const auto& file = forOffsetsFile ? files.offsets_ : files.words_;
     if (file.isDirect()) {
       options.directIoFd = file.fd();
     }

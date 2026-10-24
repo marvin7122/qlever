@@ -133,9 +133,15 @@ BufferPool::BufferPool([[maybe_unused]] const std::string& filename,
     : pageSize_{hostPageSize()},
       pageShift_{log2OfPowerOfTwo(pageSize_)},
       budgetPages_{pageSize_ == 0 ? 0 : budgetBytes / pageSize_} {
+  // Existence means usable: construction either establishes every invariant
+  // (file open, region reserved) or throws. There is no half-valid pool
+  // whose reads fail later; callers that want to continue without a pool
+  // catch the exception where they create it.
+  AD_CONTRACT_CHECK(fileSize > 0);
 #ifdef QL_BUFFER_POOL
-  if (fileSize == 0 || pageSize_ == 0) {
-    return;
+  if (pageSize_ == 0) {
+    throw std::runtime_error{
+        "BufferPool: could not determine the OS page size"};
   }
   numPages_ = (fileSize + pageSize_ - 1) >> pageShift_;
   AD_CONTRACT_CHECK(numPages_ <= std::numeric_limits<uint32_t>::max());
@@ -148,7 +154,8 @@ BufferPool::BufferPool([[maybe_unused]] const std::string& filename,
   }
   bufferedFd_ = ::open(filename.c_str(), O_RDONLY | O_CLOEXEC);
   if (bufferedFd_ < 0) {
-    return;
+    throw std::runtime_error{absl::StrCat(
+        "BufferPool: could not open ", filename, ": ", std::strerror(errno))};
   }
   fd_ = ::open(filename.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECT);
   directIo_ = fd_ >= 0;
@@ -160,15 +167,24 @@ BufferPool::BufferPool([[maybe_unused]] const std::string& filename,
   void* region = ::mmap(nullptr, regionSize_, PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
   if (region == MAP_FAILED || fd_ < 0) {
+    // Members with plain descriptors do not clean up when a constructor
+    // throws, so release what was acquired before reporting the failure.
+    const int error = errno;
     if (region != MAP_FAILED) {
       ::munmap(region, regionSize_);
     }
-    return;
+    if (fd_ >= 0) ::close(fd_);
+    ::close(bufferedFd_);
+    fd_ = -1;
+    bufferedFd_ = -1;
+    throw std::runtime_error{absl::StrCat("BufferPool: could not reserve ",
+                                          regionSize_, " bytes for ", filename,
+                                          ": ", std::strerror(error))};
   }
   region_ = static_cast<char*>(region);
   fileSize_ = fileSize;
 #else
-  (void)fileSize;
+  throw std::runtime_error{"BufferPool is not supported on this platform"};
 #endif
 }
 
@@ -239,7 +255,7 @@ void BufferPool::readAll(ql::span<const size_t> numBytes,
                          size_t prefetchDistance) {
   AD_CONTRACT_CHECK(offsets.size() == numBytes.size() &&
                     buffers.size() == numBytes.size());
-  AD_CONTRACT_CHECK(isValid());
+  AD_CORRECTNESS_CHECK(region_ != nullptr);
   const size_t n = numBytes.size();
   for (size_t i = 0; i < n; ++i) {
     AD_CONTRACT_CHECK(offsets[i] <= fileSize_ &&
@@ -351,8 +367,17 @@ void BufferPool::readAll(ql::span<const size_t> numBytes,
       unpin(pinned);
     } catch (...) {
       if (!published) {
-        unclaim(claimed);
-        unpin(pinned);
+        // Release both sets even if one release reports an invariant failure
+        // (it completes its state transitions first): a secondary failure
+        // must not strand the other set. The original exception wins.
+        try {
+          unclaim(claimed);
+        } catch (...) {
+        }
+        try {
+          unpin(pinned);
+        } catch (...) {
+        }
       }
       throw;
     }
@@ -440,9 +465,14 @@ void BufferPool::publish(ql::span<const size_t> pages) {
   // entry, which is fine because eviction is blocked on the lock meanwhile.
   std::lock_guard lock{clockMutex_};
   clockPages_.reserve(clockPages_.size() + pages.size());
+  // Check all pages before publishing any of them, so a failed check leaves
+  // every page in `loading` for the caller's rollback instead of a mix.
   for (size_t page : pages) {
     const uint64_t word = states_[page].load(std::memory_order_relaxed);
     AD_CORRECTNESS_CHECK((word & stateMask) == loading);
+  }
+  for (size_t page : pages) {
+    const uint64_t word = states_[page].load(std::memory_order_relaxed);
     states_[page].store((word & ~stateMask) | resident | referenceBit,
                         std::memory_order_release);
   }
@@ -455,12 +485,17 @@ void BufferPool::publish(ql::span<const size_t> pages) {
 // _____________________________________________________________________________
 void BufferPool::unpin(ql::span<const size_t> pages) {
   // The pages stayed loaded (and in the CLOCK): only the state goes back.
+  // Like `releasePages`, complete every transition before checking, so an
+  // invariant failure cannot strand the remaining pages in `loading`.
+  bool allLoading = true;
   for (size_t page : pages) {
     const uint64_t word = states_[page].load(std::memory_order_relaxed);
-    AD_CORRECTNESS_CHECK((word & stateMask) == loading);
+    allLoading &= (word & stateMask) == loading;
     states_[page].store((word & ~stateMask) | resident | referenceBit,
                         std::memory_order_release);
   }
+  AD_CORRECTNESS_CHECK(allLoading,
+                       "BufferPool: unpinning a page that is not pinned");
 }
 
 // _____________________________________________________________________________
@@ -485,9 +520,6 @@ void BufferPool::evictFor(size_t incoming) {
 
 // _____________________________________________________________________________
 size_t BufferPool::evictTowardsBudget(size_t maxPages) {
-  if (!isValid()) {
-    return 0;
-  }
   return evictDownTo(budgetPages_.load(), maxPages);
 }
 
@@ -553,7 +585,14 @@ size_t BufferPool::evictDownTo(size_t target, size_t maxVictims) {
 
 // _____________________________________________________________________________
 void BufferPool::releasePages(ql::span<const size_t> pages) {
-  AD_CORRECTNESS_CHECK(std::is_sorted(pages.begin(), pages.end()));
+  // This runs on exception-unwind paths (`unclaim`), where the pages are
+  // already in state `evicting`: every state transition below must complete
+  // before anything may throw, or the remaining pages would stay `evicting`
+  // forever, owned by nobody. So: try every `madvise`, remember failures,
+  // transition every page, and only then report. (Sorted input only affects
+  // how well adjacent pages merge into one `madvise`; correctness of the
+  // transitions does not depend on it.)
+  [[maybe_unused]] int madviseErrno = 0;
 #ifdef QL_BUFFER_POOL
   for (size_t k = 0; k < pages.size();) {
     size_t end = k + 1;
@@ -563,22 +602,30 @@ void BufferPool::releasePages(ql::span<const size_t> pages) {
     // `pages` are OS pages (`pageSize_` is the OS page size, and `region_` is
     // OS-page aligned), so every range is aligned and the call discards
     // exactly these pages. A failure would mean that this invariant does not
-    // hold on this system: fail loudly instead of silently keeping (or, on
-    // a mismatched page size, corrupting) cached bytes.
-    const int result = ::madvise(region_ + byteOffsetOfPage(pages[k]),
-                                 (end - k) << pageShift_, MADV_DONTNEED);
-    AD_CORRECTNESS_CHECK(result == 0, "BufferPool: madvise(MADV_DONTNEED) ",
-                         "failed: ", std::strerror(errno));
+    // hold on this system: fail loudly (below, after the transitions)
+    // instead of silently keeping (or, on a mismatched page size,
+    // corrupting) cached bytes.
+    if (::madvise(region_ + byteOffsetOfPage(pages[k]), (end - k) << pageShift_,
+                  MADV_DONTNEED) != 0 &&
+        madviseErrno == 0) {
+      madviseErrno = errno;
+    }
     k = end;
   }
 #endif
   // Only now may another thread load these pages again.
+  bool allEvicting = true;
   for (size_t page : pages) {
     const uint64_t word = states_[page].load(std::memory_order_relaxed);
-    AD_CORRECTNESS_CHECK((word & stateMask) == evicting);
+    allEvicting &= (word & stateMask) == evicting;
     states_[page].store((word & ~stateMask) | evicted,
                         std::memory_order_release);
   }
+  AD_CORRECTNESS_CHECK(allEvicting,
+                       "BufferPool: releasing a page that is not evicting");
+  AD_CORRECTNESS_CHECK(madviseErrno == 0,
+                       "BufferPool: madvise(MADV_DONTNEED) failed: ",
+                       std::strerror(madviseErrno));
 }
 
 }  // namespace ad_utility

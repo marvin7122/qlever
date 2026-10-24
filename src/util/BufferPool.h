@@ -76,7 +76,9 @@ class BufferPool {
   // A pool for the file `filename`, of which the first `fileSize` bytes are
   // read. `budgetBytes` is the maximal size of the loaded pages (see
   // `setBudget`). The file is opened with `O_DIRECT` if the file system
-  // supports it, otherwise with the page cache.
+  // supports it, otherwise with the page cache. Throws if the file cannot be
+  // opened, the region cannot be reserved, or the platform is unsupported:
+  // a constructed pool is always usable.
   BufferPool(const std::string& filename, size_t fileSize, size_t budgetBytes);
   ~BufferPool();
 
@@ -84,10 +86,6 @@ class BufferPool {
   BufferPool& operator=(const BufferPool&) = delete;
   BufferPool(BufferPool&&) = delete;
   BufferPool& operator=(BufferPool&&) = delete;
-
-  // Whether the region could be reserved and the file opened. If not, every
-  // `readAll` throws.
-  bool isValid() const { return region_ != nullptr; }
 
   // Whether the file is read with `O_DIRECT`.
   bool usesDirectIo() const { return directIo_; }
@@ -203,9 +201,11 @@ class BufferPool {
   // evicted pages.
   size_t evictDownTo(size_t target, size_t maxVictims);
 
-  // Return the memory of the evicted pages to the kernel. `sortedPages`
-  // must be sorted and unique (adjacent pages are released as one range).
-  // Never allocates, so it is safe on exception-unwind paths.
+  // Return the memory of the evicted pages to the kernel, then mark them
+  // evicted. Sorted unique input merges adjacent pages into one `madvise`
+  // (both callers pass it sorted). Completes every page's state transition
+  // before reporting a failure, and never allocates, so it is safe on
+  // exception-unwind paths.
   void releasePages(ql::span<const size_t> sortedPages);
 
   void prefetch(uint64_t offset, size_t numBytes) const {

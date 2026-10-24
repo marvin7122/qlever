@@ -91,6 +91,14 @@ size_t nextBufferPoolTarget(size_t target, size_t loaded, size_t ceiling,
                             std::optional<double> pressurePercent,
                             double pressureThreshold);
 
+// The share of a total pool budget that belongs to one pool, in proportion
+// to its file size: `totalBytes * partBytes / wholeBytes`, and 0 if
+// `wholeBytes` is 0. The single place that knows how a joint budget (fixed,
+// or the controller's current target) is split between pools, so the fixed
+// and elastic paths cannot drift apart.
+size_t bufferPoolBudgetShare(size_t totalBytes, size_t partBytes,
+                             size_t wholeBytes);
+
 // The background controller. One per process (`global()`); tests create their
 // own instances with injected signals.
 class BufferPoolBudgetController {
@@ -129,9 +137,20 @@ class BufferPoolBudgetController {
       std::vector<BufferPool*> pools);
 
   // Optional explicit upper bound for the total target (0 = none) and the
-  // reserve (0 = the default of the config). Cheap; may be called often.
-  void setExplicitCeiling(size_t bytes) { explicitCeiling_.store(bytes); }
-  void setReserve(size_t bytes) { reserveOverride_.store(bytes); }
+  // reserve (0 = the default of the config). Called on the lookup path to
+  // keep the bounds in sync with the runtime parameters, so an unchanged
+  // value does not write the shared cache line. The controller is
+  // process-wide: with several vocabularies, the last differing value wins.
+  void setExplicitCeiling(size_t bytes) {
+    if (explicitCeiling_.load(std::memory_order_relaxed) != bytes) {
+      explicitCeiling_.store(bytes, std::memory_order_relaxed);
+    }
+  }
+  void setReserve(size_t bytes) {
+    if (reserveOverride_.load(std::memory_order_relaxed) != bytes) {
+      reserveOverride_.store(bytes, std::memory_order_relaxed);
+    }
+  }
 
   // The current total target (all pools together).
   size_t targetBytes() const { return target_.load(); }
