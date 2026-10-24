@@ -44,6 +44,9 @@ if (NOT _NO_BENCHMARK)
     add_executable(ExportPipelineRouterBenchmark ExportPipelineRouterBenchmark.cpp)
     qlever_target_link_libraries(ExportPipelineRouterBenchmark engine sparqlParser qlever_util)
 
+    add_executable(BufferPoolBenchmark BufferPoolBenchmark.cpp)
+    qlever_target_link_libraries(BufferPoolBenchmark qlever_util)
+
     addAndLinkBenchmark(SparqlExpressionBenchmark engine testUtil gtest gmock)
     addAndLinkBenchmark(FsstScratchBufferBenchmark fsst ${CMAKE_DL_LIBS})
 
