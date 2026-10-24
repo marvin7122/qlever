@@ -1,0 +1,51 @@
+name: ARM buffer-pool test (verification only)
+
+# Disposable verification for PR #297: run the BufferPool tests natively on
+# arm64. The pool page size comes from sysconf on ARM (the kernel chooses
+# 4/16/64 KiB at boot) and the hit path relies on acquire ordering, neither
+# of which an x86 run exercises. Dispatch manually; never runs on PRs.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bufferpool-arm:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: 'recursive'
+      - name: Show architecture and kernel page size
+        run: |
+          uname -a
+          uname -m
+          getconf PAGESIZE
+      - name: Install dependencies
+        uses: ./.github/workflows/install-dependencies-ubuntu
+      - name: Install compiler
+        uses: ./.github/workflows/install-compiler-ubuntu
+        with:
+          compiler: gcc
+          compiler-version: 13
+      - name: Configure and build the buffer-pool tests
+        uses: ./.github/workflows/build-and-test
+        with:
+          build-type: Release
+          target: BufferPoolTest BufferPoolBudgetTest VocabularyOnDiskTest
+          run-tests: 'false'
+          run-benchmark: 'false'
+          run-e2e: 'false'
+          cmake-args: >-
+            -DCMAKE_TOOLCHAIN_FILE="$(pwd)/toolchains/gcc13.cmake"
+            -DUSE_PARALLEL=true
+      - name: Run the buffer-pool tests
+        run: |
+          set -e
+          for t in BufferPoolTest BufferPoolBudgetTest VocabularyOnDiskTest; do
+            bin=$(find build/test -name "$t" -type f | head -1)
+            echo "== $t ($bin)"
+            (cd "$(dirname "$bin")" && "./$t")
+          done
