@@ -669,7 +669,6 @@ FetchContent_Declare(
         re2
         GIT_REPOSITORY https://github.com/google/re2.git
         GIT_TAG 972a15cedd008d846f1a39b2e88ce48d7f166cbd  # main branch from January 23 2026
-        GIT_SHALLOW TRUE
         OVERRIDE_FIND_PACKAGE
         SYSTEM
         EXCLUDE_FROM_ALL
@@ -683,7 +682,6 @@ FetchContent_Declare(
         uriparser
         GIT_REPOSITORY https://github.com/uriparser/uriparser.git
         GIT_TAG 04d8b8df5e0c6bf6c06e472540c015943a613bd2 # 1.0.0
-        GIT_SHALLOW TRUE
         OVERRIDE_FIND_PACKAGE
         SYSTEM
         EXCLUDE_FROM_ALL
@@ -715,7 +713,6 @@ FetchContent_Declare(
         opentelemetry-cpp
         GIT_REPOSITORY https://github.com/open-telemetry/opentelemetry-cpp
         GIT_TAG 2d80af1b1d26e300d9c0f7f51fa360f22c773523 # v1.26.0
-        GIT_SHALLOW TRUE
         EXCLUDE_FROM_ALL
         SYSTEM
 )
