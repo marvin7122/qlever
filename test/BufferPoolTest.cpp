@@ -21,7 +21,9 @@
 
 namespace {
 using ad_utility::BufferPool;
-constexpr size_t P = BufferPool::pageSize;
+// The pool page size is the host's OS page size: a run-time value on systems
+// where the kernel chooses it at boot time (e.g. ARM), so no `constexpr`.
+const size_t P = BufferPool::hostPageSize();
 
 // Write `contents` to `filename`.
 void writeFile(const std::string& filename, const std::string& contents) {
@@ -255,4 +257,38 @@ TEST(BufferPool, concurrentReadersUnderEviction) {
     // After all readers are done, the budget holds.
     EXPECT_LE(pool.numLoadedPages(), budgetPages);
   }
+}
+
+// _____________________________________________________________________________
+// The pool page size must be the OS page size: eviction returns memory with
+// `madvise(MADV_DONTNEED)`, which discards whole OS pages. A pool page size
+// smaller than the OS page (a hard-coded 4096 on a 16 KiB- or 64 KiB-page
+// kernel) would silently zero resident neighboring pages. So: the size must
+// match the kernel's, and evicting a page must never change its neighbors.
+TEST(BufferPool, pageSizeIsOsPageSizeAndEvictionSparesNeighbors) {
+#ifdef __linux__
+  const long osPageSize = ::sysconf(_SC_PAGESIZE);
+  ASSERT_GT(osPageSize, 0);
+  EXPECT_EQ(BufferPool::hostPageSize(), static_cast<size_t>(osPageSize));
+  EXPECT_EQ(P & (P - 1), 0u) << "the page size must be a power of two";
+#endif
+  const std::string filename = "bufferPoolTestPageSize.dat";
+  const std::string contents = makeContents(8, 0);
+  absl::Cleanup removeFile{[&filename]() { ad_utility::deleteFile(filename); }};
+  writeFile(filename, contents);
+  // A one-page budget forces an eviction (and thus a `madvise`) for almost
+  // every read. Read every page in full, repeatedly; each read must still
+  // see its own bytes, never zeroes or a neighbor's bytes.
+  BufferPool pool(filename, contents.size(), P);
+#ifndef __linux__
+  GTEST_SKIP() << "BufferPool needs Linux";
+#endif
+  ASSERT_TRUE(pool.isValid());
+  EXPECT_EQ(pool.pageSize(), BufferPool::hostPageSize());
+  for (size_t round = 0; round < 3; ++round) {
+    for (size_t page = 0; page < 8; ++page) {
+      readAndCheck(pool, contents, {{page * P, P}});
+    }
+  }
+  EXPECT_GT(pool.numEvictions(), 0u);
 }

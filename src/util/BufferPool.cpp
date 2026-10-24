@@ -71,6 +71,27 @@ void loadSynchronously(int fd, ql::span<const size_t> numBytes,
   }
 }
 
+// The OS page size, if the architecture fixes it at compile time (x86 uses
+// 4096-byte base pages with every kernel). Zero means: the kernel chooses at
+// boot time (e.g. ARM with 4/16/64 KiB pages), so it must be queried.
+#if defined(__x86_64__) || defined(__i386__)
+constexpr size_t knownHostPageSize = 4096;
+#else
+constexpr size_t knownHostPageSize = 0;
+#endif
+static_assert(knownHostPageSize == 0 ||
+                  (knownHostPageSize & (knownHostPageSize - 1)) == 0,
+              "the known host page size must be a power of two");
+
+// The binary logarithm of a power of two (0 for 0).
+constexpr size_t log2OfPowerOfTwo(size_t value) {
+  size_t result = 0;
+  while ((size_t{1} << result) < value) {
+    ++result;
+  }
+  return result;
+}
+
 // Wait until another thread has finished loading or evicting a page.
 void pause(size_t& spins) {
   if (++spins < 64) {
@@ -84,15 +105,47 @@ void pause(size_t& spins) {
 }  // namespace
 
 // _____________________________________________________________________________
+size_t BufferPool::hostPageSize() {
+  if constexpr (knownHostPageSize != 0) {
+    return knownHostPageSize;
+  }
+#ifdef QL_BUFFER_POOL
+  // Query once: the kernel's page size cannot change while we run. A failed
+  // or implausible answer yields 0, which makes every pool invalid instead
+  // of guessing (guessing is the bug this function exists to prevent).
+  static const size_t size = [] {
+    const long queried = ::sysconf(_SC_PAGESIZE);
+    if (queried <= 0) {
+      return size_t{0};
+    }
+    const size_t result = static_cast<size_t>(queried);
+    return (result & (result - 1)) == 0 ? result : size_t{0};
+  }();
+  return size;
+#else
+  return 0;
+#endif
+}
+
+// _____________________________________________________________________________
 BufferPool::BufferPool([[maybe_unused]] const std::string& filename,
                        size_t fileSize, size_t budgetBytes)
-    : budgetPages_{budgetBytes / pageSize} {
+    : pageSize_{hostPageSize()},
+      pageShift_{log2OfPowerOfTwo(pageSize_)},
+      budgetPages_{pageSize_ == 0 ? 0 : budgetBytes / pageSize_} {
 #ifdef QL_BUFFER_POOL
-  if (fileSize == 0) {
+  if (fileSize == 0 || pageSize_ == 0) {
     return;
   }
-  numPages_ = (fileSize + pageSize - 1) / pageSize;
+  numPages_ = (fileSize + pageSize_ - 1) >> pageShift_;
   AD_CONTRACT_CHECK(numPages_ <= std::numeric_limits<uint32_t>::max());
+  // Allocate the states before opening files or reserving the region: if the
+  // allocation throws, nothing exists yet that could leak (the destructor
+  // does not run when a constructor throws).
+  states_ = std::make_unique<std::atomic<uint64_t>[]>(numPages_);
+  for (size_t i = 0; i < numPages_; ++i) {
+    states_[i].store(evicted, std::memory_order_relaxed);
+  }
   bufferedFd_ = ::open(filename.c_str(), O_RDONLY | O_CLOEXEC);
   if (bufferedFd_ < 0) {
     return;
@@ -103,13 +156,7 @@ BufferPool::BufferPool([[maybe_unused]] const std::string& filename,
     // E.g. tmpfs: read through the page cache instead.
     fd_ = ::dup(bufferedFd_);
   }
-  // Allocate the states before reserving the region: if the allocation
-  // throws, no mapping exists yet that could leak.
-  states_ = std::make_unique<std::atomic<uint64_t>[]>(numPages_);
-  for (size_t i = 0; i < numPages_; ++i) {
-    states_[i].store(evicted, std::memory_order_relaxed);
-  }
-  regionSize_ = numPages_ * pageSize;
+  regionSize_ = numPages_ << pageShift_;
   void* region = ::mmap(nullptr, regionSize_, PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
   if (region == MAP_FAILED || fd_ < 0) {
@@ -142,7 +189,7 @@ BufferPool::~BufferPool() {
 
 // _____________________________________________________________________________
 void BufferPool::setBudget(size_t budgetBytes) {
-  budgetPages_.store(budgetBytes / pageSize);
+  budgetPages_.store(pageSize_ == 0 ? 0 : budgetBytes >> pageShift_);
 }
 
 // _____________________________________________________________________________
@@ -150,8 +197,8 @@ bool BufferPool::tryCopy(uint64_t offset, size_t numBytes, char* target) {
   if (numBytes == 0) {
     return true;
   }
-  const size_t first = offset / pageSize;
-  const size_t last = (offset + numBytes - 1) / pageSize;
+  const size_t first = firstPageOf(offset);
+  const size_t last = lastPageOf(offset, numBytes);
   // The state words seen before the copy, without the reference bit (most
   // reads touch one or two pages).
   constexpr size_t numInline = 8;
@@ -226,8 +273,8 @@ void BufferPool::readAll(ql::span<const size_t> numBytes,
       if (numBytes[i] == 0) {
         continue;
       }
-      const size_t first = offsets[i] / pageSize;
-      const size_t last = (offsets[i] + numBytes[i] - 1) / pageSize;
+      const size_t first = firstPageOf(offsets[i]);
+      const size_t last = lastPageOf(offsets[i], numBytes[i]);
       for (size_t page = first; page <= last; ++page) {
         neededPages.push_back(page);
       }
@@ -237,10 +284,16 @@ void BufferPool::readAll(ql::span<const size_t> numBytes,
                       neededPages.end());
 
     // Claim the evicted pages (and in later rounds pin the loaded ones);
-    // another thread is loading, pinning or evicting the others.
+    // another thread is loading, pinning or evicting the others. Reserve
+    // all ownership vectors up front: once a compare-and-swap below has
+    // claimed a page, recording it must not allocate (and thus not throw),
+    // or the page would stay in state `loading` forever, owned by nobody.
     std::vector<size_t> claimed;
     std::vector<size_t> pinned;
     std::vector<size_t> busy;
+    claimed.reserve(neededPages.size());
+    pinned.reserve(neededPages.size());
+    busy.reserve(neededPages.size());
     for (size_t page : neededPages) {
       uint64_t word = states_[page].load(std::memory_order_acquire);
       while (true) {
@@ -262,39 +315,47 @@ void BufferPool::readAll(ql::span<const size_t> numBytes,
       }
     }
 
-    if (!claimed.empty()) {
-      evictFor(claimed.size());
-      try {
-        loadClaimed(claimed, loader);
-      } catch (...) {
-        unclaim(claimed);
-        unpin(pinned);
-        throw;
-      }
-    }
-    // Copy the reads whose pages all belong to this thread: they cannot be
-    // evicted, so these copies need no validation.
-    std::vector<size_t> owned;
-    std::merge(claimed.begin(), claimed.end(), pinned.begin(), pinned.end(),
-               std::back_inserter(owned));
+    // Everything from evicting for the claimed pages to publishing them can
+    // throw (allocation, I/O). Until `publish` has run, this thread owns the
+    // claimed and pinned pages, so any failure must release exactly them:
+    // a page left in state `loading` would block every later reader.
     std::vector<size_t> stillPending;
-    for (size_t i : pending) {
-      bool allOwned = !owned.empty() && numBytes[i] > 0;
-      if (allOwned) {
-        const size_t first = offsets[i] / pageSize;
-        const size_t last = (offsets[i] + numBytes[i] - 1) / pageSize;
-        for (size_t page = first; page <= last && allOwned; ++page) {
-          allOwned = std::binary_search(owned.begin(), owned.end(), page);
+    bool published = false;
+    try {
+      if (!claimed.empty()) {
+        evictFor(claimed.size());
+        loadClaimed(claimed, loader);
+      }
+      // Copy the reads whose pages all belong to this thread: they cannot be
+      // evicted, so these copies need no validation.
+      std::vector<size_t> owned;
+      std::merge(claimed.begin(), claimed.end(), pinned.begin(), pinned.end(),
+                 std::back_inserter(owned));
+      for (size_t i : pending) {
+        bool allOwned = !owned.empty() && numBytes[i] > 0;
+        if (allOwned) {
+          const size_t first = firstPageOf(offsets[i]);
+          const size_t last = lastPageOf(offsets[i], numBytes[i]);
+          for (size_t page = first; page <= last && allOwned; ++page) {
+            allOwned = std::binary_search(owned.begin(), owned.end(), page);
+          }
+        }
+        if (allOwned) {
+          std::memcpy(buffers[i], region_ + offsets[i], numBytes[i]);
+        } else {
+          stillPending.push_back(i);
         }
       }
-      if (allOwned) {
-        std::memcpy(buffers[i], region_ + offsets[i], numBytes[i]);
-      } else {
-        stillPending.push_back(i);
+      publish(claimed);
+      published = true;
+      unpin(pinned);
+    } catch (...) {
+      if (!published) {
+        unclaim(claimed);
+        unpin(pinned);
       }
+      throw;
     }
-    publish(claimed);
-    unpin(pinned);
 
     // Wait for the pages that other threads are loading, pinning or evicting
     // (after releasing our own, so no two threads wait for each other).
@@ -327,7 +388,7 @@ void BufferPool::loadClaimed(ql::span<const size_t> pages,
   // Adjacent pages are read as one range. An incomplete last page of the file
   // is read separately through the page cache, because an `O_DIRECT` read of
   // a whole page there returns fewer bytes.
-  const bool lastPageIsPartial = fileSize_ % pageSize != 0;
+  const bool lastPageIsPartial = fileSize_ % pageSize_ != 0;
   std::vector<size_t> runBytes;
   std::vector<uint64_t> runOffsets;
   std::vector<char*> runTargets;
@@ -344,9 +405,9 @@ void BufferPool::loadClaimed(ql::span<const size_t> pages,
       --numRunPages;
     }
     if (numRunPages > 0) {
-      runBytes.push_back(numRunPages * pageSize);
-      runOffsets.push_back(firstPage * pageSize);
-      runTargets.push_back(region_ + firstPage * pageSize);
+      runBytes.push_back(numRunPages << pageShift_);
+      runOffsets.push_back(byteOffsetOfPage(firstPage));
+      runTargets.push_back(region_ + byteOffsetOfPage(firstPage));
     }
     k = end;
   }
@@ -358,7 +419,7 @@ void BufferPool::loadClaimed(ql::span<const size_t> pages,
     }
   }
   if (readPartialLastPage) {
-    const uint64_t offset = (numPages_ - 1) * pageSize;
+    const uint64_t offset = byteOffsetOfPage(numPages_ - 1);
     preadFully(bufferedFd_, region_ + offset, fileSize_ - offset, offset);
   }
   pageLoads_.fetch_add(pages.size(), std::memory_order_relaxed);
@@ -369,6 +430,16 @@ void BufferPool::publish(ql::span<const size_t> pages) {
   if (pages.empty()) {
     return;
   }
+  // Grow the CLOCK first, while the pages are still in state `loading`: if
+  // the allocation throws, the caller releases the pages as if the load had
+  // failed. Hold the lock from the reserve to the last append, so no other
+  // publisher can consume the reserved capacity in between; after the
+  // reserve nothing here allocates. A page thus never becomes resident
+  // without a CLOCK entry (it would never be evictable again). The hit path
+  // does not take this lock: it may see a page resident before its CLOCK
+  // entry, which is fine because eviction is blocked on the lock meanwhile.
+  std::lock_guard lock{clockMutex_};
+  clockPages_.reserve(clockPages_.size() + pages.size());
   for (size_t page : pages) {
     const uint64_t word = states_[page].load(std::memory_order_relaxed);
     AD_CORRECTNESS_CHECK((word & stateMask) == loading);
@@ -376,7 +447,6 @@ void BufferPool::publish(ql::span<const size_t> pages) {
                         std::memory_order_release);
   }
   numLoaded_.fetch_add(pages.size());
-  std::lock_guard lock{clockMutex_};
   for (size_t page : pages) {
     clockPages_.push_back(static_cast<uint32_t>(page));
   }
@@ -401,7 +471,9 @@ void BufferPool::unclaim(ql::span<const size_t> pages) {
     states_[page].store(((word & ~stateMask) + versionOne) | evicting,
                         std::memory_order_release);
   }
-  releasePages({pages.begin(), pages.end()});
+  // `pages` comes from `readAll`, where the claimed pages are a sorted,
+  // unique subsequence of the sorted needed pages.
+  releasePages(pages);
 }
 
 // _____________________________________________________________________________
@@ -427,6 +499,11 @@ size_t BufferPool::evictDownTo(size_t target, size_t maxVictims) {
   std::vector<size_t> victims;
   {
     std::lock_guard lock{clockMutex_};
+    // Reserve before flipping any page to `evicting`: if recording a victim
+    // could still allocate (and throw), that victim would be removed from
+    // the CLOCK, stuck in `evicting`, and never released. Each victim is
+    // popped from `clockPages_`, so its size bounds the victims.
+    victims.reserve(clockPages_.size());
     size_t loaded = numLoaded_.load();
     // Two rounds of the hand clear every reference bit once; if nothing can
     // be evicted after that (all pages are being read right now), give up
@@ -468,22 +545,30 @@ size_t BufferPool::evictDownTo(size_t target, size_t maxVictims) {
   const size_t numVictims = victims.size();
   evictions_.fetch_add(numVictims, std::memory_order_relaxed);
   if (!victims.empty()) {
-    releasePages(std::move(victims));
+    std::sort(victims.begin(), victims.end());
+    releasePages(victims);
   }
   return numVictims;
 }
 
 // _____________________________________________________________________________
-void BufferPool::releasePages(std::vector<size_t> pages) {
-  std::sort(pages.begin(), pages.end());
+void BufferPool::releasePages(ql::span<const size_t> pages) {
+  AD_CORRECTNESS_CHECK(std::is_sorted(pages.begin(), pages.end()));
 #ifdef QL_BUFFER_POOL
   for (size_t k = 0; k < pages.size();) {
     size_t end = k + 1;
     while (end < pages.size() && pages[end] == pages[end - 1] + 1) {
       ++end;
     }
-    ::madvise(region_ + pages[k] * pageSize, (end - k) * pageSize,
-              MADV_DONTNEED);
+    // `pages` are OS pages (`pageSize_` is the OS page size, and `region_` is
+    // OS-page aligned), so every range is aligned and the call discards
+    // exactly these pages. A failure would mean that this invariant does not
+    // hold on this system: fail loudly instead of silently keeping (or, on
+    // a mismatched page size, corrupting) cached bytes.
+    const int result = ::madvise(region_ + byteOffsetOfPage(pages[k]),
+                                 (end - k) << pageShift_, MADV_DONTNEED);
+    AD_CORRECTNESS_CHECK(result == 0, "BufferPool: madvise(MADV_DONTNEED) ",
+                         "failed: ", std::strerror(errno));
     k = end;
   }
 #endif

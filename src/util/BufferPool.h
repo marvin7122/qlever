@@ -51,7 +51,19 @@ namespace ad_utility {
 // concurrently from any number of threads.
 class BufferPool {
  public:
-  static constexpr size_t pageSize = 4096;
+  // The size of one pool page: always the host's OS page size, never a
+  // hard-coded constant. This matters for correctness, not only for
+  // granularity: `madvise(MADV_DONTNEED)` discards whole OS pages, so a pool
+  // page that were smaller than the OS page (e.g. a hard-coded 4096 on a
+  // 16 KiB- or 64 KiB-page ARM kernel) would silently zero neighboring pool
+  // pages that still look resident. Where the architecture fixes the OS page
+  // size (x86: always 4096), the value is a compile-time constant; where the
+  // kernel chooses it at boot time (ARM), it is queried once via `sysconf`.
+  // Returns 0 if the page size cannot be determined (pools are then invalid).
+  static size_t hostPageSize();
+
+  // The page size of this pool (see `hostPageSize`).
+  size_t pageSize() const { return pageSize_; }
 
   // Reads the page-aligned ranges `[offsets[i], offsets[i] + numBytes[i])` of
   // the file into `targets[i]` (page-aligned, `numBytes[i]` a multiple of
@@ -89,7 +101,7 @@ class BufferPool {
   // A budget of zero keeps no page beyond the end of the `readAll` that
   // loaded it.
   void setBudget(size_t budgetBytes);
-  size_t budgetBytes() const { return budgetPages_.load() * pageSize; }
+  size_t budgetBytes() const { return budgetPages_.load() * pageSize_; }
 
   // Evict loaded pages (CLOCK) until at most the budget remains, but at most
   // `maxPages` of them, and return how many were evicted. For a background
@@ -98,7 +110,7 @@ class BufferPool {
   size_t evictTowardsBudget(size_t maxPages);
 
   // The bytes of the pages that are currently loaded.
-  size_t loadedBytes() const { return numLoaded_.load() * pageSize; }
+  size_t loadedBytes() const { return numLoaded_.load() * pageSize_; }
 
   // Read `numBytes[i]` bytes at `offsets[i]` of the file into `buffers[i]`
   // for every `i` (any alignment; the ranges must lie within the file).
@@ -126,6 +138,20 @@ class BufferPool {
   static constexpr uint64_t resident = 2;
   static constexpr uint64_t referenceBit = 4;
   static constexpr uint64_t versionOne = 8;
+
+  // The OS page size and its binary logarithm, for the page arithmetic
+  // below (shifts instead of divisions by a run-time value).
+  const size_t pageSize_;
+  const size_t pageShift_;
+
+  // The first page containing `offset`, resp. the byte offset of `page`.
+  size_t firstPageOf(uint64_t offset) const { return offset >> pageShift_; }
+  size_t lastPageOf(uint64_t offset, size_t numBytes) const {
+    return (offset + numBytes - 1) >> pageShift_;
+  }
+  uint64_t byteOffsetOfPage(size_t page) const {
+    return static_cast<uint64_t>(page) << pageShift_;
+  }
 
   char* region_ = nullptr;
   size_t regionSize_ = 0;
@@ -177,8 +203,10 @@ class BufferPool {
   // evicted pages.
   size_t evictDownTo(size_t target, size_t maxVictims);
 
-  // Return the memory of the evicted pages to the kernel.
-  void releasePages(std::vector<size_t> pages);
+  // Return the memory of the evicted pages to the kernel. `sortedPages`
+  // must be sorted and unique (adjacent pages are released as one range).
+  // Never allocates, so it is safe on exception-unwind paths.
+  void releasePages(ql::span<const size_t> sortedPages);
 
   void prefetch(uint64_t offset, size_t numBytes) const {
     __builtin_prefetch(region_ + offset, 0, 3);
