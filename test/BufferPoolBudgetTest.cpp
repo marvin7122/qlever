@@ -145,6 +145,9 @@ TEST(BufferPoolBudget, policyStaysWithinFloorAndCeiling) {
 
 // _____________________________________________________________________________
 TEST(BufferPoolBudget, evictTowardsBudgetIsBounded) {
+#ifndef __linux__
+  GTEST_SKIP() << "BufferPool needs Linux";
+#endif
   const std::string filename = "bufferPoolBudgetTestBounded.dat";
   const std::string contents = makeContents(20);
   writeFile(filename, contents);
@@ -165,6 +168,9 @@ TEST(BufferPoolBudget, evictTowardsBudgetIsBounded) {
 
 // _____________________________________________________________________________
 TEST(BufferPoolBudget, backgroundEvictionWithConcurrentReaders) {
+#ifndef __linux__
+  GTEST_SKIP() << "BufferPool needs Linux";
+#endif
   const size_t numPages = 256;
   const std::string filename = "bufferPoolBudgetTestBackground.dat";
   const std::string contents = makeContents(numPages);
@@ -237,6 +243,9 @@ TEST(BufferPoolBudget, backgroundEvictionWithConcurrentReaders) {
 
 // _____________________________________________________________________________
 TEST(BufferPoolBudget, unregisteringStopsTheThread) {
+#ifndef __linux__
+  GTEST_SKIP() << "BufferPool needs Linux";
+#endif
   const std::string filename = "bufferPoolBudgetTestStop.dat";
   const std::string contents = makeContents(8);
   writeFile(filename, contents);

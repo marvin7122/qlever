@@ -194,11 +194,24 @@ VocabularyOnDisk::submitThroughManager(ad_utility::BatchManagerBase& manager,
 // _____________________________________________________________________________
 VocabularyOnDisk::BufferPools* VocabularyOnDisk::bufferPools(
     size_t totalBudget, bool elastic, size_t reserve) const {
-  if ((totalBudget == 0 && !elastic) || bufferPools_ == nullptr ||
-      bufferPools_->failed_) {
+  if (bufferPools_ == nullptr || bufferPools_->failed_) {
     return nullptr;
   }
   auto& pools = *bufferPools_;
+  if (totalBudget == 0 && !elastic) {
+    std::lock_guard lock{pools.mutex_};
+    pools.elasticRegistration_.reset();
+    pools.elastic_ = false;
+    pools.budget_ = 0;
+    if (pools.words_ != nullptr) {
+      // Keep the pools alive for lookups that are still using them.
+      pools.words_->setBudget(0);
+      pools.offsets_->setBudget(0);
+      pools.words_->evictTowardsBudget(pools.words_->numPages());
+      pools.offsets_->evictTowardsBudget(pools.offsets_->numPages());
+    }
+    return nullptr;
+  }
   if (elastic) {
     // The controller sets the budgets; keep its bounds current (cheap).
     auto& controller = ad_utility::BufferPoolBudgetController::global();

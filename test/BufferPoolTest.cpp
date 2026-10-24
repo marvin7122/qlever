@@ -68,14 +68,14 @@ void readAndCheck(BufferPool& pool, const std::string& contents,
 
 // _____________________________________________________________________________
 TEST(BufferPool, hitsAndMisses) {
+#ifndef __linux__
+  GTEST_SKIP() << "BufferPool needs Linux";
+#endif
   const std::string filename = "bufferPoolTestHits.dat";
   const std::string contents = makeContents(3, 2048);
   absl::Cleanup removeFile{[&filename]() { ad_utility::deleteFile(filename); }};
   writeFile(filename, contents);
   BufferPool pool(filename, contents.size(), 100 * P);
-#ifndef __linux__
-  GTEST_SKIP() << "BufferPool needs Linux";
-#endif
   ASSERT_TRUE(pool.isValid());
   EXPECT_EQ(pool.numPages(), 4u);
   // Within a page, across a page boundary, the incomplete last page, empty.
@@ -97,14 +97,14 @@ TEST(BufferPool, hitsAndMisses) {
 
 // _____________________________________________________________________________
 TEST(BufferPool, loaderGetsMergedAlignedRuns) {
+#ifndef __linux__
+  GTEST_SKIP() << "BufferPool needs Linux";
+#endif
   const std::string filename = "bufferPoolTestLoader.dat";
   const std::string contents = makeContents(6, 100);
   absl::Cleanup removeFile{[&filename]() { ad_utility::deleteFile(filename); }};
   writeFile(filename, contents);
   BufferPool pool(filename, contents.size(), 100 * P);
-#ifndef __linux__
-  GTEST_SKIP() << "BufferPool needs Linux";
-#endif
   ASSERT_TRUE(pool.isValid());
   std::vector<std::pair<uint64_t, size_t>> calls;
   BufferPool::Loader loader = [&calls](int fd, ql::span<const size_t> numBytes,
@@ -205,15 +205,15 @@ TEST(BufferPool, emptyFile) {
 // so pages are evicted and reloaded while other threads read them. Every read
 // must return the right bytes.
 TEST(BufferPool, concurrentReadersUnderEviction) {
+#ifndef __linux__
+  GTEST_SKIP() << "BufferPool needs Linux";
+#endif
   const std::string filename = "bufferPoolTestConcurrent.dat";
   const std::string contents = makeContents(64, 1234);
   absl::Cleanup removeFile{[&filename]() { ad_utility::deleteFile(filename); }};
   writeFile(filename, contents);
   for (size_t budgetPages : {size_t{0}, size_t{3}, size_t{16}, size_t{100}}) {
     BufferPool pool(filename, contents.size(), budgetPages * P);
-#ifndef __linux__
-    GTEST_SKIP() << "BufferPool needs Linux";
-#endif
     ASSERT_TRUE(pool.isValid());
     std::atomic<size_t> errors = 0;
     std::vector<std::thread> threads;
