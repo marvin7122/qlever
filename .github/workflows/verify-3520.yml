@@ -1,0 +1,49 @@
+name: Verify 3520 backport (verification only)
+
+# Disposable verification for ad-freiburg/qlever#3520 on this fork-clone
+# branch: build and run StringTest under C++20 (fallback branch) and C++23
+# (std::string::resize_and_overwrite branch, which no regular CI compiles).
+# Runs only on pushes to this branch; not for merge.
+
+on:
+  push:
+    branches: [work/3520-resize-and-overwrite]
+
+permissions:
+  contents: read
+
+jobs:
+  string-backport:
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx-standard: ['20', '23']
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: 'recursive'
+      - name: Install dependencies
+        uses: ./.github/workflows/install-dependencies-ubuntu
+      - name: Install compiler
+        uses: ./.github/workflows/install-compiler-ubuntu
+        with:
+          compiler: gcc
+          compiler-version: 13
+      - name: Configure and build StringTest
+        uses: ./.github/workflows/build-and-test
+        with:
+          build-type: Release
+          target: StringTest
+          run-tests: 'false'
+          run-benchmark: 'false'
+          run-e2e: 'false'
+          cmake-args: >-
+            -DCMAKE_TOOLCHAIN_FILE="$(pwd)/toolchains/gcc13.cmake"
+            -DCMAKE_CXX_STANDARD_MANUALLY_OVERRIDDEN=${{matrix.cxx-standard}}
+            -DUSE_PARALLEL=true
+      - name: Run StringTest
+        run: |
+          bin=$(find build/test -name StringTest -type f | head -1)
+          echo "== $bin (C++${{matrix.cxx-standard}})"
+          (cd "$(dirname "$bin")" && ./StringTest)
