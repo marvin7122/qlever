@@ -5,15 +5,18 @@
 // 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
-// BMW =  Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
+// BMW = Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "global/RuntimeParameters.h"
-#include "util/IoUringManager.h"
 
 #include <absl/strings/str_join.h>
 
 #include "backports/algorithm.h"
 #include "util/Algorithm.h"
+#include "util/IoUringManager.h"
 
 // _____________________________________________________________________________
 RuntimeParameters::RuntimeParameters() {
@@ -116,6 +119,9 @@ RuntimeParameters::RuntimeParameters() {
   add(vocabularyIouringPageCacheFastPath_);
   add(vocabularyMmapResidentReads_);
   add(vocabularyMmapPrefetchDistance_);
+  add(vocabularyBufferPoolSize_);
+  add(vocabularyBufferPoolAuto_);
+  add(vocabularyBufferPoolReserve_);
   add(vocabularyInternalRankLookup_);
   add(vocabularyInternalRankPrefetchDistance_);
   add(vocabularyInternalRankHugePages_);
