@@ -7,6 +7,8 @@ name: ARM buffer-pool test (verification only)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ci/arm-bufferpool-297]
 
 permissions:
   contents: read
