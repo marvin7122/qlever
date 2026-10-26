@@ -11,6 +11,7 @@ that motivated them.
 | `checklist/` | `rule.json` | CPP (language), QC (QLever conventions), CQ (code quality) rules, one file per id |
 | `pitfalls/` | review comments by the maintainers on this fork's PRs | PP checks, each with the quotes that motivated it |
 | `review-categories/` | `rule.json` | the finding categories the fan-out runner classifies into |
+| `style/` | `.clang-format`, `misc/format-check.sh`, the sources themselves | layout conventions the formatter enforces or cannot express: formatting, separator comments, include guards and includes |
 
 Ids such as `CPP15` or `PP3` are the file names, so references between rules stay
 valid. The general C++ rules these project rules instantiate live in
