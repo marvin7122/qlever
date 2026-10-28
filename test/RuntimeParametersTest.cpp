@@ -66,6 +66,35 @@ TEST(RuntimeParameters, lazyIndexScanNumThreadsIsStrictlyPositive) {
   EXPECT_EQ(params.lazyIndexScanNumThreads_.get(), 1u);
 }
 
+// Test that `select-export-term-cache-min-hit-rate` rejects non-finite values
+// and values above 1 (both would defeat the adaptive cache policy), while
+// nonpositive values, which disable the hit-rate check, stay allowed.
+TEST(RuntimeParameters, selectExportTermCacheMinHitRateIsValidated) {
+  RuntimeParameters params;
+  EXPECT_NO_THROW(
+      params.setFromAssignment("select-export-term-cache-min-hit-rate=0.5"));
+  EXPECT_EQ(params.selectExportTermCacheMinHitRate_.get(), 0.5);
+  EXPECT_NO_THROW(
+      params.setFromAssignment("select-export-term-cache-min-hit-rate=1"));
+  EXPECT_NO_THROW(
+      params.setFromAssignment("select-export-term-cache-min-hit-rate=0"));
+  EXPECT_NO_THROW(
+      params.setFromAssignment("select-export-term-cache-min-hit-rate=-1"));
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      params.setFromAssignment("select-export-term-cache-min-hit-rate=1.5"),
+      AllOf(HasSubstr("select-export-term-cache-min-hit-rate"),
+            HasSubstr("at most 1")),
+      std::runtime_error);
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      params.setFromAssignment("select-export-term-cache-min-hit-rate=nan"),
+      HasSubstr("finite"), std::runtime_error);
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      params.setFromAssignment("select-export-term-cache-min-hit-rate=inf"),
+      HasSubstr("finite"), std::runtime_error);
+  // Rejected values do not change the stored value.
+  EXPECT_EQ(params.selectExportTermCacheMinHitRate_.get(), -1.0);
+}
+
 // Test that `getKeys` and `toMap` (the building blocks of
 // `--set-runtime-parameter help`) are consistent with each other.
 TEST(RuntimeParameters, getKeysAndToMapAreConsistent) {
