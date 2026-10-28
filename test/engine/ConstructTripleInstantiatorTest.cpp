@@ -10,6 +10,8 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
+#include <string_view>
+
 #include "../util/GTestHelpers.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/ConstructTypes.h"
@@ -37,7 +39,7 @@ EvaluatedTerm makeTerm(std::string str, const char* type = nullptr) {
 static constexpr auto matchesEvaluatedTerm = [](const auto& str,
                                                 const char* type) {
   return ::testing::Pointee(::testing::AllOf(
-      AD_FIELD(EvaluatedTermData, rdfTermString_, std::string(str)),
+      AD_FIELD(EvaluatedTermData, rdfTermString_, std::string_view{str}),
       AD_FIELD(EvaluatedTermData, rdfTermDataType_, ::testing::Eq(type))));
 };
 
