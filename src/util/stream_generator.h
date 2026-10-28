@@ -1,7 +1,8 @@
-// Copyright 2021 - 2025 The QLever Authors, in particular:
+// Copyright 2021 - 2026 The QLever Authors, in particular:
 //
 // 2021 Robin Textor-Falconi <textorr@cs.uni-freiburg.de>, UFR
 // 2025 Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
 
@@ -30,6 +31,7 @@
 #ifndef QLEVER_REDUCED_FEATURE_SET_FOR_CPP17
 #include <coroutine>
 #include <exception>
+#include <memory>
 #include <sstream>
 
 #include "util/CompilerWarnings.h"
@@ -64,7 +66,11 @@ class suspend_sometimes {
 // suspension-related decisions.
 template <size_t BUFFER_SIZE>
 class stream_generator_promise {
-  std::array<char, BUFFER_SIZE> data_;
+  // Heap-allocated so that the coroutine frame stays small. With an inline
+  // buffer the frame itself would be `BUFFER_SIZE` bytes large,
+  // which overflows the stack when the compiler elides the heap allocation
+  // of the frame.
+  std::unique_ptr<char[]> data_ = std::make_unique<char[]>(BUFFER_SIZE);
   size_t currentIndex_ = 0;
   static_assert(BUFFER_SIZE > 0, "Buffer size must be greater than zero");
   // Temporarily store data that didn't fit into the buffer so far.
@@ -91,7 +97,7 @@ class stream_generator_promise {
   suspend_sometimes yield_value(std::string_view value) noexcept {
     if (isBufferLargeEnough(value)) {
       if (!value.empty()) {
-        std::memcpy(data_.data() + currentIndex_, value.data(), value.size());
+        std::memcpy(data_.get() + currentIndex_, value.data(), value.size());
       }
       currentIndex_ += value.size();
       overflow_ = {};
@@ -99,7 +105,7 @@ class stream_generator_promise {
       return suspend_sometimes{currentIndex_ == BUFFER_SIZE};
     }
     size_t fittingSize = BUFFER_SIZE - currentIndex_;
-    std::memcpy(data_.data() + currentIndex_, value.data(), fittingSize);
+    std::memcpy(data_.get() + currentIndex_, value.data(), fittingSize);
     currentIndex_ = BUFFER_SIZE;
     overflow_ = value.substr(fittingSize);
     return suspend_sometimes{true};
@@ -135,7 +141,7 @@ class stream_generator_promise {
   constexpr void return_void() const noexcept {}
 
   reference_type value() const noexcept {
-    return std::string_view{data_.data(), currentIndex_};
+    return std::string_view{data_.get(), currentIndex_};
   }
 
   // Don't allow any use of 'co_await' inside the generator coroutine.
@@ -239,6 +245,10 @@ class stream_generator_iterator {
 template <size_t BUFFER_SIZE>
 class [[nodiscard]] basic_stream_generator {
  public:
+  // The size of the internal buffer, which is also the maximum size of a
+  // single block that the generator yields.
+  static constexpr size_t BUFFER_SIZE_BYTES = BUFFER_SIZE;
+
   using promise_type = detail::stream_generator_promise<BUFFER_SIZE>;
   using iterator = detail::stream_generator_iterator<BUFFER_SIZE>;
   using value_type = typename iterator::value_type;
@@ -301,8 +311,15 @@ stream_generator_promise<BUFFER_SIZE>::get_return_object() noexcept {
 }
 }  // namespace detail
 
-// Use 1MiB buffer size by default
-using stream_generator = basic_stream_generator<1u << 20>;
+// The default buffer size of 1 MiB. Each generator coroutine allocates one
+// such buffer on the heap. Nothing is sent before the first buffer is full, so
+// a larger buffer delays the first byte and removes the overlap between
+// producing and sending the result: with 4 or 8 MiB, a 15 MB CONSTRUCT export
+// was 14% or 23% slower end to end than with 1 MiB, while the CPU saved by the
+// fewer chunks was only 5 to 10%.
+inline constexpr size_t DEFAULT_STREAM_GENERATOR_BUFFER_SIZE = 1u << 20;
+using stream_generator =
+    basic_stream_generator<DEFAULT_STREAM_GENERATOR_BUFFER_SIZE>;
 
 #endif
 
