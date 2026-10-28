@@ -17,7 +17,6 @@
 #include <vector>
 
 #include "backports/algorithm.h"
-#include "backports/memory_resource.h"
 #include "backports/span.h"
 #include "index/ConstantsIndexBuilding.h"
 #include "index/vocabulary/CompressionWrappers.h"
@@ -186,8 +185,9 @@ class CompressedVocabulary {
   // Look up the words for `indices` and append them to `builder` in the
   // order of `indices`. `indices` must not be empty. The compressed words of
   // the whole batch are fetched with one `lookupBatch` call on the underlying
-  // vocabulary; each word is then decoded by the decoder of its block
-  // directly into the arena of `builder` (no `std::string` per word).
+  // vocabulary; each word is then decoded by the decoder of its block into
+  // one reused buffer and copied from there into the arena of `builder` (no
+  // `std::string` per word).
   //
   // For an underlying vocabulary with holes, a hole index has no stored word:
   // like `operator[]`, append the placeholder for it instead of feeding the
