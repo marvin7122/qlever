@@ -46,4 +46,6 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(FsstScratchBufferBenchmark fsst ${CMAKE_DL_LIBS})
 
+    addAndLinkBenchmark(PrefixCompressorBenchmark)
+
 endif()
