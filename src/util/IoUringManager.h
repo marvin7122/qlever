@@ -31,6 +31,22 @@
 
 namespace ad_utility {
 
+// EXPERIMENT ONLY (not for merging): the sizes and constants of the io_uring
+// read path, overridable by environment variables so that one binary can be
+// swept over their values. Read once per process; the effective values are
+// logged at the first use.
+//   QLEVER_IO_RING_SIZE  submission queue entries = cap of outstanding reads
+//   QLEVER_IO_CQ_ENTRIES completion queue entries (0 = kernel default, 2x SQ)
+//   QLEVER_IO_REAP_WAVE  completions waited for per `io_uring_enter` (wave)
+//   QLEVER_IO_PEEK_BATCH size of the array of `io_uring_peek_batch_cqe`
+struct IoUringTuning {
+  unsigned ringSize = 256;
+  unsigned cqEntries = 0;
+  unsigned reapWave = 8;
+  unsigned peekBatch = 64;
+};
+const IoUringTuning& ioUringTuning();
+
 template <typename T>
 CPP_requires(ReadPolicy_,
              requires(T& policy, int fd, ql::span<const size_t> numBytes,
@@ -175,6 +191,9 @@ class IoUringPolicy {
  private:
   io_uring ring_{};
   unsigned ringSize_;
+  // Experiment: the wave and the CQE array size, see `IoUringTuning`.
+  unsigned reapWave_;
+  std::vector<io_uring_cqe*> cqes_;
 
   // Total number of outstanding reads: reads that occupy a ring slot because
   // they are prepared (SQE filled in, not yet submitted), in flight (submitted
@@ -230,9 +249,9 @@ class IoUringPolicy {
   ~IoUringPolicy();
 
   // Minimum number of completions to wait for when the ring is full or
-  // `wait()` blocks. Waiting for several CQEs and reaping all ready ones in
-  // one pass amortizes `io_uring_enter` and the CQ-head update over the wave.
-  static constexpr unsigned REAP_WAVE = 8;
+  // `wait()` blocks (`reapWave_`, default 8). Waiting for several CQEs and
+  // reaping all ready ones in one pass amortizes `io_uring_enter` and the
+  // CQ-head update over the wave.
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
   // calling thread only when the submission queue is full, in order to drain

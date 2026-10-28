@@ -19,8 +19,10 @@
 #include <atomic>
 #include <cerrno>
 #include <climits>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <vector>
 
 #include "util/Exception.h"
 #include "util/Log.h"
@@ -181,10 +183,53 @@ void SyncIoPolicy::addBatch(int fd,
   }
 }
 
+namespace {
+// The value of the environment variable `name`, or `defaultValue` if it is not
+// set. Throws if it is not an unsigned number in `[minValue, maxValue]`.
+unsigned unsignedFromEnvironment(const char* name, unsigned defaultValue,
+                                 unsigned minValue, unsigned maxValue) {
+  const char* text = std::getenv(name);
+  if (text == nullptr || *text == '\0') {
+    return defaultValue;
+  }
+  char* end = nullptr;
+  const unsigned long value = std::strtoul(text, &end, 10);
+  if (*end != '\0' || value < minValue || value > maxValue) {
+    AD_THROW(absl::StrCat(name, " must be an integer in [", minValue, ", ",
+                          maxValue, "], but is \"", text, "\""));
+  }
+  return static_cast<unsigned>(value);
+}
+}  // namespace
+
+//______________________________________________________________________________
+const IoUringTuning& ioUringTuning() {
+  static const IoUringTuning tuning = []() {
+    IoUringTuning t;
+    t.ringSize =
+        unsignedFromEnvironment("QLEVER_IO_RING_SIZE", t.ringSize, 1, 1u << 15);
+    t.cqEntries = unsignedFromEnvironment("QLEVER_IO_CQ_ENTRIES", t.cqEntries,
+                                          0, 1u << 16);
+    t.reapWave =
+        unsignedFromEnvironment("QLEVER_IO_REAP_WAVE", t.reapWave, 1, 1u << 15);
+    t.peekBatch = unsignedFromEnvironment("QLEVER_IO_PEEK_BATCH", t.peekBatch,
+                                          1, 1u << 15);
+    AD_LOG_INFO << "io_uring tuning: ring size " << t.ringSize
+                << ", CQ entries " << t.cqEntries << " (0 = kernel default)"
+                << ", reap wave " << t.reapWave << ", peek batch "
+                << t.peekBatch << std::endl;
+    return t;
+  }();
+  return tuning;
+}
+
 #ifdef QLEVER_HAS_IO_URING
 
 //______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
+IoUringPolicy::IoUringPolicy(unsigned ringSize)
+    : ringSize_(ringSize),
+      reapWave_(ioUringTuning().reapWave),
+      cqes_(ioUringTuning().peekBatch) {
   // Set up the submission and completion queues, shared between this process
   // and the kernel, with (at least) `ringSize_` submission slots in the
   // submission queue. liburing rounds the requested size up to a power of two,
@@ -192,7 +237,14 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // a conservative (lower) bound for the "ring full" check below. See
   // https://man7.org/linux/man-pages/man3/io_uring_queue_init.3.html for
   // details.
-  int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
+  // Experiment: an explicit completion queue size (`IORING_SETUP_CQSIZE`); the
+  // kernel rejects one that is smaller than the submission queue.
+  io_uring_params params{};
+  if (ioUringTuning().cqEntries > 0) {
+    params.flags |= IORING_SETUP_CQSIZE;
+    params.cq_entries = ioUringTuning().cqEntries;
+  }
+  int ret = io_uring_queue_init_params(ringSize_, &ring_, &params);
   if (ret < 0) {
     AD_THROW("io_uring_queue_init failed in IoUringManager");
   }
@@ -259,7 +311,7 @@ void IoUringPolicy::addBatch(int fd,
       submitOrThrow();
       while (numOutstandingReadRequests_ >= ringSize_) {
         drainAtLeast(static_cast<unsigned>(
-            std::min<size_t>(REAP_WAVE, numOutstandingReadRequests_)));
+            std::min<size_t>(reapWave_, numOutstandingReadRequests_)));
       }
     }
 
@@ -294,14 +346,14 @@ void IoUringPolicy::addBatch(int fd,
 void IoUringPolicy::wait(BatchHandle handle) {
   // Drain completions until this batch is gone. `processCqe` erases a batch as
   // soon as its last read completes, so a present entry always still has
-  // outstanding reads. Waiting for up to `REAP_WAVE` CQEs never waits longer
+  // outstanding reads. Waiting for up to `reapWave_` CQEs never waits longer
   // than this batch needs: it cannot finish before its own remaining reads
   // complete, and any CQE (also of other batches) counts towards the wave.
   for (auto it = numOutstandingReadRequestsPerBatch_.find(handle);
        it != numOutstandingReadRequestsPerBatch_.end();
        it = numOutstandingReadRequestsPerBatch_.find(handle)) {
     drainAtLeast(
-        static_cast<unsigned>(std::min<size_t>(REAP_WAVE, it->second)));
+        static_cast<unsigned>(std::min<size_t>(reapWave_, it->second)));
   }
 }
 
@@ -353,17 +405,16 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
   // applied to the bookkeeping before any error is thrown, so the outstanding
   // counts stay consistent and no CQE is processed twice.
   const char* firstErrorMessage = nullptr;
-  std::array<io_uring_cqe*, 64> cqes{};
   while (true) {
     const unsigned n = io_uring_peek_batch_cqe(
-        &ring_, cqes.data(), static_cast<unsigned>(cqes.size()));
+        &ring_, cqes_.data(), static_cast<unsigned>(cqes_.size()));
     if (n == 0) {
       break;
     }
     for (unsigned i = 0; i < n; ++i) {
       // Recover the id via the 64-bit `user_data` field, see `addBatch`.
       const char* errorMessage =
-          processCqe(cqes[i]->res, io_uring_cqe_get_data64(cqes[i]));
+          processCqe(cqes_[i]->res, io_uring_cqe_get_data64(cqes_[i]));
       if (firstErrorMessage == nullptr) {
         firstErrorMessage = errorMessage;
       }

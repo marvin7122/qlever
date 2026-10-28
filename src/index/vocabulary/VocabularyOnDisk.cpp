@@ -384,6 +384,7 @@ void VocabularyOnDisk::open(const std::string& filename) {
       NUM_VOCAB_BATCH_IO_MANAGERS);
   bool preferIoUring = true;
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
+    ioManagers_->push(ad_utility::makeBatchManager(
+        preferIoUring, ad_utility::ioUringTuning().ringSize));
   }
 }
