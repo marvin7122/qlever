@@ -32,20 +32,23 @@
 namespace ad_utility {
 
 // EXPERIMENT ONLY (not for merging): the sizes and constants of the io_uring
-// read path, overridable by environment variables so that one binary can be
-// swept over their values. Read once per process; the effective values are
-// logged at the first use.
-//   QLEVER_IO_RING_SIZE  submission queue entries = cap of outstanding reads
-//   QLEVER_IO_CQ_ENTRIES completion queue entries (0 = kernel default, 2x SQ)
-//   QLEVER_IO_REAP_WAVE  completions waited for per `io_uring_enter` (wave)
-//   QLEVER_IO_PEEK_BATCH size of the array of `io_uring_peek_batch_cqe`
+// read path, set from the runtime parameters `vocabulary-io-ring-size`,
+// `-cq-entries`, `-reap-wave` and `-peek-batch` when a vocabulary is opened (so
+// `--set-runtime-parameter` at server startup works), so that one binary can be
+// swept over their values. They apply to the managers created afterwards.
 struct IoUringTuning {
+  // Submission queue entries = cap of outstanding reads.
   unsigned ringSize = 256;
+  // Completion queue entries (0 = kernel default, twice the submission queue).
   unsigned cqEntries = 0;
+  // Completions waited for per `io_uring_enter` (the wave).
   unsigned reapWave = 8;
+  // Size of the array of `io_uring_peek_batch_cqe`.
   unsigned peekBatch = 64;
 };
 const IoUringTuning& ioUringTuning();
+// Set the tuning and log it (once per call).
+void setIoUringTuning(const IoUringTuning& tuning);
 
 template <typename T>
 CPP_requires(ReadPolicy_,

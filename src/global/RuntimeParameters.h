@@ -251,6 +251,14 @@ struct RuntimeParameters {
   Bool vocabularyIouringPageCacheFastPath_{
       true, "vocabulary-iouring-page-cache-fast-path"};
 
+  // EXPERIMENT ONLY (not for merging): the sizes and constants of the io_uring
+  // read path, see `IoUringTuning`. Read when a vocabulary is opened, so set
+  // them with `--set-runtime-parameter` at server startup.
+  SizeT vocabularyIoRingSize_{256, "vocabulary-io-ring-size"};
+  SizeT vocabularyIoCqEntries_{0, "vocabulary-io-cq-entries"};
+  SizeT vocabularyIoReapWave_{8, "vocabulary-io-reap-wave"};
+  SizeT vocabularyIoPeekBatch_{64, "vocabulary-io-peek-batch"};
+
   // Configure how many blocks are compressed and written concurrently per
   // permutation. The blocks are compressed and written on the global thread
   // pool, so this is not a number of threads of its own, and it is capped at

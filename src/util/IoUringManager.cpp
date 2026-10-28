@@ -19,7 +19,6 @@
 #include <atomic>
 #include <cerrno>
 #include <climits>
-#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <vector>
@@ -184,43 +183,24 @@ void SyncIoPolicy::addBatch(int fd,
 }
 
 namespace {
-// The value of the environment variable `name`, or `defaultValue` if it is not
-// set. Throws if it is not an unsigned number in `[minValue, maxValue]`.
-unsigned unsignedFromEnvironment(const char* name, unsigned defaultValue,
-                                 unsigned minValue, unsigned maxValue) {
-  const char* text = std::getenv(name);
-  if (text == nullptr || *text == '\0') {
-    return defaultValue;
-  }
-  char* end = nullptr;
-  const unsigned long value = std::strtoul(text, &end, 10);
-  if (*end != '\0' || value < minValue || value > maxValue) {
-    AD_THROW(absl::StrCat(name, " must be an integer in [", minValue, ", ",
-                          maxValue, "], but is \"", text, "\""));
-  }
-  return static_cast<unsigned>(value);
+IoUringTuning& mutableIoUringTuning() {
+  static IoUringTuning tuning;
+  return tuning;
 }
 }  // namespace
 
 //______________________________________________________________________________
-const IoUringTuning& ioUringTuning() {
-  static const IoUringTuning tuning = []() {
-    IoUringTuning t;
-    t.ringSize =
-        unsignedFromEnvironment("QLEVER_IO_RING_SIZE", t.ringSize, 1, 1u << 15);
-    t.cqEntries = unsignedFromEnvironment("QLEVER_IO_CQ_ENTRIES", t.cqEntries,
-                                          0, 1u << 16);
-    t.reapWave =
-        unsignedFromEnvironment("QLEVER_IO_REAP_WAVE", t.reapWave, 1, 1u << 15);
-    t.peekBatch = unsignedFromEnvironment("QLEVER_IO_PEEK_BATCH", t.peekBatch,
-                                          1, 1u << 15);
-    AD_LOG_INFO << "io_uring tuning: ring size " << t.ringSize
-                << ", CQ entries " << t.cqEntries << " (0 = kernel default)"
-                << ", reap wave " << t.reapWave << ", peek batch "
-                << t.peekBatch << std::endl;
-    return t;
-  }();
-  return tuning;
+const IoUringTuning& ioUringTuning() { return mutableIoUringTuning(); }
+
+//______________________________________________________________________________
+void setIoUringTuning(const IoUringTuning& tuning) {
+  AD_CONTRACT_CHECK(tuning.ringSize > 0 && tuning.reapWave > 0 &&
+                    tuning.peekBatch > 0);
+  mutableIoUringTuning() = tuning;
+  AD_LOG_INFO << "io_uring tuning: ring size " << tuning.ringSize
+              << ", CQ entries " << tuning.cqEntries << " (0 = kernel default)"
+              << ", reap wave " << tuning.reapWave << ", peek batch "
+              << tuning.peekBatch << std::endl;
 }
 
 #ifdef QLEVER_HAS_IO_URING
