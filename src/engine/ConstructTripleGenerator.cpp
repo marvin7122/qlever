@@ -9,64 +9,23 @@
 
 #include "engine/ConstructTripleGenerator.h"
 
-#include <cstdlib>
-
 #include "engine/ConstructBatchEvaluator.h"
 #include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleInstantiator.h"
-#include "util/Exception.h"
-#include "util/Log.h"
+#include "global/RuntimeParameters.h"
 
 namespace qlever::constructExport {
 
 using ad_utility::InputRangeTypeErased;
 using StringTriple = QueryExecutionTree::StringTriple;
 
-namespace {
-// EXPERIMENT ONLY (not for merging): the sizes of the export, overridable by
-// environment variables so that one binary can be swept over their values.
-//   QLEVER_EXPORT_BATCH_ROWS    rows of the ID table per batch (default 1024)
-//   QLEVER_EXPORT_CACHE_ENTRIES entries of the ID cache per variable of the
-//                               CONSTRUCT template (default 2048)
-// Read once per process; the effective values are logged at the first use.
-struct ExportTuning {
-  size_t batchRows = ConstructTripleGenerator::BATCH_SIZE;
-  size_t cacheEntriesPerVariable =
-      ConstructTripleGenerator::CACHE_ENTRIES_PER_VARIABLE;
-};
-
-size_t sizeFromEnvironment(const char* name, size_t defaultValue) {
-  const char* text = std::getenv(name);
-  if (text == nullptr || *text == '\0') {
-    return defaultValue;
-  }
-  char* end = nullptr;
-  const unsigned long long value = std::strtoull(text, &end, 10);
-  AD_CONTRACT_CHECK(*end == '\0' && value > 0);
-  return static_cast<size_t>(value);
-}
-
-const ExportTuning& exportTuning() {
-  static const ExportTuning tuning = []() {
-    ExportTuning t;
-    t.batchRows = sizeFromEnvironment("QLEVER_EXPORT_BATCH_ROWS", t.batchRows);
-    t.cacheEntriesPerVariable = sizeFromEnvironment(
-        "QLEVER_EXPORT_CACHE_ENTRIES", t.cacheEntriesPerVariable);
-    AD_LOG_INFO << "export tuning: batch rows " << t.batchRows
-                << ", cache entries per variable " << t.cacheEntriesPerVariable
-                << std::endl;
-    return t;
-  }();
-  return tuning;
-}
-}  // namespace
-
 //______________________________________________________________________________
 IdCache ConstructTripleGenerator::makeIdCache(
     const PreprocessedConstructTemplate& tmpl) {
   return IdCache{std::max(tmpl.uniqueVariableColumns_.size(), size_t{1}) *
-                 exportTuning().cacheEntriesPerVariable};
+                 getRuntimeParameter<
+                     &RuntimeParameters::exportCacheEntriesPerVariable_>()};
 }
 
 namespace {
@@ -136,7 +95,9 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
   // lambda retain a reference into the by-value `table` parameter.
   auto rowView = table.view_;
   const TableConstRefWithVocab tableWithVocab = table.tableWithVocab_;
-  return ranges::views::chunk(std::move(rowView), exportTuning().batchRows) |
+  return ranges::views::chunk(
+             std::move(rowView),
+             getRuntimeParameter<&RuntimeParameters::exportBatchRows_>()) |
          ql::views::transform([tableWithVocab, context = std::move(context),
                                tableRowOffset](auto chunkView) {
            return computeBatch(tableWithVocab, chunkView, context,
