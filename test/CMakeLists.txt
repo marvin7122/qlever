@@ -651,3 +651,5 @@ addLinkAndDiscoverTest(MetricsTest metrics)
 addLinkAndDiscoverTest(InstrumentedExecutorTest metrics)
 
 addLinkAndDiscoverTest(ResourceMonitorTest qlever_util)
+
+addLinkAndDiscoverTestNoLibs(ScatterGatherArenaStreamerTest)
