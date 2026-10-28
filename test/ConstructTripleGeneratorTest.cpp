@@ -13,7 +13,9 @@
 #include "engine/ConstructTripleGenerator.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/Result.h"
+#include "global/RuntimeParameters.h"
 #include "util/CancellationHandle.h"
+#include "util/RuntimeParametersTestHelpers.h"
 
 namespace {
 
@@ -284,6 +286,11 @@ TEST_F(ConstructTripleGeneratorTest, viewSubrangeReadsCorrectRowsOfIdTable) {
 // correctly crosses the internal batch boundary and yields triples for all
 // rows.
 TEST_F(ConstructTripleGeneratorTest, acrossBatchBoundary) {
+  // Pin the chunking to `BATCH_SIZE`: the runtime default (8192, see #64)
+  // would fit all rows into a single chunk and never cross a boundary.
+  auto reset = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportRowBatchSize_>(
+      ConstructTripleGenerator::BATCH_SIZE);
   constexpr size_t N = ConstructTripleGenerator::BATCH_SIZE + 1;
 
   std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
@@ -301,10 +308,33 @@ TEST_F(ConstructTripleGeneratorTest, acrossBatchBoundary) {
   }
 }
 
+// `construct-export-row-batch-size=1` still yields every row. The default
+// `BATCH_SIZE` is 1024; this covers a different chunking.
+TEST_F(ConstructTripleGeneratorTest, rowBatchSizeOneYieldsEveryRow) {
+  auto reset = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportRowBatchSize_>(1);
+  constexpr size_t N = 5;
+  std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
+  auto result = makeResult(makeIdTableFromVector(rows));
+  auto table = makeTableWithRange(*result, 0, N);
+  auto templateTriples = oneTriple(Variable{"?sub"}, iriV("<p>"), iriV("<o>"));
+  VariableToColumnMap varMap;
+  varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
+  auto collected = run(templateTriples, varMap, table);
+  ASSERT_EQ(collected.size(), N);
+  for (const auto& triple : collected) {
+    EXPECT_THAT(triple, matchTriple("<s>", "<p>", "<o>"));
+  }
+}
+
 // After consuming all `ConstructTripleGenerator::BATCH_SIZE` triples in
 // batch 0, cancelling the handle causes the next get() call (which would start
 // batch 1) to throw.
 TEST_F(ConstructTripleGeneratorTest, cancellationThrowsBetweenBatches) {
+  // Pin the chunking to `BATCH_SIZE` so batch 1 exists (see above).
+  auto reset = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportRowBatchSize_>(
+      ConstructTripleGenerator::BATCH_SIZE);
   constexpr size_t N = ConstructTripleGenerator::BATCH_SIZE + 1;
 
   std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
@@ -361,6 +391,10 @@ TEST_F(ConstructTripleGeneratorTest, cannotCancelDuringBatch) {
 // `EvaluatedTerm` `shared_ptr` returned in batch 1 is pointer-identical to the
 // one from batch 0, proving the cache was not reset between batches.
 TEST_F(ConstructTripleGeneratorTest, idCacheIsSharedAcrossBatches) {
+  // Pin the chunking to `BATCH_SIZE` so a second batch exists (see above).
+  auto reset = setRuntimeParameterForTest<
+      &RuntimeParameters::constructExportRowBatchSize_>(
+      ConstructTripleGenerator::BATCH_SIZE);
   constexpr size_t N = ConstructTripleGenerator::BATCH_SIZE + 1;
 
   // All rows hold the same ID so the second batch is guaranteed to be a cache
