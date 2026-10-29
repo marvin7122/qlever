@@ -457,6 +457,17 @@ class ArenaVocabBatchBuilder {
     initBuffer(upstream_.get());
   }
 
+  // Allocate the arena from `resource`, which must outlive the builder and
+  // the result it finalizes (its storage deallocates through `resource`).
+  // Used by callers that bring their own resource, e.g. tests that check
+  // where the returned views point.
+  explicit ArenaVocabBatchBuilder(size_t expectedNumWords,
+                                  ql::pmr::memory_resource& resource) {
+    AD_CONTRACT_CHECK(expectedNumWords > 0);
+    views_.reserve(expectedNumWords);
+    initBuffer(resource);
+  }
+
   // Allocate storage inside the arena for `bound` bytes, invoke
   // `decompress(destinationSpan)` to write the bytes (up to `bound`), and
   // register the view.
