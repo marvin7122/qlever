@@ -5,7 +5,6 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYINMEMORY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_VOCABULARYINMEMORY_H
 
-#include <memory>
 #include <string>
 #include <string_view>
 
@@ -76,19 +75,12 @@ class VocabularyInMemory
   }
 
   //____________________________________________________________________________
-  // Return the words for `indices` (not empty) in that order, as views into
-  // this vocabulary; no word is copied. Lifetime: the result must not be used
-  // after this vocabulary is destroyed (not checked at runtime; the index, and
-  // thus its vocabulary, outlives every query).
-  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    AD_CONTRACT_CHECK(!indices.empty());
-    auto data = std::make_shared<ViewsIntoVocabularyBatchLookupData>();
-    data->views() = ::ranges::to_vector(
-        indices | ql::views::transform([this](size_t idx) -> std::string_view {
-          return _words[idx];
-        }));
-    return ViewsIntoVocabularyBatchLookupData::asResult(std::move(data));
-  }
+  // Return the words for `indices` (not empty, every index less than
+  // `size()`; both checked) in that order, as views into this vocabulary; no
+  // word is copied. Lifetime: the result must not be used after this
+  // vocabulary is destroyed or opened again (not checked at runtime; the
+  // index, and thus its vocabulary, outlives every query).
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   //____________________________________________________________________________
   VocabLookupOutput lookupBatchesStreamed(VocabLookupInput input) const {

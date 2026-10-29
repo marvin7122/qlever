@@ -68,13 +68,15 @@ TEST(VocabularyInMemory, LookupBatch) {
   const auto vocab = createVocabulary(words);
   const std::vector<size_t> indices{3, 0, 2, 0};
   const auto result = vocab.lookupBatch(indices);
-  ASSERT_EQ(result->size(), indices.size());
-  for (size_t i = 0; i < indices.size(); ++i) {
-    EXPECT_EQ((*result)[i], words[indices[i]]);
-    EXPECT_EQ((*result)[i].data(), vocab[indices[i]].data()) << "copied";
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
+  for (const auto& [index, word] : ::ranges::views::zip(indices, *result)) {
+    EXPECT_EQ(word.data(), vocab[index].data()) << "copied";
   }
   AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      vocab.lookupBatch(std::vector<size_t>{0, words.size()}),
+      ::testing::HasSubstr("idx < size()"));
 }
 
 TEST(VocabularyInMemory, ReadAndWriteFromFile) {

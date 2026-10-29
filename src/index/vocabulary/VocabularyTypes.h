@@ -84,7 +84,8 @@ class VocabLookupDataCommonBase {
   }
 
  private:
-  // Buffer for the materialized string data (used by disk-based vocabularies).
+  // The storage owned by the result: the materialized string data, or a
+  // nested result of another vocabulary (see `SubBatchVocabBatchLookupData`).
   BufferType buffer_;
 
   // One `string_view` per looked-up index, each pointing into `buffer_` or
@@ -104,7 +105,15 @@ class VocabLookupDataCommonBase {
 // point into the vocabulary itself, so there is nothing to own (see the
 // lifetime note at `VocabularyInMemory::lookupBatch`).
 struct ViewsIntoVocabularyBatchLookupData
-    : VocabLookupDataCommonBase<std::monostate> {};
+    : VocabLookupDataCommonBase<std::monostate> {
+  // Return the batch-lookup result for `views` (one per looked-up index, in
+  // order), which point into the vocabulary.
+  static VocabBatchLookupResult fromViews(std::vector<std::string_view> views) {
+    auto data = std::make_shared<ViewsIntoVocabularyBatchLookupData>();
+    data->views() = std::move(views);
+    return asResult(std::move(data));
+  }
+};
 
 // A vocabulary batch-lookup result whose total size is known up front, so all
 // strings can be materialized into a single contiguous `buffer()` in one go
