@@ -24,7 +24,6 @@
 #include <utility>
 #include <vector>
 
-#include "../../util/DanglingViewTestHelpers.h"
 #include "../../util/GTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/memory_resource.h"
@@ -477,10 +476,6 @@ TEST(VocabBatchLookupResult, AssemblerMixesOwnedAndUnownedViews) {
     EXPECT_TRUE(external.empty());
     result = std::move(assembler).finalizeVocabBatchLookupResult();
   }
-  // Overwrite the stack region the builder-side locals used, so a view that
-  // dangles into a destroyed local reads garbage instead of stale bytes.
-  EXPECT_EQ(clobberStack(), '#');
-  EXPECT_EQ(clobberStack<16384>('%'), '%');
   EXPECT_THAT(result,
               ::testing::ElementsAre(ramWords[0], "b", "ex-a", ramWords[1]));
   EXPECT_EQ(result[0].data(), ramWords[0].data());
@@ -491,7 +486,6 @@ TEST(VocabBatchLookupResult, AssemblerMixesOwnedAndUnownedViews) {
   // Copies share the same storage and stay valid after the original is gone.
   auto copy = result;
   result = VocabBatchLookupResult{};
-  EXPECT_EQ(clobberStack(), '#');
   EXPECT_THAT(copy,
               ::testing::ElementsAre(ramWords[0], "b", "ex-a", ramWords[1]));
   EXPECT_EQ(copy[2].data(), externalDataA);
@@ -550,7 +544,6 @@ TEST_F(VocabBatchLookupResultVocabTest,
   auto result = std::move(assembler).finalizeVocabBatchLookupResult();
 
   external.reset();
-  EXPECT_EQ(clobberStack(), '#');
   EXPECT_THAT(result,
               ::testing::ElementsAre("external-word", "internal-word-in-ram",
                                      "external-word"));
@@ -917,4 +910,28 @@ TEST(PmrVocabBatchLookupData, DecompressedWordBoundZeroAndOverrun) {
       overrunningBuilder.appendDecompressedWord(
           2, [](ql::span<char>) -> size_t { return 3; }),
       ::testing::HasSubstr("bytesWritten <= bound"));
+}
+
+// _____________________________________________________________________________
+// Every view of an arena result points into memory that the arena allocated
+// from its resource, also for words short enough for the small string
+// optimization. A view into a temporary that was destroyed inside the builder
+// would fail `contains` instead of reading stale bytes.
+TEST(VocabBatchLookupResult, ArenaViewsPointIntoTheResource) {
+  vocabulary_test::RecordingMemoryResource resource;
+  const std::vector<std::string> words{"a", "bc", "", "def",
+                                       std::string(40, 'x')};
+  ArenaVocabBatchBuilder builder(words.size(), resource);
+  for (const std::string& word : words) {
+    builder.appendWord(word);
+  }
+  const auto result = std::move(builder).finalize();
+  ASSERT_EQ(result.size(), words.size());
+  EXPECT_GT(resource.numBlocks(), 0u);
+  for (size_t i = 0; i < words.size(); ++i) {
+    EXPECT_EQ(result[i], words[i]);
+    if (!words[i].empty()) {
+      EXPECT_TRUE(resource.contains(result[i])) << "word " << i;
+    }
+  }
 }

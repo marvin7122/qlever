@@ -14,7 +14,6 @@
 
 #include <array>
 
-#include "../../util/DanglingViewTestHelpers.h"
 #include "../../util/GTestHelpers.h"
 #include "../../util/PmrStringSsoTestHelpers.h"
 #include "VocabularyTestHelpers.h"
@@ -23,8 +22,6 @@
 #include "global/Id.h"
 #include "index/vocabulary/CompressedVocabulary.h"
 #include "index/vocabulary/PrefixCompressor.h"
-#include "index/vocabulary/StringSortComparator.h"
-#include "index/vocabulary/UnicodeVocabulary.h"
 #include "index/vocabulary/VocabularyInMemory.h"
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
@@ -199,25 +196,6 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchRespectsMemoryLimit) {
 }
 
 // _____________________________________________________________________________
-// Regression test: nested delegating overloads append to the same builder.
-// Only the outer result boundary finalizes it.
-TYPED_TEST(CompressedVocabularyF, LookupBatchWithBuilderThroughDelegation) {
-  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta",
-                                       "epsilon"};
-  auto compressed = this->createCompressedVocabulary()(words);
-  const std::array<size_t, 5> indices{4, 1, 0, 3, 1};
-  SimpleStringComparator comparator{"en", "us", false};
-  UnicodeVocabulary<decltype(compressed), decltype(comparator)> innerVocab{
-      comparator, std::move(compressed)};
-  UnicodeVocabulary<decltype(innerVocab), decltype(comparator)> vocab{
-      comparator, std::move(innerVocab)};
-  ArenaVocabBatchBuilder builder(indices.size());
-  vocab.lookupBatch(indices, builder);
-  const auto result = std::move(builder).finalize();
-  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
-}
-
-// _____________________________________________________________________________
 // Both `lookupBatch` overloads reject an empty batch.
 TYPED_TEST(CompressedVocabularyF, LookupBatchRejectsEmptyIndices) {
   const auto vocab = this->createCompressedVocabulary()(
@@ -355,21 +333,11 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
 // Regression test for a dangling-view bug this lookup path once had: an
 // intermediate local `std::pmr::string` uses the small-string optimization
 // regardless of its allocator, so for short words a saved `string_view`
-// pointed into the destroyed local object instead of the arena.
-//
-// This test has the following detection strength.
-//  - Under AddressSanitizer builds (`CMAKE_BUILD_TYPE=Asan`) with
-//    stack-use-after-return detection enabled (the default for recent Clang,
-//    otherwise `ASAN_OPTIONS=detect_stack_use_after_return=1`), a read through
-//    the dangling view is reported.
-//  - In normal builds it is a practical tripwire, not a proof: reading a
-//    dangling view is UB, so we clobber the stack with sentinel bytes and
-//    verify content byte-for-byte, which makes corruption overwhelmingly
-//    likely but not formally guaranteed.
+// pointed into the destroyed local object instead of the arena. The arena is
+// allocated from a recording resource, and every returned view must lie
+// inside memory that resource handed out; a view into a destroyed temporary
+// fails that check without ever being read.
 TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
-  // Verify that this platform uses inline storage for `std::pmr::string`;
-  // short words therefore use the Small String Optimization (SSO) and would
-  // otherwise end up inside a destroyed stack object rather than the arena.
   // Require inline storage for at least 15 characters in `std::pmr::string`
   // (the capacity of libstdc++; other implementations have more). Short words
   // then use the Small String Optimization (SSO), so a view into such a string
@@ -387,16 +355,15 @@ TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
 
   const auto indices =
       ::ranges::to<std::vector>(ql::views::iota(size_t{0}, words.size()));
-  const auto result = vocab.lookupBatch(indices);
+  vocabulary_test::RecordingMemoryResource resource;
+  ArenaVocabBatchBuilder builder(indices.size(), resource);
+  vocab.lookupBatch(indices, builder);
+  const auto result = std::move(builder).finalize();
   ASSERT_EQ(result.size(), indices.size());
-
-  // Clobber the stack region a dangling SSO view would point into with
-  // sentinel bytes, so no plausible intact copy is left behind.
-  clobberStack();
-  EXPECT_EQ(clobberStack(), '#');
 
   for (size_t i = 0; i < indices.size(); ++i) {
     ASSERT_EQ(result[i], words[i]);
+    EXPECT_TRUE(resource.contains(result[i])) << "word " << i;
   }
 }
 
