@@ -11,6 +11,7 @@
 #include <array>
 
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
@@ -283,12 +284,25 @@ void VocabularyOnDisk::open(const std::string& filename) {
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
 
+  // Experiment: take the sizes and constants of the io_uring read path from the
+  // runtime parameters (set with `--set-runtime-parameter` at startup).
+  ad_utility::setIoUringTuning(ad_utility::IoUringTuning{
+      static_cast<unsigned>(
+          getRuntimeParameter<&RuntimeParameters::vocabularyIoRingSize_>()),
+      static_cast<unsigned>(
+          getRuntimeParameter<&RuntimeParameters::vocabularyIoCqEntries_>()),
+      static_cast<unsigned>(
+          getRuntimeParameter<&RuntimeParameters::vocabularyIoReapWave_>()),
+      static_cast<unsigned>(
+          getRuntimeParameter<&RuntimeParameters::vocabularyIoPeekBatch_>())});
+
   // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
   bool preferIoUring = true;
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
+    ioManagers_->push(ad_utility::makeBatchManager(
+        preferIoUring, ad_utility::ioUringTuning().ringSize));
   }
 }

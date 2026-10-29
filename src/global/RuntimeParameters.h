@@ -232,6 +232,14 @@ struct RuntimeParameters {
   // particular the computation of cache keys) when caching is not required.
   Bool disableCaching_{false, "disable-caching"};
 
+  // EXPERIMENT ONLY (not for merging): the sizes and constants of the io_uring
+  // read path, see `IoUringTuning`. Read when a vocabulary is opened, so set
+  // them with `--set-runtime-parameter` at server startup.
+  SizeT vocabularyIoRingSize_{256, "vocabulary-io-ring-size"};
+  SizeT vocabularyIoCqEntries_{0, "vocabulary-io-cq-entries"};
+  SizeT vocabularyIoReapWave_{8, "vocabulary-io-reap-wave"};
+  SizeT vocabularyIoPeekBatch_{64, "vocabulary-io-peek-batch"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.

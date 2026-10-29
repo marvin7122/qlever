@@ -68,6 +68,10 @@ RuntimeParameters::RuntimeParameters() {
   add(permutationWriterNumThreads_);
   add(vacuumMinimumBlockSize_);
   add(disableCaching_);
+  add(vocabularyIoRingSize_);
+  add(vocabularyIoCqEntries_);
+  add(vocabularyIoReapWave_);
+  add(vocabularyIoPeekBatch_);
   add(logLevel_);
   add(constructDeduplication_);
 
