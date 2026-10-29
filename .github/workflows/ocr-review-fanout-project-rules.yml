@@ -273,7 +273,7 @@ jobs:
           # leg (16 legs -> up to 64 LLM requests) keep a large diff well
           # inside the limit.
           review_concurrency: '4'
-          effort: high
+          effort: low
           sticky_summary: 'false'
           incremental: 'true'
           upload_artifacts: 'true'
