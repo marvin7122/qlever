@@ -65,9 +65,19 @@ class VocabularyInternalExternal {
   auto scanAll() const { return externalVocab_.scanAll(); }
 
   //____________________________________________________________________________
-  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
-  }
+  // Look up the words for `indices` and return them in the order of
+  // `indices`. `indices` must not be empty. A word of the internal (RAM)
+  // vocabulary is returned as a view into that vocabulary, without a copy.
+  // All other words are read with one batched lookup in the external
+  // vocabulary (which uses batched, and where available `io_uring`, reads);
+  // the buffer that holds them is owned by the result.
+  //
+  // Lifetime: the views into the internal vocabulary are valid only while
+  // this vocabulary is open, so the result must not be used after this
+  // vocabulary is closed or destroyed. This is not checked at runtime; it
+  // holds for lookups during query processing, because the index (and thus
+  // this vocabulary) outlives every query.
+  VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   //____________________________________________________________________________
   VocabLookupOutput lookupBatchesStreamed(VocabLookupInput input) const {
