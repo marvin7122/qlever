@@ -144,10 +144,11 @@ using VocabularyScanRange = ad_utility::InputRangeTypeErased<IndexAndWord>;
 // `std::vector<std::string>` buffer and the `views()` point at those strings.
 struct StringVectorVocabBatchLookupData
     : VocabLookupDataCommonBase<std::vector<std::string>> {
-  // Return the batch-lookup result for the owning `words` (one word per
-  // looked-up index, in order): move them into the buffer and point one view
-  // at each of them. Moving the vector does not relocate the strings, so the
-  // views stay valid.
+  //____________________________________________________________________________
+  // Return the batch-lookup result that takes ownership of `words` (one word
+  // per looked-up index, in order): move the vector into the buffer (this
+  // transfers the storage, the strings are not relocated) and then point one
+  // view at each string.
   static VocabBatchLookupResult fromWords(std::vector<std::string> words) {
     auto data = std::make_shared<StringVectorVocabBatchLookupData>();
     data->buffer() = std::move(words);

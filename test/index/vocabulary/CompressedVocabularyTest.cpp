@@ -148,10 +148,10 @@ TYPED_TEST(CompressedVocabularyF, AccessOperator) {
 }
 
 // _______________________________________________________
-// `lookupBatch` returns the same words as `operator[]`, in the order of the
-// indices, for a batch that spans several decoder blocks (the block size of
-// the fixture is 4), for a reordered batch with duplicates, and for a single
-// index. The empty batch is rejected.
+// Test that `lookupBatch` returns the same words as `operator[]`, in the order
+// of the indices, for a batch that spans several decoder blocks (the block
+// size of the fixture is 4), for a reordered batch with duplicates, and for a
+// single index, and that it rejects the empty batch.
 TYPED_TEST(CompressedVocabularyF, LookupBatch) {
   constexpr size_t numWords = 64;
   std::vector<std::string> words;
@@ -161,12 +161,10 @@ TYPED_TEST(CompressedVocabularyF, LookupBatch) {
   }
   const auto vocab = this->createCompressedVocabulary()(words);
   const auto check = [&](ql::span<const size_t> indices) {
-    const auto result = vocab.lookupBatch(indices);
-    ASSERT_EQ(result->size(), indices.size());
-    for (size_t i = 0; i < indices.size(); ++i) {
-      EXPECT_EQ((*result)[i], words[indices[i]]) << "index " << indices[i];
-    }
+    assertLookupResultMatchesVocabularyAtIndices(
+        vocab, vocab.lookupBatch(indices), indices);
   };
+
   check(::ranges::to<std::vector<size_t>>(
       ql::views::iota(size_t{0}, words.size())));
   check(std::vector<size_t>{63, 0, 5, 5, 17, 4});
@@ -359,9 +357,9 @@ std::vector<std::pair<uint64_t, std::string>> expectedIndicesAndWords() {
 }  // namespace
 
 // _____________________________________________________________________________
-// For a vocabulary with holes, `lookupBatch` matches `operator[]`: contained
-// indices (reordered, with a duplicate) yield their words, holes yield the
-// placeholder.
+// Test that for a vocabulary with holes `lookupBatch` matches `operator[]`:
+// contained indices (reordered, with a duplicate) yield their words, holes
+// yield the placeholder.
 TEST(CompressedVocabularyWithHoles, lookupBatch) {
   std::string filename = gtestCurrentTestName();
   auto cleanup = getFileCleanup(filename);
@@ -371,10 +369,8 @@ TEST(CompressedVocabularyWithHoles, lookupBatch) {
   const std::vector<size_t> indices{contained.at(3), 0, contained.at(0),
                                     contained.at(3), contained.at(10) + 1};
   const auto result = vocab.lookupBatch(indices);
-  ASSERT_EQ(result->size(), indices.size());
-  for (size_t i = 0; i < indices.size(); ++i) {
-    EXPECT_EQ((*result)[i], vocab[indices[i]]) << "index " << indices[i];
-  }
+
+  assertLookupResultMatchesVocabularyAtIndices(vocab, result, indices);
   EXPECT_EQ((*result)[1],
             ad_utility::vocabulary::placeholderForMissingVocabIndex(0));
 }
