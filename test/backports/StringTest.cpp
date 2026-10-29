@@ -1,4 +1,4 @@
-// Copyright 2026, The QLever Authors, in particular:
+// Copyright 2026 The QLever Authors, in particular:
 //
 // 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
@@ -7,13 +7,16 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <cstring>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "backports/string.h"
+#include "util/Exception.h"
 
 // _____________________________________________________________________________
 TEST(StringTest, ResizeAndOverwriteExactSize) {
@@ -30,7 +33,9 @@ TEST(StringTest, ResizeAndOverwriteExactSize) {
 
 // _____________________________________________________________________________
 TEST(StringTest, ResizeAndOverwriteSmallerSize) {
-  std::string s(10, 'x');
+  // Longer than the small string buffer, so that `data()` is stable only if
+  // the heap buffer is reused.
+  std::string s(100, 'x');
   const char* dataBefore = s.data();
   const std::string full = "abcdefghij";
   ql::resize_and_overwrite(s, full.size(), [&](char* buf, size_t count) {
@@ -46,7 +51,12 @@ TEST(StringTest, ResizeAndOverwriteSmallerSize) {
 // _____________________________________________________________________________
 TEST(StringTest, ResizeAndOverwriteZeroSize) {
   std::string s = "not empty";
-  ql::resize_and_overwrite(s, 20, [](char*, size_t) { return 0u; });
+  size_t requestedCount = 0;
+  ql::resize_and_overwrite(s, 20, [&requestedCount](char*, size_t count) {
+    requestedCount = count;
+    return 0u;
+  });
+  EXPECT_EQ(requestedCount, 20u);
   EXPECT_TRUE(s.empty());
   EXPECT_EQ(s.size(), 0u);
 }
@@ -54,10 +64,13 @@ TEST(StringTest, ResizeAndOverwriteZeroSize) {
 // _____________________________________________________________________________
 TEST(StringTest, ResizeAndOverwriteZeroCapacity) {
   std::string s;
-  ql::resize_and_overwrite(s, 0, [](char*, size_t count) {
+  bool wasCalled = false;
+  ql::resize_and_overwrite(s, 0, [&wasCalled](char*, size_t count) {
+    wasCalled = true;
     EXPECT_EQ(count, 0u);
     return 0u;
   });
+  EXPECT_TRUE(wasCalled);
   EXPECT_TRUE(s.empty());
   EXPECT_EQ(s.size(), 0u);
 }
@@ -66,8 +79,12 @@ TEST(StringTest, ResizeAndOverwriteZeroCapacity) {
 // Oversize results violate the contract on both branches.
 TEST(StringTest, ResizeAndOverwriteOversizedResultThrows) {
   std::string s;
-  ASSERT_THROW(ql::resize_and_overwrite(s, 4, [](char*, size_t) { return 5u; }),
-               ad_utility::Exception);
+  try {
+    ql::resize_and_overwrite(s, 4, [](char*, size_t) { return 5u; });
+    FAIL() << "An oversized result must throw.";
+  } catch (const ad_utility::Exception& e) {
+    EXPECT_THAT(e.what(), ::testing::HasSubstr("newSize <= count"));
+  }
 }
 
 // _____________________________________________________________________________
@@ -75,12 +92,13 @@ TEST(StringTest, ResizeAndOverwriteOversizedResultThrows) {
 TEST(StringTest, ResizeAndOverwriteMoveOnlyOperation) {
   std::string s;
   const std::string text = "move-only";
-  auto op = [payload = std::make_unique<std::string>(text), &text](
-                char* buf, size_t count) {
-    EXPECT_EQ(count, text.size());
+  auto op = [payload = std::make_unique<std::string>(text)](char* buf,
+                                                            size_t count) {
+    EXPECT_EQ(count, payload->size());
     std::memcpy(buf, payload->data(), payload->size());
     return payload->size();
   };
   ql::resize_and_overwrite(s, text.size(), std::move(op));
   EXPECT_EQ(s, text);
+  EXPECT_EQ(s.size(), text.size());
 }
