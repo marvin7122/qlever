@@ -126,7 +126,7 @@ VocabularyInternalExternal buildHybridVocabulary(
 // (`OnDiskCompressed`): FSST-squared compression over the hybrid vocabulary.
 using CompressedHybridVocabulary =
     CompressedVocabulary<VocabularyInternalExternal,
-                         FsstSquaredCompressionWrapper>;
+                         ad_utility::vocabulary::FsstSquaredCompressionWrapper>;
 
 // Write `words` to a `CompressedHybridVocabulary` at `filename` (every second
 // word disk-only, like `buildHybridVocabulary`), open it and return it.
