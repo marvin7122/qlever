@@ -69,13 +69,14 @@ class VocabularyInternalExternal {
   // `indices`. `indices` must not be empty and every index must be less than
   // `size()`. A word of the internal (RAM)
   // vocabulary is returned as a view into that vocabulary, without a copy.
-  // All other words are read with one batched lookup in the external
-  // vocabulary (which uses batched, and where available `io_uring`, reads);
-  // the buffer that holds them is owned by the result.
+  // All other words are read with one `lookupBatch` call on the external
+  // vocabulary (batched reads, via `io_uring` where available); the buffer
+  // that holds them is owned by the result.
   //
   // Lifetime: the views into the internal vocabulary are valid only while
   // this vocabulary is open, so the result must not be used after this
-  // vocabulary is closed or destroyed. This cannot be checked at runtime:
+  // vocabulary is closed or destroyed (the views into the external words
+  // stay valid, as the result owns them). This cannot be checked at runtime:
   // using such a result afterwards reads through dangling views, which is
   // undefined behavior and fails non-gracefully (it is caught only under
   // AddressSanitizer). The precondition holds for lookups during query

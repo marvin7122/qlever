@@ -118,17 +118,25 @@ TEST(VocabularyInternalExternal, EmptyVocabulary) {
   testEmptyVocabulary(createVocabulary("EmptyVocabulary"));
 }
 
+// `numWords` distinct words of varying length, in index order.
+std::vector<std::string> makeWords(size_t numWords) {
+  std::vector<std::string> words;
+  words.reserve(numWords);
+  for (size_t i : ql::views::iota(size_t{0}, numWords)) {
+    words.push_back(absl::StrCat("word-", i, "-", std::string(i % 5, 'y')));
+  }
+  return words;
+}
+
 // _____________________________________________________________________________
 // Verify that `lookupBatch` returns the same words as `operator[]`, in the
 // order of the indices, for batches that mix internal and external words,
-// contain duplicates, consist of only internal or only external words, or of
-// a single word; that internal words are views into the vocabulary (no copy);
+// contain duplicates, consist of only internal or only external words, or
+// consist of a single word; that internal words are views into the vocabulary
+// (no copy);
 // and that the empty batch is rejected.
 TEST(VocabularyInternalExternal, LookupBatch) {
-  std::vector<std::string> words;
-  for (size_t i : ql::views::iota(size_t{0}, size_t{40})) {
-    words.push_back(absl::StrCat("word-", i, "-", std::string(i % 5, 'y')));
-  }
+  const auto words = makeWords(40);
   // `createVocabulary` writes the words with an even index as external only;
   // the words with an odd index, and the word with index 0 (which is always
   // cached), are also in the internal vocabulary.
@@ -170,10 +178,7 @@ TEST(VocabularyInternalExternal, LookupBatch) {
 // Verify that a result stays valid after further lookups: the external words
 // are owned by the result itself, not by a buffer of the vocabulary.
 TEST(VocabularyInternalExternal, LookupBatchResultOutlivesLaterLookups) {
-  std::vector<std::string> words;
-  for (size_t i : ql::views::iota(size_t{0}, size_t{20})) {
-    words.push_back(absl::StrCat("w", i));
-  }
+  const auto words = makeWords(20);
   const auto vocab =
       createVocabulary("LookupBatchResultOutlivesLaterLookups")(words);
 

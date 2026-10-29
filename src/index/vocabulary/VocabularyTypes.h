@@ -167,9 +167,10 @@ struct StringVectorVocabBatchLookupData
 // `VocabularyInternalExternal` keeps in RAM, which belong to the index), and
 // the result of one batch lookup in another vocabulary (for example the
 // on-disk words of the same batch). That sub-batch result is kept alive as
-// the `buffer()`, so the views that point into it stay valid; nothing is
-// copied. The caller is responsible for the lifetime of the storage behind
-// the other views (see `VocabularyInternalExternal::lookupBatch`).
+// the `buffer()`, so the views that point into it stay valid; only the views
+// are copied into the result, no word data. The caller is responsible for the
+// lifetime of the storage behind the other views (see
+// `VocabularyInternalExternal::lookupBatch`).
 struct SubBatchVocabBatchLookupData
     : VocabLookupDataCommonBase<VocabBatchLookupResult> {};
 
