@@ -119,58 +119,75 @@ TEST(VocabularyInternalExternal, EmptyVocabulary) {
 }
 
 // _____________________________________________________________________________
-// `lookupBatch` returns the same words as `operator[]`, in the order of the
-// indices, for batches that mix internal and external words, contain
-// duplicates, consist of only internal or only external words, or of a single
-// word. Internal words are views into the vocabulary (no copy); external
-// words are owned by the result. The empty batch is rejected.
+// Verify that `lookupBatch` returns the same words as `operator[]`, in the
+// order of the indices, for batches that mix internal and external words,
+// contain duplicates, consist of only internal or only external words, or of
+// a single word; that internal words are views into the vocabulary (no copy);
+// and that the empty batch is rejected.
 TEST(VocabularyInternalExternal, LookupBatch) {
   std::vector<std::string> words;
-  for (size_t i = 0; i < 40; ++i) {
+  for (size_t i : ql::views::iota(size_t{0}, size_t{40})) {
     words.push_back(absl::StrCat("word-", i, "-", std::string(i % 5, 'y')));
   }
-  // `createVocabulary` writes every second word (even index) to the internal
-  // vocabulary.
-  auto vocab = createVocabulary("LookupBatch")(words);
-  const auto check = [&](const std::vector<size_t>& indices) {
+  // `createVocabulary` writes the words with an even index as external only;
+  // the words with an odd index, and the word with index 0 (which is always
+  // cached), are also in the internal vocabulary.
+  const auto vocab = createVocabulary("LookupBatch")(words);
+  const auto isInternal = [&vocab](size_t index) {
+    return vocab.internalVocab()[index].has_value();
+  };
+  ASSERT_TRUE(isInternal(0));
+  ASSERT_TRUE(isInternal(1));
+  ASSERT_FALSE(isInternal(2));
+
+  const auto checkLookupBatch = [&](const std::vector<size_t>& indices) {
     const auto result = vocab.lookupBatch(indices);
-    ASSERT_EQ(result->size(), indices.size());
-    for (size_t i = 0; i < indices.size(); ++i) {
-      EXPECT_EQ((*result)[i], words[indices[i]]) << "index " << indices[i];
-      const auto internal = vocab.internalVocab()[indices[i]];
-      if (internal.has_value()) {
-        EXPECT_EQ((*result)[i].data(), internal.value().data())
-            << "internal word " << indices[i] << " was copied";
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(vocab, result,
+                                                                  indices);
+    for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
+      if (const auto internalWord = vocab.internalVocab()[index];
+          internalWord.has_value()) {
+        EXPECT_EQ((*result)[position].data(), internalWord.value().data())
+            << "internal word " << index << " was copied";
       }
     }
   };
-  check(::ranges::to<std::vector<size_t>>(
+
+  // All words, a reordered batch with duplicates, and single words.
+  checkLookupBatch(::ranges::to<std::vector<size_t>>(
       ql::views::iota(size_t{0}, words.size())));
-  check({39, 0, 7, 7, 2, 1});
-  check({0, 2, 4});
-  check({1, 3, 5});
-  check({0});
-  check({1});
-  AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(std::vector<size_t>{}),
+  checkLookupBatch({39, 0, 7, 7, 2, 1});
+  checkLookupBatch({1});
+  checkLookupBatch({2});
+  // Only internal words, only external words.
+  checkLookupBatch({1, 3, 5});
+  checkLookupBatch({2, 4, 6});
+  AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
 }
 
-// A result stays valid after further lookups: the external words are owned by
-// the result itself, not by a buffer of the vocabulary.
+// _____________________________________________________________________________
+// Verify that a result stays valid after further lookups: the external words
+// are owned by the result itself, not by a buffer of the vocabulary.
 TEST(VocabularyInternalExternal, LookupBatchResultOutlivesLaterLookups) {
   std::vector<std::string> words;
-  for (size_t i = 0; i < 20; ++i) {
+  for (size_t i : ql::views::iota(size_t{0}, size_t{20})) {
     words.push_back(absl::StrCat("w", i));
   }
-  auto vocab = createVocabulary("LookupBatchResultOutlivesLaterLookups")(words);
-  const std::vector<size_t> first{1, 3, 0};
+  const auto vocab =
+      createVocabulary("LookupBatchResultOutlivesLaterLookups")(words);
+
+  // External words only (even indices other than 0, see `createVocabulary`).
+  const std::vector<size_t> first{2, 4, 6};
   const auto firstResult = vocab.lookupBatch(first);
+
   // Kept alive on purpose while `firstResult` is checked: a buffer reused
   // between lookups would overwrite the words of the first result.
   [[maybe_unused]] const auto secondResult =
-      vocab.lookupBatch(std::vector<size_t>{5, 7, 9});
-  for (size_t i = 0; i < first.size(); ++i) {
-    EXPECT_EQ((*firstResult)[i], words[first[i]]);
+      vocab.lookupBatch(std::vector<size_t>{8, 10, 12});
+
+  for (const auto& [index, word] : ::ranges::views::zip(first, *firstResult)) {
+    EXPECT_EQ(word, words[index]);
   }
 }
 

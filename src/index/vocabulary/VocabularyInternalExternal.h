@@ -66,7 +66,8 @@ class VocabularyInternalExternal {
 
   //____________________________________________________________________________
   // Look up the words for `indices` and return them in the order of
-  // `indices`. `indices` must not be empty. A word of the internal (RAM)
+  // `indices`. `indices` must not be empty and every index must be less than
+  // `size()`. A word of the internal (RAM)
   // vocabulary is returned as a view into that vocabulary, without a copy.
   // All other words are read with one batched lookup in the external
   // vocabulary (which uses batched, and where available `io_uring`, reads);
@@ -80,7 +81,8 @@ class VocabularyInternalExternal {
   // AddressSanitizer). The precondition holds for lookups during query
   // processing, because the index (and thus this vocabulary) outlives every
   // query. A caller that must keep a result beyond the vocabulary has to copy
-  // the words.
+  // the words. The same holds for the results of `lookupBatchesStreamed`
+  // below, which are produced by this function.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   //____________________________________________________________________________
