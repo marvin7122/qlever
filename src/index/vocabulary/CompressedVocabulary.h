@@ -152,8 +152,29 @@ class CompressedVocabulary {
   }
 
   //____________________________________________________________________________
+  // Look up the words for `indices` and return them in the order of
+  // `indices`. `indices` must not be empty. The compressed words of the whole
+  // batch are fetched with one `lookupBatch` call on the underlying
+  // vocabulary (for an on-disk vocabulary these are batched, and where
+  // available `io_uring`, reads), and each word is decoded by the decoder of
+  // its block. For an underlying vocabulary with holes the words are in RAM
+  // and each index has to be translated to its position anyway, so the
+  // sequential lookup via `operator[]` is used.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
+    AD_CONTRACT_CHECK(!indices.empty());
+    if constexpr (underlyingHasHoles) {
+      return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
+    } else {
+      const auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
+      AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size());
+      std::vector<std::string> words;
+      words.reserve(indices.size());
+      for (size_t i = 0; i < indices.size(); ++i) {
+        words.push_back(compressionWrapper_.decompress(
+            (*compressedWords)[i], getDecoderIdx(indices[i])));
+      }
+      return StringVectorVocabBatchLookupData::fromWords(std::move(words));
+    }
   }
 
   //____________________________________________________________________________

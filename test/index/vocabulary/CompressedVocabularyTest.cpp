@@ -148,6 +148,32 @@ TYPED_TEST(CompressedVocabularyF, AccessOperator) {
 }
 
 // _______________________________________________________
+// `lookupBatch` returns the same words as `operator[]`, in the order of the
+// indices, for a batch that spans several decoder blocks (the block size of
+// the fixture is 4), for a reordered batch with duplicates, and for a single
+// index. The empty batch is rejected.
+TYPED_TEST(CompressedVocabularyF, LookupBatch) {
+  std::vector<std::string> words;
+  for (size_t i = 0; i < 64; ++i) {
+    words.push_back(absl::StrCat("s", i, "-", std::string(i % 7, 'x')));
+  }
+  auto vocab = this->createCompressedVocabulary()(words);
+  const auto check = [&](const std::vector<size_t>& indices) {
+    const auto result = vocab.lookupBatch(indices);
+    ASSERT_EQ(result->size(), indices.size());
+    for (size_t i = 0; i < indices.size(); ++i) {
+      EXPECT_EQ((*result)[i], words[indices[i]]) << "index " << indices[i];
+    }
+  };
+  check(::ranges::to<std::vector<size_t>>(
+      ql::views::iota(size_t{0}, words.size())));
+  check({63, 0, 5, 5, 17, 4});
+  check({42});
+  AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(std::vector<size_t>{}),
+                               ::testing::HasSubstr("!indices.empty()"));
+}
+
+// _______________________________________________________
 TYPED_TEST(CompressedVocabularyF, EmptyVocabulary) {
   testEmptyVocabulary(this->createCompressedVocabulary());
 }
