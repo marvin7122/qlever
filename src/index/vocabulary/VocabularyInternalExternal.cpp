@@ -33,18 +33,17 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   auto data = std::make_shared<SubBatchVocabBatchLookupData>();
   std::vector<std::string_view>& views = data->views();
   views.resize(indices.size());
-  // The positions (in `indices`) and the indices of the words that are not in
-  // the internal vocabulary; they are read from the external vocabulary in one
-  // batch below.
+  // For each word that is not in the internal vocabulary: its position in
+  // `indices` (`externalPositions`) and its index (`externalIndices`). These
+  // words are read from the external vocabulary in one batch below.
   std::vector<size_t> externalPositions;
   std::vector<size_t> externalIndices;
-  // In the common case almost all words are external (only every
-  // `milestoneDistance`-th word and explicitly cached words are in RAM).
+  // In the common case almost all words are external (only the milestone
+  // words and the explicitly cached words are in RAM).
   externalPositions.reserve(indices.size());
   externalIndices.reserve(indices.size());
   for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
-    if (const auto internalWord = internalVocab_[index];
-        internalWord.has_value()) {
+    if (const auto internalWord = internalVocab_[index]) {
       // A view into the internal vocabulary, see the lifetime note on the
       // declaration.
       views[position] = internalWord.value();
@@ -52,6 +51,11 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
       externalPositions.push_back(position);
       externalIndices.push_back(index);
     }
+  }
+  if (externalIndices.size() == indices.size()) {
+    // No word is in the internal vocabulary: the external result is the
+    // result.
+    return externalVocab_.lookupBatch(indices);
   }
   if (!externalIndices.empty()) {
     data->buffer() = externalVocab_.lookupBatch(externalIndices);
