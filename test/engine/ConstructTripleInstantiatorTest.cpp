@@ -31,14 +31,16 @@ EvaluatedTerm makeTerm(std::string str, const char* type = nullptr) {
       EvaluatedTermData{std::move(str), type});
 }
 
-// Matches an `EvaluatedTerm` (shared_ptr<const EvaluatedTermData>) by
-// dereferencing it and checking both fields. `type` uses pointer equality,
-// matching the compile-time constants (e.g. XSD_INT_TYPE) or nullptr.
+// Matches an `EvaluatedTermRef` by checking both fields of the term data it
+// points to. `type` uses pointer equality, matching the compile-time constants
+// (e.g. XSD_INT_TYPE) or nullptr.
 static constexpr auto matchesEvaluatedTerm = [](const auto& str,
                                                 const char* type) {
-  return ::testing::Pointee(::testing::AllOf(
-      AD_FIELD(EvaluatedTermData, rdfTermString_, std::string(str)),
-      AD_FIELD(EvaluatedTermData, rdfTermDataType_, ::testing::Eq(type))));
+  return AD_FIELD(
+      EvaluatedTermRef, data_,
+      ::testing::Pointee(::testing::AllOf(
+          AD_FIELD(EvaluatedTermData, rdfTermString_, std::string(str)),
+          AD_FIELD(EvaluatedTermData, rdfTermDataType_, ::testing::Eq(type)))));
 };
 
 // Matches an `EvaluatedTriple` by applying `matchesEvaluatedTerm` with
@@ -72,6 +74,9 @@ TEST(InstantiateTerm, PrecomputedConstantIsReturnedAsIs) {
 
   EXPECT_THAT(result, Optional(matchesEvaluatedTerm(
                           "<http://example.org/subject>", nullptr)));
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->data_, term.get());
+  EXPECT_EQ(result->keepAlive_, term);
 }
 
 // _____________________________________________________________________________
@@ -126,6 +131,9 @@ TEST(InstantiateTerm, PrecomputedVariableBound) {
 
   EXPECT_THAT(result, Optional(matchesEvaluatedTerm(
                           "<http://example.org/value>", nullptr)));
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->data_, term.get());
+  EXPECT_EQ(result->keepAlive_, term);
 }
 
 // _____________________________________________________________________________
@@ -150,6 +158,47 @@ TEST(InstantiateTerm, PrecomputedBlankNodeUsesRowIdxTotal) {
   auto result = instantiateTerm(preprocessed, batchResult, 0, 42);
 
   EXPECT_THAT(result, Optional(matchesEvaluatedTerm("_:g42_label", nullptr)));
+}
+
+// _____________________________________________________________________________
+TEST(InstantiateTerm, PrecomputedBlankNodeOwnsItsTerm) {
+  // A blank-node term is allocated per row, so the returned ref must be its
+  // only owner: `data_` points to the term held by `keepAlive_`.
+  auto batchResult = BatchEvaluationResult{{}, 1};
+  PreprocessedTerm preprocessed = PrecomputedBlankNode{"_:b", ""};
+
+  auto result = instantiateTerm(preprocessed, batchResult, 0, 3);
+
+  ASSERT_TRUE(result.has_value());
+  ASSERT_NE(result->keepAlive_, nullptr);
+  EXPECT_EQ(result->data_, result->keepAlive_.get());
+  EXPECT_EQ(result->keepAlive_.use_count(), 1);
+  EXPECT_THAT(result, Optional(matchesEvaluatedTerm("_:b3", nullptr)));
+}
+
+// _____________________________________________________________________________
+TEST(EvaluatedTermRef, MoveLeavesSourceEmpty) {
+  EvaluatedTerm term = makeTerm("<http://example.org/x>");
+  EvaluatedTermRef source{term};
+
+  EvaluatedTermRef constructed{std::move(source)};
+  EXPECT_EQ(source.data_, nullptr);
+  EXPECT_EQ(source.keepAlive_, nullptr);
+  EXPECT_EQ(constructed.data_, term.get());
+  EXPECT_EQ(constructed.keepAlive_, term);
+
+  EvaluatedTermRef assigned;
+  assigned = std::move(constructed);
+  EXPECT_EQ(constructed.data_, nullptr);
+  EXPECT_EQ(constructed.keepAlive_, nullptr);
+  EXPECT_EQ(assigned.data_, term.get());
+  EXPECT_EQ(assigned.keepAlive_, term);
+
+  // Copies share ownership and leave the source intact.
+  EvaluatedTermRef copy{assigned};
+  EXPECT_EQ(copy.data_, term.get());
+  EXPECT_EQ(assigned.data_, term.get());
+  EXPECT_EQ(term.use_count(), 3);
 }
 
 // _____________________________________________________________________________
@@ -219,12 +268,12 @@ TEST(InstantiateBatch, ConstantTripleReplicatedAcrossRows) {
           matchesEvaluatedTriple("<http://s>", "<http://p>", "<http://o>")));
 
   // check pointer equality here:
-  EXPECT_EQ(result[0].subject_.get(), result[1].subject_.get());
-  EXPECT_EQ(result[0].subject_.get(), result[2].subject_.get());
-  EXPECT_EQ(result[0].predicate_.get(), result[1].predicate_.get());
-  EXPECT_EQ(result[0].predicate_.get(), result[2].predicate_.get());
-  EXPECT_EQ(result[0].object_.get(), result[1].object_.get());
-  EXPECT_EQ(result[0].object_.get(), result[2].object_.get());
+  EXPECT_EQ(result[0].subject_.data_, result[1].subject_.data_);
+  EXPECT_EQ(result[0].subject_.data_, result[2].subject_.data_);
+  EXPECT_EQ(result[0].predicate_.data_, result[1].predicate_.data_);
+  EXPECT_EQ(result[0].predicate_.data_, result[2].predicate_.data_);
+  EXPECT_EQ(result[0].object_.data_, result[1].object_.data_);
+  EXPECT_EQ(result[0].object_.data_, result[2].object_.data_);
 }
 
 // _____________________________________________________________________________
@@ -250,8 +299,8 @@ TEST(InstantiateBatch, UnboundVariableDropsTriple) {
           matchesEvaluatedTriple("<http://c>", "<http://p>", "<http://o>")));
 
   // check pointer equality here:
-  EXPECT_EQ(result[0].predicate_.get(), result[1].predicate_.get());
-  EXPECT_EQ(result[0].object_.get(), result[1].object_.get());
+  EXPECT_EQ(result[0].predicate_.data_, result[1].predicate_.data_);
+  EXPECT_EQ(result[0].object_.data_, result[1].object_.data_);
 }
 
 // _____________________________________________________________________________
@@ -272,8 +321,8 @@ TEST(InstantiateBatch, BlankNodeIdIncludesBatchOffset) {
                   matchesEvaluatedTriple("_:g6", "<http://p>", "<http://o>")));
 
   // check pointer equality here:
-  EXPECT_EQ(result[0].predicate_.get(), result[1].predicate_.get());
-  EXPECT_EQ(result[0].object_.get(), result[1].object_.get());
+  EXPECT_EQ(result[0].predicate_.data_, result[1].predicate_.data_);
+  EXPECT_EQ(result[0].object_.data_, result[1].object_.data_);
 }
 
 // _____________________________________________________________________________
@@ -303,15 +352,15 @@ TEST(InstantiateBatch, MultipleTriples) {
 
   // check pointer equality here:
   // subject pointer equality:
-  EXPECT_EQ(result[0].subject_.get(), result[1].subject_.get());
-  EXPECT_EQ(result[0].subject_.get(), result[2].subject_.get());
-  EXPECT_EQ(result[0].subject_.get(), result[3].subject_.get());
+  EXPECT_EQ(result[0].subject_.data_, result[1].subject_.data_);
+  EXPECT_EQ(result[0].subject_.data_, result[2].subject_.data_);
+  EXPECT_EQ(result[0].subject_.data_, result[3].subject_.data_);
   // predicate pointer equality:
-  EXPECT_EQ(result[0].predicate_.get(), result[2].predicate_.get());
-  EXPECT_EQ(result[1].predicate_.get(), result[3].predicate_.get());
+  EXPECT_EQ(result[0].predicate_.data_, result[2].predicate_.data_);
+  EXPECT_EQ(result[1].predicate_.data_, result[3].predicate_.data_);
   // object pointer equality:
-  EXPECT_EQ(result[0].object_.get(), result[2].object_.get());
-  EXPECT_EQ(result[1].object_.get(), result[3].object_.get());
+  EXPECT_EQ(result[0].object_.data_, result[2].object_.data_);
+  EXPECT_EQ(result[1].object_.data_, result[3].object_.data_);
 }
 
 // ============================================================================
