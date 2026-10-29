@@ -152,19 +152,20 @@ class CompressedVocabulary {
   }
 
   //____________________________________________________________________________
-  // Look up the words for `indices` and return them in the order of
-  // `indices`. `indices` must not be empty. The compressed words of the whole
-  // batch are fetched with one `lookupBatch` call on the underlying
-  // vocabulary (for an on-disk vocabulary these are batched, and where
-  // available `io_uring`, reads), and each word is decoded by the decoder of
-  // its block. For an underlying vocabulary with holes the words are in RAM
-  // and each index has to be translated to its position anyway, so the
-  // sequential lookup via `operator[]` is used.
+  // Return the words for `indices` (not empty) in that order, as views into
+  // a buffer owned by the result. For an underlying vocabulary with holes,
+  // `operator[]` translates each index to its position anyway, so the
+  // sequential lookup is used.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
     if constexpr (underlyingHasHoles) {
       return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
     } else {
+      // A vocabulary with holes reports placeholders for missing words, which
+      // must not be decompressed; see the same safeguard in `operator[]`.
+      static_assert(
+          !ad_utility::vocabulary::replaceOptionalByPlaceholderOnExport<
+              UnderlyingVocabulary>);
       const auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
       AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size());
       std::vector<std::string> words;

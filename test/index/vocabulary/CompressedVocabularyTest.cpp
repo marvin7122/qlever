@@ -153,12 +153,14 @@ TYPED_TEST(CompressedVocabularyF, AccessOperator) {
 // the fixture is 4), for a reordered batch with duplicates, and for a single
 // index. The empty batch is rejected.
 TYPED_TEST(CompressedVocabularyF, LookupBatch) {
+  constexpr size_t numWords = 64;
   std::vector<std::string> words;
-  for (size_t i = 0; i < 64; ++i) {
+  words.reserve(numWords);
+  for (size_t i = 0; i < numWords; ++i) {
     words.push_back(absl::StrCat("s", i, "-", std::string(i % 7, 'x')));
   }
-  auto vocab = this->createCompressedVocabulary()(words);
-  const auto check = [&](const std::vector<size_t>& indices) {
+  const auto vocab = this->createCompressedVocabulary()(words);
+  const auto check = [&](ql::span<const size_t> indices) {
     const auto result = vocab.lookupBatch(indices);
     ASSERT_EQ(result->size(), indices.size());
     for (size_t i = 0; i < indices.size(); ++i) {
@@ -167,9 +169,9 @@ TYPED_TEST(CompressedVocabularyF, LookupBatch) {
   };
   check(::ranges::to<std::vector<size_t>>(
       ql::views::iota(size_t{0}, words.size())));
-  check({63, 0, 5, 5, 17, 4});
-  check({42});
-  AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(std::vector<size_t>{}),
+  check(std::vector<size_t>{63, 0, 5, 5, 17, 4});
+  check(std::vector<size_t>{42});
+  AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
 }
 
@@ -355,6 +357,27 @@ std::vector<std::pair<uint64_t, std::string>> expectedIndicesAndWords() {
 }
 
 }  // namespace
+
+// _____________________________________________________________________________
+// For a vocabulary with holes, `lookupBatch` matches `operator[]`: contained
+// indices (reordered, with a duplicate) yield their words, holes yield the
+// placeholder.
+TEST(CompressedVocabularyWithHoles, lookupBatch) {
+  std::string filename = gtestCurrentTestName();
+  auto cleanup = getFileCleanup(filename);
+  const auto vocab =
+      createVocabularyWithHoles(filename, wordsWithHoles(), indicesWithHoles());
+  const auto contained = indicesWithHoles();
+  const std::vector<size_t> indices{contained.at(3), 0, contained.at(0),
+                                    contained.at(3), contained.at(10) + 1};
+  const auto result = vocab.lookupBatch(indices);
+  ASSERT_EQ(result->size(), indices.size());
+  for (size_t i = 0; i < indices.size(); ++i) {
+    EXPECT_EQ((*result)[i], vocab[indices[i]]) << "index " << indices[i];
+  }
+  EXPECT_EQ((*result)[1],
+            ad_utility::vocabulary::placeholderForMissingVocabIndex(0));
+}
 
 // _____________________________________________________________________________
 TEST(CompressedVocabularyWithHoles, accessOperator) {
