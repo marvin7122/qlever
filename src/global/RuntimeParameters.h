@@ -232,6 +232,15 @@ struct RuntimeParameters {
   // particular the computation of cache keys) when caching is not required.
   Bool disableCaching_{false, "disable-caching"};
 
+  // EXPERIMENT ONLY (not for merging): the sizes of the CONSTRUCT export, so
+  // that one binary can be swept over their values with
+  // `--set-runtime-parameter` at server startup. Rows of the ID table per
+  // export batch (also the number of IDs per column of one batched vocabulary
+  // lookup), and entries of the ID cache per variable of the template.
+  SizeT exportBatchRows_{1024, "export-batch-rows"};
+  SizeT exportCacheEntriesPerVariable_{2048,
+                                       "export-cache-entries-per-variable"};
+
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
   // determined automatically based on the number of available hardware threads.

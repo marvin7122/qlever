@@ -13,6 +13,7 @@
 #include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleInstantiator.h"
+#include "global/RuntimeParameters.h"
 
 namespace qlever::constructExport {
 
@@ -23,7 +24,8 @@ using StringTriple = QueryExecutionTree::StringTriple;
 IdCache ConstructTripleGenerator::makeIdCache(
     const PreprocessedConstructTemplate& tmpl) {
   return IdCache{std::max(tmpl.uniqueVariableColumns_.size(), size_t{1}) *
-                 CACHE_ENTRIES_PER_VARIABLE};
+                 getRuntimeParameter<
+                     &RuntimeParameters::exportCacheEntriesPerVariable_>()};
 }
 
 namespace {
@@ -93,8 +95,9 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
   // lambda retain a reference into the by-value `table` parameter.
   auto rowView = table.view_;
   const TableConstRefWithVocab tableWithVocab = table.tableWithVocab_;
-  return ranges::views::chunk(std::move(rowView),
-                              ConstructTripleGenerator::BATCH_SIZE) |
+  return ranges::views::chunk(
+             std::move(rowView),
+             getRuntimeParameter<&RuntimeParameters::exportBatchRows_>()) |
          ql::views::transform([tableWithVocab, context = std::move(context),
                                tableRowOffset](auto chunkView) {
            return computeBatch(tableWithVocab, chunkView, context,
