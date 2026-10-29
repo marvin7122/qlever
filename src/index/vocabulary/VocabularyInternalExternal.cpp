@@ -9,6 +9,8 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/use_future.hpp>
 #include <memory>
+#include <range/v3/view/enumerate.hpp>
+#include <range/v3/view/zip.hpp>
 #include <string_view>
 #include <vector>
 
@@ -35,8 +37,11 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   // batch below.
   std::vector<size_t> externalPositions;
   std::vector<size_t> externalIndices;
-  for (size_t position = 0; position < indices.size(); ++position) {
-    const size_t index = indices[position];
+  // In the common case almost all words are external (only every
+  // `milestoneDistance`-th word and explicitly cached words are in RAM).
+  externalPositions.reserve(indices.size());
+  externalIndices.reserve(indices.size());
+  for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
     if (const auto internalWord = internalVocab_[index];
         internalWord.has_value()) {
       // A view into the internal vocabulary, see the lifetime note on the
@@ -51,8 +56,9 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
     data->buffer() = externalVocab_.lookupBatch(externalIndices);
     const ql::span<std::string_view>& externalWords = *data->buffer();
     AD_CORRECTNESS_CHECK(externalWords.size() == externalPositions.size());
-    for (size_t i = 0; i < externalPositions.size(); ++i) {
-      views[externalPositions[i]] = externalWords[i];
+    for (const auto& [position, word] :
+         ::ranges::views::zip(externalPositions, externalWords)) {
+      views[position] = word;
     }
   }
   return SubBatchVocabBatchLookupData::asResult(std::move(data));

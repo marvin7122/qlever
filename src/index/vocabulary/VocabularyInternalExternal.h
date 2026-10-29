@@ -74,9 +74,13 @@ class VocabularyInternalExternal {
   //
   // Lifetime: the views into the internal vocabulary are valid only while
   // this vocabulary is open, so the result must not be used after this
-  // vocabulary is closed or destroyed. This is not checked at runtime; it
-  // holds for lookups during query processing, because the index (and thus
-  // this vocabulary) outlives every query.
+  // vocabulary is closed or destroyed. This cannot be checked at runtime:
+  // using such a result afterwards reads through dangling views, which is
+  // undefined behavior and fails non-gracefully (it is caught only under
+  // AddressSanitizer). The precondition holds for lookups during query
+  // processing, because the index (and thus this vocabulary) outlives every
+  // query. A caller that must keep a result beyond the vocabulary has to copy
+  // the words.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   //____________________________________________________________________________

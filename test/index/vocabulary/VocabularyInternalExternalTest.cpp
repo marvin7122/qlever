@@ -165,7 +165,10 @@ TEST(VocabularyInternalExternal, LookupBatchResultOutlivesLaterLookups) {
   auto vocab = createVocabulary("LookupBatchResultOutlivesLaterLookups")(words);
   const std::vector<size_t> first{1, 3, 0};
   const auto firstResult = vocab.lookupBatch(first);
-  const auto secondResult = vocab.lookupBatch(std::vector<size_t>{5, 7, 9});
+  // Kept alive on purpose while `firstResult` is checked: a buffer reused
+  // between lookups would overwrite the words of the first result.
+  [[maybe_unused]] const auto secondResult =
+      vocab.lookupBatch(std::vector<size_t>{5, 7, 9});
   for (size_t i = 0; i < first.size(); ++i) {
     EXPECT_EQ((*firstResult)[i], words[first[i]]);
   }
