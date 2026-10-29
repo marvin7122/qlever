@@ -1,6 +1,12 @@
-// Copyright 2022, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "index/vocabulary/VocabularyOnDisk.h"
 
@@ -11,6 +17,7 @@
 #include <array>
 
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
@@ -159,21 +166,48 @@ VocabularyScanRange VocabularyOnDisk::scanAll() const {
 std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     ad_utility::BatchManagerBase& manager,
     ql::span<const size_t> indices) const {
-  // For each requested index `i`, read its offset together with the next offset
-  // (which bounds the string) as one 16-byte pair from `.offsets`.
+  // The `OffsetPair` of index `i` is the offset of word `i` together with the
+  // next offset (which bounds the word), so the pairs of consecutive indices
+  // overlap in `.offsets`. Therefore read each run of consecutive indices
+  // `[runBegins[r], runBegins[r + 1])` as one range of `runLength + 1` offsets.
   const size_t numIndices = indices.size();
-  std::vector<OffsetPair> offsetPairs(numIndices);
-  std::vector<size_t> sizes(numIndices, sizeof(OffsetPair));
-  std::vector<uint64_t> fileOffsets(numIndices);
-  std::vector<char*> targets(numIndices);
-  for (auto&& [fileOffset, index, target, offsetPair] :
-       ::ranges::views::zip(fileOffsets, indices, targets, offsetPairs)) {
+  for (size_t index : indices) {
     AD_CONTRACT_CHECK(index < size());
-    fileOffset = index * sizeof(uint64_t);
-    target = reinterpret_cast<char*>(&offsetPair);
   }
-  manager.wait(
-      manager.addBatch(offsetsFile_.fd(), sizes, fileOffsets, targets));
+  std::vector<size_t> runBegins{0};
+  for (size_t i = 1; i < numIndices; ++i) {
+    if (indices[i] != indices[i - 1] + 1) {
+      runBegins.push_back(i);
+    }
+  }
+  runBegins.push_back(numIndices);
+  const size_t numRuns = runBegins.size() - 1;
+
+  // Run `r` is read into the `length + 1` entries of `runOffsets` that start
+  // at `runBegins[r] + r`.
+  std::vector<uint64_t> runOffsets(numIndices + numRuns);
+  std::vector<size_t> runSizes(numRuns);
+  std::vector<uint64_t> runFileOffsets(numRuns);
+  std::vector<char*> runTargets(numRuns);
+  for (size_t run = 0; run < numRuns; ++run) {
+    const size_t begin = runBegins[run];
+    const size_t length = runBegins[run + 1] - begin;
+    runSizes[run] = (length + 1) * sizeof(uint64_t);
+    runFileOffsets[run] = indices[begin] * sizeof(uint64_t);
+    runTargets[run] = reinterpret_cast<char*>(runOffsets.data() + begin + run);
+  }
+  manager.wait(manager.addBatch(offsetsFile_.fd(), runSizes, runFileOffsets,
+                                runTargets));
+
+  std::vector<OffsetPair> offsetPairs(numIndices);
+  for (size_t run = 0; run < numRuns; ++run) {
+    const size_t begin = runBegins[run];
+    const size_t end = runBegins[run + 1];
+    const uint64_t* runStart = runOffsets.data() + begin + run;
+    for (size_t i = begin; i < end; ++i) {
+      offsetPairs[i] = OffsetPair{runStart[i - begin], runStart[i - begin + 1]};
+    }
+  }
   return offsetPairs;
 }
 
@@ -220,6 +254,11 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
         "`VocabularyOnDisk::lookupBatch`");
   }};
 
+  // The page-cache fast path belongs to the manager; the runtime parameter can
+  // change between two lookups.
+  manager->setPageCacheFastPath(
+      getRuntimeParameter<
+          &RuntimeParameters::vocabularyIouringPageCacheFastPath_>());
   auto offsetPairs = readOffsetPairs(*manager, indices);
   return readStrings(*manager, offsetPairs);
 }
@@ -288,6 +327,7 @@ void VocabularyOnDisk::open(const std::string& filename) {
       NUM_VOCAB_BATCH_IO_MANAGERS);
   bool preferIoUring = true;
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
+    ioManagers_->push(
+        ad_utility::makeBatchManager(preferIoUring, /*pageCacheFirst=*/true));
   }
 }

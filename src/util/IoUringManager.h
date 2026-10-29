@@ -12,9 +12,13 @@
 #define QLEVER_SRC_UTIL_IOURINGMANAGER_H
 
 #include <gtest/gtest_prod.h>
+#include <sys/uio.h>
 
 #include <cstdint>
+#include <type_traits>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "backports/algorithm.h"
 #include "backports/concepts.h"
@@ -64,7 +68,23 @@ class BatchManagerBase {
                                              ql::span<char*> buffers) = 0;
 
   virtual void wait(BatchHandle handle) = 0;
+
+  // Switch the page-cache fast path of this manager on or off (see
+  // `PageCacheFirstPolicy`). Takes effect for the batches added afterwards.
+  // Managers without a page-cache fast path ignore it.
+  virtual void setPageCacheFastPath([[maybe_unused]] bool enabled) {}
 };
+
+namespace detail {
+// True iff `Policy` has a page-cache fast path that can be switched.
+template <typename Policy, typename = void>
+inline constexpr bool hasPageCacheFastPathSwitch = false;
+template <typename Policy>
+inline constexpr bool hasPageCacheFastPathSwitch<
+    Policy,
+    std::void_t<decltype(std::declval<Policy&>().setPageCacheFastPath(true))>> =
+    true;
+}  // namespace detail
 
 // `BatchManager` owns the batch bookkeeping (minting a `BatchHandle` per batch,
 // validating the input spans) and delegates the reads from the underlying
@@ -104,6 +124,13 @@ class BatchManager final : public BatchManagerBase {
 
   // Block until every read in `handle` has completed.
   void wait(BatchHandle handle) override { policy_.wait(handle); }
+
+  // Forward the switch to the policy if it has one.
+  void setPageCacheFastPath([[maybe_unused]] bool enabled) override {
+    if constexpr (detail::hasPageCacheFastPathSwitch<ReadPolicy>) {
+      policy_.setPageCacheFastPath(enabled);
+    }
+  }
 
  private:
   [[no_unique_address]] ReadPolicy policy_;
@@ -237,18 +264,154 @@ using BatchIoManager = BatchManager<IoUringPolicy>;
 using BatchIoManager = BatchManager<SyncIoPolicy>;
 #endif
 
+// Serve the reads of a batch that are fully in the page cache with
+// non-blocking `preadv2(RWF_NOWAIT)` calls, and return the positions (indices
+// into the three spans, ascending) of the reads that were not served. The
+// caller must issue those through its regular path, which also reports real
+// errors. Reads whose file ranges are exactly adjacent (`offsets[i] +
+// numBytes[i] == offsets[i + 1]`) are coalesced into one `preadv2` call with
+// one `iovec` per read. A read is served only if all of its bytes were read:
+// `EAGAIN` (not cached), a short read (end of file, or only a prefix cached)
+// or any other error leaves the read (and, for a failed call, the rest of its
+// run) to the caller. If the kernel or file system rejects `RWF_NOWAIT`
+// (`EOPNOTSUPP`), the fast path is disabled for the rest of the process (see
+// `pageCacheFastPathIsSupported`), which is logged once. Where `preadv2` with
+// `RWF_NOWAIT` is not available (outside Linux, and in Emscripten builds),
+// the function exists but serves nothing: every read is returned, and
+// `pageCacheFastPathIsSupported()` is false.
+// Precondition: the three spans have the same length.
+// `preadv2` and `RWF_NOWAIT` (Linux >= 4.14), including the caveat that a
+// `RWF_NOWAIT` read may return 0 before the end of the file (such a read is
+// treated as not served): readv(2),
+// https://web.archive.org/web/20260828220215/https://man7.org/linux/man-pages/man2/readv.2.html
+std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
+                                      ql::span<const uint64_t> offsets,
+                                      ql::span<char*> buffers);
+
+// False once `readPageCacheHits` found that `RWF_NOWAIT` is not supported, or
+// if it is not available at compile time.
+bool pageCacheFastPathIsSupported();
+
+namespace detail {
+// The one `preadv2(fd, iov, iovcnt, offset, RWF_NOWAIT)` call per run that
+// `readPageCacheHits` makes, with the same contract (the number of bytes read,
+// or -1 with `errno` set). A replaceable function pointer so that unit tests
+// can inject `EAGAIN`, short reads and `EOPNOTSUPP`; production code never
+// changes it.
+using PageCacheRead = int64_t (*)(int fd, const ::iovec* iov, int iovcnt,
+                                  int64_t offset);
+// The default: the system call. Where it is not available it fails with
+// `EOPNOTSUPP` (it is never called there).
+int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
+                            int64_t offset);
+// The function `readPageCacheHits` calls (initially `systemPageCacheRead`).
+PageCacheRead& pageCacheRead();
+// Undo the effect of an `EOPNOTSUPP` on `pageCacheFastPathIsSupported()`, for
+// tests that injected one.
+void resetPageCacheFastPathSupport();
+}  // namespace detail
+
+// A `ReadPolicy` that decorates another `ReadPolicy` `Policy` with a page-cache
+// fast path: the reads of a batch that are in the page cache are served first
+// with `readPageCacheHits` (non-blocking `preadv2(RWF_NOWAIT)`, adjacent reads
+// coalesced into one call), and only the other reads are passed on to
+// `Policy`. A read that is served this way costs a share of one system call
+// instead of a submission and a completion in `Policy`; a read that is not
+// served costs one extra failed system call per run of adjacent reads.
+// `Policy` still reports every real I/O error: a read that `readPageCacheHits`
+// does not serve completely is passed on, whatever the reason. If the fast
+// path is switched off with `setPageCacheFastPath(false)`, or is not supported
+// (see `pageCacheFastPathIsSupported`), all reads go straight to `Policy`.
+// The batches are tracked by `Policy` only: `wait` simply forwards the handle,
+// and a batch in which every read was served has nothing to wait for.
+template <typename Policy>
+class PageCacheFirstPolicy {
+  static_assert(
+      ReadPolicyConcept<Policy>,
+      "PageCacheFirstPolicy's Policy must satisfy the ReadPolicyConcept.");
+
+ public:
+  using BatchHandle = typename Policy::BatchHandle;
+
+  explicit PageCacheFirstPolicy(unsigned ringSize) : policy_(ringSize) {}
+
+  PageCacheFirstPolicy(const PageCacheFirstPolicy&) = delete;
+  PageCacheFirstPolicy& operator=(const PageCacheFirstPolicy&) = delete;
+
+  // Switch the fast path on (the default) or off for the batches that are added
+  // afterwards.
+  void setPageCacheFastPath(bool enabled) { enabled_ = enabled; }
+
+  // Serve the reads of the batch that are in the page cache and pass the others
+  // on to the decorated policy. The contract of the arguments is the one of
+  // `readPageCacheHits` and of `Policy::addBatch`.
+  void addBatch(int fd, ql::span<const size_t> numBytes,
+                ql::span<const uint64_t> offsets, ql::span<char*> buffers,
+                BatchHandle handle) {
+    if (!enabled_ || !pageCacheFastPathIsSupported()) {
+      policy_.addBatch(fd, numBytes, offsets, buffers, handle);
+      return;
+    }
+    const std::vector<size_t> notServed =
+        readPageCacheHits(fd, numBytes, offsets, buffers);
+    if (notServed.size() == numBytes.size()) {
+      // Nothing was served, so the batch is passed on unchanged.
+      policy_.addBatch(fd, numBytes, offsets, buffers, handle);
+      return;
+    }
+    std::vector<size_t> missedNumBytes;
+    std::vector<uint64_t> missedOffsets;
+    std::vector<char*> missedBuffers;
+    missedNumBytes.reserve(notServed.size());
+    missedOffsets.reserve(notServed.size());
+    missedBuffers.reserve(notServed.size());
+    for (size_t i : notServed) {
+      missedNumBytes.push_back(numBytes[i]);
+      missedOffsets.push_back(offsets[i]);
+      missedBuffers.push_back(buffers[i]);
+    }
+    policy_.addBatch(fd, missedNumBytes, missedOffsets, missedBuffers, handle);
+  }
+
+  // Block until every read of the batch `handle` has completed.
+  void wait(BatchHandle handle) { policy_.wait(handle); }
+
+ private:
+  Policy policy_;
+  bool enabled_ = true;
+};
+
+namespace detail {
+// Build a `BatchManager` for `Policy`, decorated with `PageCacheFirstPolicy` if
+// `pageCacheFirst` is set.
+template <typename Policy>
+std::unique_ptr<BatchManagerBase> makeBatchManagerFor(unsigned ringSize,
+                                                      bool pageCacheFirst) {
+  if (pageCacheFirst) {
+    return std::make_unique<BatchManager<PageCacheFirstPolicy<Policy>>>(
+        ringSize);
+  }
+  return std::make_unique<BatchManager<Policy>>(ringSize);
+}
+}  // namespace detail
+
 // Build a batch manager. When io_uring is compiled in and the runtime flag
 // `preferIoUring` is set, try to build an `IoUringManager`. If its setup
 // syscall fails at runtime clear `preferIoUring` and fall back to a
 // `SyncIoManager`. Passing the flag by reference makes this probe-once: after
 // the first failure, every subsequent call goes straight to the sync manager,
-// so we don't repeat a failing syscall.
+// so we don't repeat a failing syscall. If `pageCacheFirst` is set and
+// `preadv2(RWF_NOWAIT)` is available, the manager serves the reads that are in
+// the page cache first (see `PageCacheFirstPolicy`); this can be switched off
+// again with `BatchManagerBase::setPageCacheFastPath`.
 inline std::unique_ptr<BatchManagerBase> makeBatchManager(
-    bool& preferIoUring, unsigned ringSize = 256) {
+    bool& preferIoUring, bool pageCacheFirst = false, unsigned ringSize = 256) {
+  pageCacheFirst = pageCacheFirst && pageCacheFastPathIsSupported();
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
     try {
-      return std::make_unique<BatchManager<IoUringPolicy>>(ringSize);
+      return detail::makeBatchManagerFor<IoUringPolicy>(ringSize,
+                                                        pageCacheFirst);
     } catch (const std::exception& e) {
       preferIoUring = false;
       AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
@@ -261,7 +424,7 @@ inline std::unique_ptr<BatchManagerBase> makeBatchManager(
 #else
   preferIoUring = false;
 #endif
-  return std::make_unique<BatchManager<SyncIoPolicy>>(ringSize);
+  return detail::makeBatchManagerFor<SyncIoPolicy>(ringSize, pageCacheFirst);
 }
 
 }  // namespace ad_utility
