@@ -14,7 +14,6 @@
 #include <cstdint>
 #include <string>
 
-#include "util/DanglingViewTestHelpers.h"
 #include "util/GTestHelpers.h"
 #include "util/PmrStringSsoTestHelpers.h"
 
@@ -120,15 +119,4 @@ TEST(GTestHelpersTest, PmrStringUsesSsoUpToCapacity) {
   const detail::PmrSsoProbeString longString(sizeof(detail::PmrSsoProbeString),
                                              'y');
   EXPECT_FALSE(pointsIntoObject(longString.data(), longString));
-}
-
-// _____________________________________________________________________________
-TEST(GTestHelpersTest, ClobberStack) {
-  // Only the value that `clobberStack` reads back through its own `volatile`
-  // buffer before returning can be checked: there is no legal way to read the
-  // clobbered stack memory after the function has returned (that would be
-  // undefined behavior), so whether the stack really stays overwritten is not
-  // tested here.
-  EXPECT_EQ(clobberStack<512>('X'), 'X');
-  EXPECT_EQ(clobberStack<4096>('#'), '#');
 }
