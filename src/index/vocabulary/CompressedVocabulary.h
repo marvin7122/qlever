@@ -163,9 +163,12 @@ class CompressedVocabulary {
       return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
     }
     // A vocabulary with holes reports placeholders for missing words, which
-    // must not be decompressed; see the same safeguard in `operator[]`.
-    static_assert(!ad_utility::vocabulary::replaceOptionalByPlaceholderOnExport<
-                  UnderlyingVocabulary>);
+    // must not be decompressed; see the same safeguard in `operator[]`. (The
+    // `underlyingHasHoles` term keeps the assertion out of the branch above,
+    // which is not discarded by the early return.)
+    static_assert(underlyingHasHoles ||
+                  !ad_utility::vocabulary::replaceOptionalByPlaceholderOnExport<
+                      UnderlyingVocabulary>);
     const auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
     AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size());
     auto words = ::ranges::to<std::vector<std::string>>(
