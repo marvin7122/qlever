@@ -1,13 +1,7 @@
-// Copyright 2022 - 2026, The QLever Authors, in particular:
-//
-// 2022        Julian Mundhahs <mundhahj@informatik.uni-freiburg.de>, UFR
-// 2022        Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>, UFR
-// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
-//
-// UFR = University of Freiburg, Chair of Algorithms and Data Structures
-//
-// You may not use this file except in compliance with the Apache 2.0 License,
-// which can be found in the `LICENSE` file at the root of the QLever project.
+// Copyright 2022, University of Freiburg,
+// Chair of Algorithms and Data Structures.
+// Authors: Julian Mundhahs (mundhahj@informatik.uni-freiburg.de)
+//          Johannes Kalmbach (kalmbach@cs.uni-freiburg.de)
 
 #ifndef QLEVER_TEST_UTIL_GTESTHELPERS_H
 #define QLEVER_TEST_UTIL_GTESTHELPERS_H
@@ -22,12 +16,8 @@
 #include <memory>
 #include <optional>
 #include <sstream>
-#include <string>
-#include <string_view>
 #include <thread>
-#include <vector>
 
-#include "backports/algorithm.h"
 #include "backports/concepts.h"
 #include "backports/three_way_comparison.h"
 #include "util/Log.h"
@@ -335,17 +325,6 @@ MATCHER_P(AllUniqueBy, func, "has all unique values under projection") {
 }
 
 // _____________________________________________________________________________
-// Sanitize the given raw gtest name by replacing every `/` with `_`.
-// Parameterized tests embed `/` in their names (e.g. the test name `Test/0` or
-// the suite name `Instantiation/Suite`), and tests use these names as names of
-// temporary files; a `/` would turn them into paths into (non-existent)
-// subdirectories. This is the shared implementation of `gtestCurrentTestName`
-// and `gtestCurrentTestSuiteName`.
-[[nodiscard]] inline std::string sanitizeGtestName(std::string_view name) {
-  return absl::StrReplaceAll(name, {{"/", "_"}});
-}
-
-// _____________________________________________________________________________
 // Returns "<TestSuiteName>_<TestName>" for the currently running gtest, with
 // any '/' replaced by '_' (parameterized tests embed '/' in their names).
 // If `assertInGtestEnvironment` is true (the default), crashes if called
@@ -358,26 +337,12 @@ inline std::string gtestCurrentTestName(bool assertInGtestEnvironment = true) {
   if (assertInGtestEnvironment) {
     AD_CORRECTNESS_CHECK(testInfo != nullptr);
   }
-  return testInfo == nullptr
-             ? ""
-             : sanitizeGtestName(absl::StrCat(testInfo->test_suite_name(), "_",
-                                              testInfo->name()));
-}
-
-// _____________________________________________________________________________
-// Return the name of the currently running test suite, with any `/` replaced
-// by `_` (parameterized test suites embed `/` in their names). Call it inside
-// `SetUpTestSuite()` / `TearDownTestSuite()` or during a test. If
-// `assertInGtestEnvironment` is true, it is a correctness error to call this
-// outside of a running test suite; otherwise the empty string is returned then.
-[[nodiscard]] inline std::string gtestCurrentTestSuiteName(
-    bool assertInGtestEnvironment = true) {
-  const auto* testSuite =
-      ::testing::UnitTest::GetInstance()->current_test_suite();
-  if (assertInGtestEnvironment) {
-    AD_CORRECTNESS_CHECK(testSuite != nullptr);
+  if (testInfo == nullptr) {
+    return "";
   }
-  return testSuite == nullptr ? "" : sanitizeGtestName(testSuite->name());
+  return absl::StrReplaceAll(
+      absl::StrCat(testInfo->test_suite_name(), "_", testInfo->name()),
+      {{"/", "_"}});
 }
 
 // _____________________________________________________________________________
