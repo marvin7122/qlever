@@ -15,7 +15,6 @@
 #include <array>
 
 #include "../../util/GTestHelpers.h"
-#include "../../util/PmrStringSsoTestHelpers.h"
 #include "VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "backports/span.h"
@@ -338,14 +337,10 @@ TYPED_TEST(CompressedVocabularyF, ScanAll) {
 // inside memory that resource handed out; a view into a destroyed temporary
 // fails that check without ever being read.
 TYPED_TEST(CompressedVocabularyF, LookupBatchShortWordViewsStayValid) {
-  // Require inline storage for at least 15 characters in `std::pmr::string`
-  // (the capacity of libstdc++; other implementations have more). Short words
-  // then use the Small String Optimization (SSO), so a view into such a string
-  // points into the (stack) string object itself rather than into the arena.
-  requireSsoCapacityOfPmrStringAtLeast(15);
-
-  // All words are deliberately short (at most 3 characters, well below the
-  // required SSO capacity).
+  // All words are deliberately short (at most 3 characters, below the inline
+  // capacity of `std::pmr::string` in every supported standard library: 15 in
+  // libstdc++, 22 in libc++), so a temporary string holding one of them keeps
+  // its characters inside the string object rather than in the arena.
   std::vector<std::string> words;
   words.reserve(64);
   for (int i = 0; i < 64; ++i) {
