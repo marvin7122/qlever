@@ -32,53 +32,59 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   AD_CONTRACT_CHECK(!indices.empty());
   AD_CONTRACT_CHECK(ql::ranges::all_of(
       indices, [this](size_t index) { return index < size(); }));
+  const auto positions = ql::views::iota(size_t{0}, indices.size());
 
   // The words that are in the internal vocabulary, with their position in
   // `indices` (ascending). In the common case there are few or none of them
   // (only the milestone words and the explicitly cached words are in RAM).
   std::vector<std::pair<size_t, std::string_view>> internalWords;
-  for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
-    if (const auto internalWord = internalVocab_[index]) {
+  for (const size_t position : positions) {
+    if (const auto internalWord = internalVocab_[indices[position]]) {
       internalWords.emplace_back(position, internalWord.value());
     }
   }
   if (internalWords.empty()) {
     return externalVocab_.lookupBatch(indices);
   }
+  // Whether the word at `position` is the next internal word; if so, advance
+  // `nextInternal`.
+  auto nextInternal = internalWords.cbegin();
+  const auto consumeIfInternal = [&](size_t position) {
+    if (nextInternal == internalWords.cend() ||
+        nextInternal->first != position) {
+      return false;
+    }
+    ++nextInternal;
+    return true;
+  };
 
-  // Read the remaining words from the external vocabulary in one batch.
+  // Read the remaining words from the external vocabulary in one batch (none
+  // if every word is internal).
   std::vector<size_t> externalIndices;
   externalIndices.reserve(indices.size() - internalWords.size());
-  auto nextInternal = internalWords.begin();
-  for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
-    if (nextInternal != internalWords.end() &&
-        nextInternal->first == position) {
-      ++nextInternal;
-    } else {
-      externalIndices.push_back(index);
+  for (const size_t position : positions) {
+    if (!consumeIfInternal(position)) {
+      externalIndices.push_back(indices[position]);
     }
   }
   auto data = std::make_shared<SubBatchVocabBatchLookupData>();
-  std::vector<std::string_view>& views = data->views();
-  views.reserve(indices.size());
+  ql::span<const std::string_view> externalWords;
   if (!externalIndices.empty()) {
     data->buffer() = externalVocab_.lookupBatch(externalIndices);
+    externalWords = *data->buffer();
   }
+  AD_CORRECTNESS_CHECK(externalWords.size() == externalIndices.size());
 
   // Merge the two sources in the order of `indices`. The views into the
   // internal vocabulary are subject to the lifetime note on the declaration.
-  const ql::span<const std::string_view> externalWords =
-      data->buffer() ? *data->buffer() : ql::span<const std::string_view>{};
-  AD_CORRECTNESS_CHECK(externalWords.size() == externalIndices.size());
+  std::vector<std::string_view>& views = data->views();
+  views.reserve(indices.size());
+  nextInternal = internalWords.cbegin();
   auto nextExternal = externalWords.begin();
-  nextInternal = internalWords.begin();
-  for (size_t position : ql::views::iota(size_t{0}, indices.size())) {
-    if (nextInternal != internalWords.end() &&
-        nextInternal->first == position) {
-      views.push_back((nextInternal++)->second);
-    } else {
-      views.push_back(*(nextExternal++));
-    }
+  for (const size_t position : positions) {
+    const auto& internalWord = *nextInternal;
+    views.push_back(consumeIfInternal(position) ? internalWord.second
+                                                : *(nextExternal++));
   }
   return SubBatchVocabBatchLookupData::asResult(std::move(data));
 }

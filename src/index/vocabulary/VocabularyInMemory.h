@@ -77,9 +77,10 @@ class VocabularyInMemory
   //____________________________________________________________________________
   // Return the words for `indices` (not empty, every index less than
   // `size()`; both checked) in that order, as views into this vocabulary; no
-  // word is copied. Lifetime: the result must not be used after this
-  // vocabulary is destroyed or opened again (not checked at runtime; the
-  // index, and thus its vocabulary, outlives every query).
+  // word is copied. Lifetime: the views are invalidated when the words of
+  // this vocabulary are released, that is by `close()`, `open()` and the
+  // destructor; a result must not be used after that (not checked at
+  // runtime; the index, and thus its vocabulary, outlives every query).
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   //____________________________________________________________________________

@@ -65,8 +65,8 @@ class VocabLookupDataCommonBase {
   BufferType& buffer() { return buffer_; }
 
   // Mutable access to the views (one `string_view` per looked-up index, each
-  // pointing into `buffer()`), for the producer to fill before calling
-  // `asResult`.
+  // pointing into `buffer()` or into storage that outlives the result), for
+  // the producer to fill before calling `asResult`.
   std::vector<std::string_view>& views() { return views_; }
 
   // Convert a filled lookup-data object into the public result type
@@ -101,9 +101,10 @@ class VocabLookupDataCommonBase {
   void finalize() { span_ = ql::span<std::string_view>{views_}; }
 };
 
-// Lookup data of a vocabulary that keeps all its words in RAM: the views
-// point into the vocabulary itself, so there is nothing to own (see the
-// lifetime note at `VocabularyInMemory::lookupBatch`).
+// Lookup data of a vocabulary whose `operator[]` returns a view into storage
+// that outlives the result (`VocabularyInMemory`): the views point into the
+// vocabulary itself, so there is nothing to own (see the lifetime note at
+// `VocabularyInMemory::lookupBatch`).
 struct ViewsIntoVocabularyBatchLookupData
     : VocabLookupDataCommonBase<std::monostate> {
   // Return the batch-lookup result for `views` (one per looked-up index, in
@@ -156,7 +157,6 @@ using VocabularyScanRange = ad_utility::InputRangeTypeErased<IndexAndWord>;
 // `std::vector<std::string>` buffer and the `views()` point at those strings.
 struct StringVectorVocabBatchLookupData
     : VocabLookupDataCommonBase<std::vector<std::string>> {
-  //____________________________________________________________________________
   // Return the batch-lookup result that takes ownership of `words` (one word
   // per looked-up index, in order): move the vector into the buffer (this
   // transfers the storage, the strings are not relocated) and then point one
@@ -171,13 +171,14 @@ struct StringVectorVocabBatchLookupData
   }
 };
 
-// A vocabulary batch-lookup result whose words come from two sources: views
-// into storage that outlives the result (for example the words that
+// A vocabulary batch-lookup result whose words come from up to two sources:
+// views into storage that outlives the result (for example the words that
 // `VocabularyInternalExternal` keeps in RAM, which belong to the index), and
 // the result of one batch lookup in another vocabulary (for example the
 // on-disk words of the same batch). That sub-batch result is kept alive as
-// the `buffer()`, so the views that point into it stay valid; only the views
-// are copied into the result, no word data. The caller is responsible for the
+// the `buffer()` (which stays null if no word came from the other
+// vocabulary), so the views that point into it stay valid; only the views are
+// copied into the result, no word data. The caller is responsible for the
 // lifetime of the storage behind the other views (see
 // `VocabularyInternalExternal::lookupBatch`).
 struct SubBatchVocabBatchLookupData
@@ -278,6 +279,7 @@ template <typename Vocab>
 VocabBatchLookupResult sequentialLookupBatch(const Vocab& vocab,
                                              ql::span<const size_t> indices) {
   AD_CONTRACT_CHECK(!indices.empty());
+
   // Materialize the words as owning `std::string`s; `fromWords` moves them
   // into the result and points one view at each of them.
   return StringVectorVocabBatchLookupData::fromWords(

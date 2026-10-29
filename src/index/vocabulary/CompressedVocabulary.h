@@ -166,7 +166,9 @@ class CompressedVocabulary {
       return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
     } else {
       const auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
-      AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size());
+      AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size(),
+                           "the underlying vocabulary returned a different "
+                           "number of words than requested");
       auto words = ::ranges::to<std::vector<std::string>>(
           ::ranges::views::zip(*compressedWords, indices) |
           ql::views::transform([this](const auto& compressedWordAndIndex) {

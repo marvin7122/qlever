@@ -60,8 +60,10 @@ TEST(VocabularyInMemory, AccessOperator) {
   testAccessOperatorForUnorderedVocabulary(createVocabulary);
 }
 
-// `lookupBatch` returns views into the vocabulary (no copy), in the order of
-// the indices, also for duplicates; the empty batch is rejected.
+// _____________________________________________________________________________
+// Test that `lookupBatch` returns views into the vocabulary (no copy), in the
+// order of the indices, also for duplicates, and that it rejects the empty
+// batch and an index that is out of range.
 TEST(VocabularyInMemory, LookupBatch) {
   auto cleanup = getFileCleanup();
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta"};
