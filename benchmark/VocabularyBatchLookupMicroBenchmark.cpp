@@ -23,11 +23,17 @@
 //                             `hybrid-128`, `compressed-128`, `ondisk-2048`,
 //                             `hybrid-2048`, `compressed-2048`).
 //   VOCAB_LOOKUP_ORDER        `batch-first` measures `lookupBatch` first.
+//   VOCAB_LOOKUP_DROP_CACHE   if set, the page cache of the vocabulary files
+//                             is dropped (`posix_fadvise(DONTNEED)`) before
+//                             every batch, outside the timed region, so the
+//                             reads hit the disk ("cold" measurement).
 // Every measurement also prints one tab-separated line
 // `VOCAB_LOOKUP <group> <measurement> <ns/word> <batches> <seconds>` for
 // scripts.
 
 #include <absl/cleanup/cleanup.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -167,6 +173,20 @@ size_t resolveBatched(const Vocab& vocab, ql::span<const size_t> ids) {
   return totalBytes;
 }
 
+// Drop the page cache of all regular files in `dir` (clean pages only, which
+// is all the benchmark has; no root needed).
+void dropPageCache(const ql::filesystem::path& dir) {
+  for (const auto& entry : ql::filesystem::directory_iterator(dir)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const int fd = ::open(entry.path().c_str(), O_RDONLY);
+    AD_CONTRACT_CHECK(fd >= 0);
+    ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+    ::close(fd);
+  }
+}
+
 // Return type of `measureLong`.
 struct LongMeasurement {
   size_t numBatches = 0;
@@ -178,19 +198,21 @@ struct LongMeasurement {
 // `minSeconds` have passed, add the returned byte counts to `checksum` (so that
 // the lookups cannot be optimized away), print the script line
 // `VOCAB_LOOKUP <group> <measurement> ...` and return the measurement.
-template <typename F>
+// `prepare` runs before every batch, outside the timed region.
+template <typename F, typename Prepare>
 LongMeasurement measureLong(const std::string& group,
                             const std::string& measurement, size_t batchSize,
                             double minSeconds, size_t& checksum,
-                            const F& resolveOneBatch) {
+                            const F& resolveOneBatch, const Prepare& prepare) {
   using Clock = std::chrono::steady_clock;
   LongMeasurement result;
-  const auto start = Clock::now();
   do {
+    prepare();
+    const auto start = Clock::now();
     checksum += resolveOneBatch();
-    ++result.numBatches;
-    result.seconds =
+    result.seconds +=
         std::chrono::duration<double>(Clock::now() - start).count();
+    ++result.numBatches;
   } while (result.seconds < minSeconds);
   result.nsPerWord =
       result.seconds * 1e9 / static_cast<double>(result.numBatches * batchSize);
@@ -241,6 +263,7 @@ class BMVocabBatchLookupMicro : public BenchmarkInterface {
                       "VOCAB_LOOKUP_ORDER must be `single-first` or "
                       "`batch-first`");
     const bool batchFirst = order == "batch-first";
+    const bool dropCache = std::getenv("VOCAB_LOOKUP_DROP_CACHE") != nullptr;
     AD_CONTRACT_CHECK(only.empty() || only == "ondisk-128" ||
                           only == "hybrid-128" || only == "compressed-128" ||
                           only == "ondisk-2048" || only == "hybrid-2048" ||
@@ -284,10 +307,18 @@ class BMVocabBatchLookupMicro : public BenchmarkInterface {
       auto& group = results.addGroup(title);
       group.metadata().addKeyValuePair("min-seconds-per-measurement",
                                        minSeconds);
+      group.metadata().addKeyValuePair("drop-cache-before-every-batch",
+                                       dropCache);
+      const auto prepare = [&]() {
+        if (dropCache) {
+          dropPageCache(benchmarkDir);
+        }
+      };
       auto measure = [&](const std::string& name, const auto& resolve) {
         LongMeasurement m;
         auto& entry = group.addMeasurement(name, [&]() {
-          m = measureLong(id, name, ids.size(), minSeconds, checksum, resolve);
+          m = measureLong(id, name, ids.size(), minSeconds, checksum, resolve,
+                          prepare);
         });
         entry.metadata().addKeyValuePair("ns-per-word", m.nsPerWord);
         entry.metadata().addKeyValuePair("batches", m.numBatches);
