@@ -249,7 +249,7 @@ struct RuntimeParameters {
   // speeds up cold exports. The parameter is read at the start of every
   // `lookupBatch`.
   Bool vocabularyIouringPageCacheFastPath_{
-      true, "vocabulary-iouring-page-cache-fast-path"};
+      false, "vocabulary-iouring-page-cache-fast-path"};
 
   // Configure the amount of threads to compress and write blocks per
   // permutation. A value of 0 indicates that the number of threads should be
