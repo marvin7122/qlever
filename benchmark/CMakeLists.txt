@@ -38,6 +38,8 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(SparqlExpressionBenchmark engine testUtil gtest gmock)
 
+    addAndLinkBenchmark(VocabularyBatchLookupMicroBenchmark vocabulary)
+
     addAndLinkBenchmark(IdColumnBenchmark engine testUtil)
 
     addAndLinkBenchmark(TieVsArrayBenchmark engine testUtil)
