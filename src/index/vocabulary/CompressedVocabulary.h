@@ -158,24 +158,24 @@ class CompressedVocabulary {
   // sequential lookup is used.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
+
     if constexpr (underlyingHasHoles) {
       return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
-    } else {
-      // A vocabulary with holes reports placeholders for missing words, which
-      // must not be decompressed; see the same safeguard in `operator[]`.
-      static_assert(
-          !ad_utility::vocabulary::replaceOptionalByPlaceholderOnExport<
-              UnderlyingVocabulary>);
-      const auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
-      AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size());
-      std::vector<std::string> words;
-      words.reserve(indices.size());
-      for (size_t i = 0; i < indices.size(); ++i) {
-        words.push_back(compressionWrapper_.decompress(
-            (*compressedWords)[i], getDecoderIdx(indices[i])));
-      }
-      return StringVectorVocabBatchLookupData::fromWords(std::move(words));
     }
+    // A vocabulary with holes reports placeholders for missing words, which
+    // must not be decompressed; see the same safeguard in `operator[]`.
+    static_assert(!ad_utility::vocabulary::replaceOptionalByPlaceholderOnExport<
+                  UnderlyingVocabulary>);
+    const auto compressedWords = underlyingVocabulary_.lookupBatch(indices);
+    AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size());
+    auto words = ::ranges::to<std::vector<std::string>>(
+        ::ranges::views::zip(*compressedWords, indices) |
+        ql::views::transform([this](const auto& compressedWordAndIndex) {
+          const auto& [compressedWord, index] = compressedWordAndIndex;
+          return compressionWrapper_.decompress(compressedWord,
+                                                getDecoderIdx(index));
+        }));
+    return StringVectorVocabBatchLookupData::fromWords(std::move(words));
   }
 
   //____________________________________________________________________________

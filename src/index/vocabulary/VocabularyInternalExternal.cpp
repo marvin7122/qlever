@@ -29,6 +29,7 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
 VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
+
   auto data = std::make_shared<SubBatchVocabBatchLookupData>();
   std::vector<std::string_view>& views = data->views();
   views.resize(indices.size());

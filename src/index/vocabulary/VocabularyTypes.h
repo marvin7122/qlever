@@ -47,11 +47,13 @@ using VocabLookupOutput =
 // Base class for a vocabulary batch-lookup result, shared by the different
 // vocabulary implementations. Owns the materialized string data (`buffer()`,
 // whose concrete type `BufferType` depends on the implementation) and one
-// `string_view` per looked-up term (`views()`, each pointing into `buffer()`).
-// The vocabulary implementation that performs the lookup fills `buffer()` and
-// `views()`, then calls `asResult()` to hand out a `VocabBatchLookupResult`
-// that keeps this object (and thus the storage the views point into) alive for
-// as long as the `VocabBatchLookupResult` is used.
+// `string_view` per looked-up term (`views()`). A view points into `buffer()`
+// or into storage that outlives the result, for example the words that a
+// vocabulary keeps in RAM (see `SubBatchVocabBatchLookupData`). The vocabulary
+// implementation that performs the lookup fills `buffer()` and `views()`, then
+// calls `asResult()` to hand out a `VocabBatchLookupResult` that keeps this
+// object (and thus `buffer()`) alive for as long as the
+// `VocabBatchLookupResult` is used.
 //
 // NOTE: Use `finalize()` after filling `views` to set up the span, then use
 // `asResult()` to get a `VocabBatchLookupResult` via aliasing shared_ptr.
@@ -85,7 +87,8 @@ class VocabLookupDataCommonBase {
   // Buffer for the materialized string data (used by disk-based vocabularies).
   BufferType buffer_;
 
-  // One `string_view` per looked-up index, each pointing into `buffer_`.
+  // One `string_view` per looked-up index, each pointing into `buffer_` or
+  // into storage that outlives the result (see the class comment).
   std::vector<std::string_view> views_;
 
   // The span over `views_`, populated by `finalize()` and exposed by
@@ -144,10 +147,11 @@ using VocabularyScanRange = ad_utility::InputRangeTypeErased<IndexAndWord>;
 // `std::vector<std::string>` buffer and the `views()` point at those strings.
 struct StringVectorVocabBatchLookupData
     : VocabLookupDataCommonBase<std::vector<std::string>> {
-  // Return the batch-lookup result for the owning `words` (one word per
-  // looked-up index, in order): move them into the buffer and point one view
-  // at each of them. Moving the vector does not relocate the strings, so the
-  // views stay valid.
+  //____________________________________________________________________________
+  // Return the batch-lookup result that takes ownership of `words` (one word
+  // per looked-up index, in order): move the vector into the buffer (this
+  // transfers the storage, the strings are not relocated) and then point one
+  // view at each string.
   static VocabBatchLookupResult fromWords(std::vector<std::string> words) {
     auto data = std::make_shared<StringVectorVocabBatchLookupData>();
     data->buffer() = std::move(words);
