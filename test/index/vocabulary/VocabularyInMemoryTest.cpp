@@ -60,6 +60,23 @@ TEST(VocabularyInMemory, AccessOperator) {
   testAccessOperatorForUnorderedVocabulary(createVocabulary);
 }
 
+// `lookupBatch` returns views into the vocabulary (no copy), in the order of
+// the indices, also for duplicates; the empty batch is rejected.
+TEST(VocabularyInMemory, LookupBatch) {
+  auto cleanup = getFileCleanup();
+  const std::vector<std::string> words{"alpha", "beta", "gamma", "delta"};
+  const auto vocab = createVocabulary(words);
+  const std::vector<size_t> indices{3, 0, 2, 0};
+  const auto result = vocab.lookupBatch(indices);
+  ASSERT_EQ(result->size(), indices.size());
+  for (size_t i = 0; i < indices.size(); ++i) {
+    EXPECT_EQ((*result)[i], words[indices[i]]);
+    EXPECT_EQ((*result)[i].data(), vocab[indices[i]].data()) << "copied";
+  }
+  AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
+                               ::testing::HasSubstr("!indices.empty()"));
+}
+
 TEST(VocabularyInMemory, ReadAndWriteFromFile) {
   const std::vector<std::string> words{"alpha", "delta", "beta", "42",
                                        "31",    "0",     "al"};

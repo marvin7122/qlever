@@ -18,6 +18,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "backports/memory_resource.h"
@@ -95,6 +96,12 @@ class VocabLookupDataCommonBase {
   // modify `views_` afterward, as `span_` would be invalidated.
   void finalize() { span_ = ql::span<std::string_view>{views_}; }
 };
+
+// Lookup data of a vocabulary that keeps all its words in RAM: the views
+// point into the vocabulary itself, so there is nothing to own (see the
+// lifetime note at `VocabularyInMemory::lookupBatch`).
+struct ViewsIntoVocabularyBatchLookupData
+    : VocabLookupDataCommonBase<std::monostate> {};
 
 // A vocabulary batch-lookup result whose total size is known up front, so all
 // strings can be materialized into a single contiguous `buffer()` in one go
