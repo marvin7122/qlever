@@ -20,6 +20,7 @@
 
 #include "backports/memory_resource.h"
 #include "backports/span.h"
+#include "util/CompactStringVector.h"
 #include "util/Exception.h"
 #include "util/ExceptionHandling.h"
 #include "util/Iterators.h"
