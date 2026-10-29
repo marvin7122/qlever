@@ -35,6 +35,7 @@ void VocabularyInMemory::writeToFile(const string& fileName) const {
 VocabBatchLookupResult VocabularyInMemory::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
+
   return ViewsIntoVocabularyBatchLookupData::fromViews(::ranges::to_vector(
       indices | ql::views::transform([this](size_t idx) -> std::string_view {
         AD_CONTRACT_CHECK(idx < size());
