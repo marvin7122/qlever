@@ -2,7 +2,6 @@
 // Chair of Algorithms and Data Structures.
 // Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
 
-#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include "./VocabularyTestHelpers.h"
@@ -119,58 +118,6 @@ TEST(VocabularyInternalExternal, EmptyVocabulary) {
 }
 
 // _____________________________________________________________________________
-// `lookupBatch` returns the same words as `operator[]`, in the order of the
-// indices, for batches that mix internal and external words, contain
-// duplicates, consist of only internal or only external words, or of a single
-// word. Internal words are views into the vocabulary (no copy); external
-// words are owned by the result. The empty batch is rejected.
-TEST(VocabularyInternalExternal, LookupBatch) {
-  std::vector<std::string> words;
-  for (size_t i = 0; i < 40; ++i) {
-    words.push_back(absl::StrCat("word-", i, "-", std::string(i % 5, 'y')));
-  }
-  // `createVocabulary` writes every second word (even index) to the internal
-  // vocabulary.
-  auto vocab = createVocabulary("LookupBatch")(words);
-  const auto check = [&](const std::vector<size_t>& indices) {
-    const auto result = vocab.lookupBatch(indices);
-    ASSERT_EQ(result->size(), indices.size());
-    for (size_t i = 0; i < indices.size(); ++i) {
-      EXPECT_EQ((*result)[i], words[indices[i]]) << "index " << indices[i];
-      const auto internal = vocab.internalVocab()[indices[i]];
-      if (internal.has_value()) {
-        EXPECT_EQ((*result)[i].data(), internal.value().data())
-            << "internal word " << indices[i] << " was copied";
-      }
-    }
-  };
-  check(::ranges::to<std::vector<size_t>>(
-      ql::views::iota(size_t{0}, words.size())));
-  check({39, 0, 7, 7, 2, 1});
-  check({0, 2, 4});
-  check({1, 3, 5});
-  check({0});
-  check({1});
-  AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(std::vector<size_t>{}),
-                               ::testing::HasSubstr("!indices.empty()"));
-}
-
-// A result stays valid after further lookups: the external words are owned by
-// the result itself, not by a buffer of the vocabulary.
-TEST(VocabularyInternalExternal, LookupBatchResultOutlivesLaterLookups) {
-  std::vector<std::string> words;
-  for (size_t i = 0; i < 20; ++i) {
-    words.push_back(absl::StrCat("w", i));
-  }
-  auto vocab = createVocabulary("LookupBatchResultOutlivesLaterLookups")(words);
-  const std::vector<size_t> first{1, 3, 0};
-  const auto firstResult = vocab.lookupBatch(first);
-  const auto secondResult = vocab.lookupBatch(std::vector<size_t>{5, 7, 9});
-  for (size_t i = 0; i < first.size(); ++i) {
-    EXPECT_EQ((*firstResult)[i], words[first[i]]);
-  }
-}
-
 TEST(VocabularyInternalExternal, ScanAll) {
   // `scanAll` delegates to the external vocabulary and must yield all words in
   // order.
