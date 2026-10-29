@@ -8,6 +8,9 @@
 
 #include <boost/asio/post.hpp>
 #include <boost/asio/use_future.hpp>
+#include <memory>
+#include <string_view>
+#include <vector>
 
 #include "util/GlobalExecutor.h"
 
@@ -18,6 +21,41 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
     return std::string{fromInternal.value()};
   }
   return externalVocab_[i];
+}
+
+// _____________________________________________________________________________
+VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
+    ql::span<const size_t> indices) const {
+  AD_CONTRACT_CHECK(!indices.empty());
+  auto data = std::make_shared<SubBatchVocabBatchLookupData>();
+  std::vector<std::string_view>& views = data->views();
+  views.resize(indices.size());
+  // The positions (in `indices`) and the indices of the words that are not in
+  // the internal vocabulary; they are read from the external vocabulary in one
+  // batch below.
+  std::vector<size_t> externalPositions;
+  std::vector<size_t> externalIndices;
+  for (size_t position = 0; position < indices.size(); ++position) {
+    const size_t index = indices[position];
+    if (const auto internalWord = internalVocab_[index];
+        internalWord.has_value()) {
+      // A view into the internal vocabulary, see the lifetime note on the
+      // declaration.
+      views[position] = internalWord.value();
+    } else {
+      externalPositions.push_back(position);
+      externalIndices.push_back(index);
+    }
+  }
+  if (!externalIndices.empty()) {
+    data->buffer() = externalVocab_.lookupBatch(externalIndices);
+    const ql::span<std::string_view>& externalWords = *data->buffer();
+    AD_CORRECTNESS_CHECK(externalWords.size() == externalPositions.size());
+    for (size_t i = 0; i < externalPositions.size(); ++i) {
+      views[externalPositions[i]] = externalWords[i];
+    }
+  }
+  return SubBatchVocabBatchLookupData::asResult(std::move(data));
 }
 
 // _____________________________________________________________________________

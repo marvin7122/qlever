@@ -138,6 +138,17 @@ using VocabularyScanRange = ad_utility::InputRangeTypeErased<IndexAndWord>;
 struct StringVectorVocabBatchLookupData
     : VocabLookupDataCommonBase<std::vector<std::string>> {};
 
+// A vocabulary batch-lookup result whose words come from two sources: views
+// into storage that outlives the result (for example the words that
+// `VocabularyInternalExternal` keeps in RAM, which belong to the index), and
+// the result of one batch lookup in another vocabulary (for example the
+// on-disk words of the same batch). That sub-batch result is kept alive as
+// the `buffer()`, so the views that point into it stay valid; nothing is
+// copied. The caller is responsible for the lifetime of the storage behind
+// the other views (see `VocabularyInternalExternal::lookupBatch`).
+struct SubBatchVocabBatchLookupData
+    : VocabLookupDataCommonBase<VocabBatchLookupResult> {};
+
 // Generic sequential fallback implementations of the batch-lookup interface,
 // used by all vocabularies that do not provide a specialized (e.g. io_uring)
 // implementation. They simply loop over the indices and issue the ordinary
