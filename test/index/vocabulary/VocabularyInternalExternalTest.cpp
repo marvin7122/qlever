@@ -172,24 +172,28 @@ TEST(VocabularyInternalExternal, LookupBatch) {
   checkLookupBatch({2, 4, 6});
   AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
                                ::testing::HasSubstr("!indices.empty()"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      vocab.lookupBatch(std::vector<size_t>{1, words.size()}),
+      ::testing::HasSubstr("index < size()"));
 }
 
 // _____________________________________________________________________________
-// Verify that a result stays valid after further lookups: the external words
-// are owned by the result itself, not by a buffer of the vocabulary.
+// Verify that a result of a mixed batch (so that the external words come from
+// a sub-batch result that the result keeps alive) stays valid after a later
+// lookup whose result has already been destroyed: the external words are
+// owned by the result itself, not by a buffer of the vocabulary.
 TEST(VocabularyInternalExternal, LookupBatchResultOutlivesLaterLookups) {
   const auto words = makeWords(20);
   const auto vocab =
       createVocabulary("LookupBatchResultOutlivesLaterLookups")(words);
 
-  // External words only (even indices other than 0, see `createVocabulary`).
-  const std::vector<size_t> first{2, 4, 6};
+  // Mixed batch: 2 and 4 are external, 1 is internal (see `createVocabulary`).
+  const std::vector<size_t> first{2, 1, 4};
   const auto firstResult = vocab.lookupBatch(first);
-
-  // Kept alive on purpose while `firstResult` is checked: a buffer reused
-  // between lookups would overwrite the words of the first result.
-  [[maybe_unused]] const auto secondResult =
-      vocab.lookupBatch(std::vector<size_t>{8, 10, 12});
+  {
+    const auto secondResult = vocab.lookupBatch(std::vector<size_t>{8, 3, 10});
+    EXPECT_EQ((*secondResult)[0], words[8]);
+  }
 
   for (const auto& [index, word] : ::ranges::views::zip(first, *firstResult)) {
     EXPECT_EQ(word, words[index]);

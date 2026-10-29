@@ -10,10 +10,11 @@
 #include <boost/asio/use_future.hpp>
 #include <memory>
 #include <range/v3/view/enumerate.hpp>
-#include <range/v3/view/zip.hpp>
 #include <string_view>
+#include <utility>
 #include <vector>
 
+#include "backports/algorithm.h"
 #include "util/GlobalExecutor.h"
 
 // _____________________________________________________________________________
@@ -29,41 +30,54 @@ std::string VocabularyInternalExternal::operator[](uint64_t i) const {
 VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
+  AD_CONTRACT_CHECK(ql::ranges::all_of(
+      indices, [this](size_t index) { return index < size(); }));
 
-  auto data = std::make_shared<SubBatchVocabBatchLookupData>();
-  std::vector<std::string_view>& views = data->views();
-  views.resize(indices.size());
-  // For each word that is not in the internal vocabulary: its position in
-  // `indices` (`externalPositions`) and its index (`externalIndices`). These
-  // words are read from the external vocabulary in one batch below.
-  std::vector<size_t> externalPositions;
-  std::vector<size_t> externalIndices;
-  // In the common case almost all words are external (only the milestone
-  // words and the explicitly cached words are in RAM).
-  externalPositions.reserve(indices.size());
-  externalIndices.reserve(indices.size());
+  // The words that are in the internal vocabulary, with their position in
+  // `indices` (ascending). In the common case there are few or none of them
+  // (only the milestone words and the explicitly cached words are in RAM).
+  std::vector<std::pair<size_t, std::string_view>> internalWords;
   for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
     if (const auto internalWord = internalVocab_[index]) {
-      // A view into the internal vocabulary, see the lifetime note on the
-      // declaration.
-      views[position] = internalWord.value();
+      internalWords.emplace_back(position, internalWord.value());
+    }
+  }
+  if (internalWords.empty()) {
+    return externalVocab_.lookupBatch(indices);
+  }
+
+  // Read the remaining words from the external vocabulary in one batch.
+  std::vector<size_t> externalIndices;
+  externalIndices.reserve(indices.size() - internalWords.size());
+  auto nextInternal = internalWords.begin();
+  for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
+    if (nextInternal != internalWords.end() &&
+        nextInternal->first == position) {
+      ++nextInternal;
     } else {
-      externalPositions.push_back(position);
       externalIndices.push_back(index);
     }
   }
-  if (externalIndices.size() == indices.size()) {
-    // No word is in the internal vocabulary: the external result is the
-    // result.
-    return externalVocab_.lookupBatch(indices);
-  }
+  auto data = std::make_shared<SubBatchVocabBatchLookupData>();
+  std::vector<std::string_view>& views = data->views();
+  views.reserve(indices.size());
   if (!externalIndices.empty()) {
     data->buffer() = externalVocab_.lookupBatch(externalIndices);
-    const ql::span<std::string_view>& externalWords = *data->buffer();
-    AD_CORRECTNESS_CHECK(externalWords.size() == externalPositions.size());
-    for (const auto& [position, word] :
-         ::ranges::views::zip(externalPositions, externalWords)) {
-      views[position] = word;
+  }
+
+  // Merge the two sources in the order of `indices`. The views into the
+  // internal vocabulary are subject to the lifetime note on the declaration.
+  const ql::span<const std::string_view> externalWords =
+      data->buffer() ? *data->buffer() : ql::span<const std::string_view>{};
+  AD_CORRECTNESS_CHECK(externalWords.size() == externalIndices.size());
+  auto nextExternal = externalWords.begin();
+  nextInternal = internalWords.begin();
+  for (size_t position : ql::views::iota(size_t{0}, indices.size())) {
+    if (nextInternal != internalWords.end() &&
+        nextInternal->first == position) {
+      views.push_back((nextInternal++)->second);
+    } else {
+      views.push_back(*(nextExternal++));
     }
   }
   return SubBatchVocabBatchLookupData::asResult(std::move(data));

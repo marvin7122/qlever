@@ -83,7 +83,8 @@ class VocabLookupDataCommonBase {
   }
 
  private:
-  // Buffer for the materialized string data (used by disk-based vocabularies).
+  // The storage owned by the result: the materialized string data, or a
+  // nested result of another vocabulary (see `SubBatchVocabBatchLookupData`).
   BufferType buffer_;
 
   // One `string_view` per looked-up index, each pointing into `buffer_` or
