@@ -175,7 +175,7 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
             ~/.npm
-          key: ocr-build-linux-x64-48cc191fc147f0b4642e9658717805f6a3dfefa5-40f1582b2485089dde7abd97c1529aa768e1baff
+          key: ocr-build-linux-x64-d5b6b075fb99d7fca87a994244d1b058ad8970cb-40f1582b2485089dde7abd97c1529aa768e1baff
       # Comment-triggered runs belong to the default branch, so GitHub does not
       # list them among the PR's checks. A check run of the OCR app on the PR's
       # head commit makes the review visible there (falls back to a commit
@@ -243,12 +243,51 @@ jobs:
           python3 .opencodereview/split_rules.py \
             .opencodereview/rule.json "$OCR_CHUNKS" '${{ matrix.chunk }}' \
             '${{ runner.temp }}/rule-chunk-${{ matrix.chunk }}.json'
+      # Cost cut 2026-10-30: one review session per rule made ~7,300 LLM calls
+      # per run (PR 318, run 41074344638). Merge the leg's rules into one rule
+      # per path glob, so each leg reviews a file once against all its ~16
+      # rules. The shared preamble is kept once. Inline because the sparse
+      # checkout above reads files from the PR's base branch.
+      - name: Bundle this leg's rules into one rule
+        if: steps.freshness.outputs.stale != 'true'
+        run: |
+          python3 - '${{ runner.temp }}/rule-chunk-${{ matrix.chunk }}.json' <<'PY'
+          import json, os, sys
+          path = sys.argv[1]
+          with open(path, encoding="utf-8") as f:
+              data = json.load(f)
+          rules = data.get("rules", [])
+          single = "Check only the single rule below. If it does not apply, report no finding."
+          bundled = "Check each rule below separately. Report a finding only for a rule the diff violates, and start it with that rule's ID."
+          by_path = {}
+          for r in rules:
+              by_path.setdefault(r["path"], []).append(r)
+          merged = []
+          for glob, group in by_path.items():
+              texts = [r["rule"] for r in group]
+              head = os.path.commonprefix(texts)
+              head = head[: head.rfind("\n\n") + 2] if "\n\n" in head else ""
+              bodies = [t[len(head):].strip() for t in texts]
+              rule = {"path": glob, "rule": head.replace(single, bundled) + "\n\n".join(bodies)}
+              # A rule without a trigger always runs, so the bundle runs unconditionally
+              # unless every rule in it has triggers.
+              if all(r.get("trigger") for r in group):
+                  rule["trigger"] = [t for r in group for t in r["trigger"]]
+              if any(r.get("merge_system_rule") for r in group):
+                  rule["merge_system_rule"] = True
+              merged.append(rule)
+          data["rules"] = merged
+          with open(path, "w", encoding="utf-8") as f:
+              json.dump(data, f, indent=1)
+              f.write("\n")
+          print(f"bundled {len(rules)} rules into {len(merged)}")
+          PY
       - name: Review pull request with fan-out project rules
         id: ocr
         # Skip queued runs whose head moved while waiting (see the freshness
         # step); for comment-triggered runs the step never marks stale.
         if: steps.freshness.outputs.stale != 'true'
-        uses: marvin7122/open-code-review@3461ba0df7fba00fbb44376803e9a1d86d56026d # fix/fanout-custom-rules: fan-out honors --rule chunks
+        uses: marvin7122/open-code-review@d5b6b075fb99d7fca87a994244d1b058ad8970cb # feat/review-no-plan: fan-out honors --rule chunks, --no-plan
         with:
           # Deliberately the job-scoped GITHUB_TOKEN, not an App installation
           # token: installation tokens expire after 1 hour, but large-diff
@@ -267,6 +306,8 @@ jobs:
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
           ocr_install_from: source
           fan_out_project_rules: 'true'
+          # The plan pre-pass ran once per file and rule (688 calls per run).
+          no_plan: 'true'
           rule: ${{ runner.temp }}/rule-chunk-${{ matrix.chunk }}.json
           # One file at a time per leg ran a 34-part PR for >6 h and hit the
           # 360-min job timeout (run 37594125409). Four parallel reviews per
@@ -291,7 +332,7 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
             ~/.npm
-          key: ocr-build-linux-x64-48cc191fc147f0b4642e9658717805f6a3dfefa5-40f1582b2485089dde7abd97c1529aa768e1baff
+          key: ocr-build-linux-x64-d5b6b075fb99d7fca87a994244d1b058ad8970cb-40f1582b2485089dde7abd97c1529aa768e1baff
       - name: Mint fresh App token for stamping
         id: app-token-stamp
         if: ${{ vars.OCR_FANOUT_APP_ID != '' && steps.freshness.outputs.stale != 'true' }}
