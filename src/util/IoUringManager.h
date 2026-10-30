@@ -15,6 +15,7 @@
 #include <sys/uio.h>
 
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -192,8 +193,9 @@ class IoUringPolicy {
 
   // The same outstanding reads as `numOutstandingReadRequests_`, but broken
   // down per batch: maps a batch handle to the number of its reads that have
-  // not yet been reaped. An entry for a batch (identified by `BatchHandle`) is
-  // removed once `wait()` has observed all of its reads complete.
+  // not yet been reaped. An entry is removed as soon as the last read of its
+  // batch is reaped, which can happen in `addBatch` or in the `wait()` of
+  // another batch.
   ad_utility::HashMap<BatchHandle, size_t> numOutstandingReadRequestsPerBatch_;
 
   // Per-read metadata needed when a completion is reaped: which batch the read
@@ -214,14 +216,15 @@ class IoUringPolicy {
   // read is prepared in `addBatch` and erased when its completion is reaped.
   ad_utility::HashMap<uint64_t, OutstandingRead> outstandingReadsByRequestId_;
 
-  // The first failed or short read of each batch, as a static error message.
-  // A wave can reap the reads of any batch, so the error is kept here until
-  // `wait` of its own batch throws it.
-  ad_utility::HashMap<BatchHandle, const char*> firstErrorPerBatch_;
+  // The error message of the first failed or short read of each batch. A wave
+  // can reap the reads of any batch, so the error is kept here until `wait` of
+  // its own batch throws it.
+  ad_utility::HashMap<BatchHandle, std::string> firstErrorPerBatch_;
 
   // Block until at least `minComplete` CQEs are ready (capped at the number
-  // of reads the kernel has received), then reap every ready CQE. Throws only
-  // if waiting fails; read errors are recorded in `firstErrorPerBatch_`.
+  // of reads the kernel has received), then reap every ready CQE. Throws if
+  // submitting or waiting fails; read errors are recorded in
+  // `firstErrorPerBatch_` instead.
   // `minComplete` must be > 0 and at most `numOutstandingReadRequests_`.
   void drainAtLeast(unsigned minComplete);
 
@@ -260,7 +263,8 @@ class IoUringPolicy {
 
   // Block until every read in the batch that is represented by the `handle` has
   // completed. (The `handle` was submitted along the read requests using
-  // `addBatch`.) Throws if a read of this batch failed or was short.
+  // `addBatch`.) Throws if submitting or waiting fails, or if a read of this
+  // batch failed or was short.
   void wait(BatchHandle handle);
 };
 
