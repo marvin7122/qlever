@@ -32,7 +32,7 @@ class VocabularyInMemory
   // The actual storage. It is shared with the batch-lookup results (see
   // `lookupBatch`), which is why it is never modified in place: `open()` and
   // deserialization replace it by a new one, `close()` by an empty one.
-  std::shared_ptr<Words> words_ = std::make_shared<Words>();
+  std::shared_ptr<const Words> words_ = std::make_shared<Words>();
 
   // Const access to the words.
   const Words& words() const { return *words_; }
@@ -43,7 +43,7 @@ class VocabularyInMemory
 
   // Construct the vocabulary from `Words`
   explicit VocabularyInMemory(Words words)
-      : words_{std::make_shared<Words>(std::move(words))} {}
+      : words_{std::make_shared<const Words>(std::move(words))} {}
 
   // Build a vocabulary as a non-owning, zero-copy view directly into the
   // buffer of `serializer`, which must support zero-copy deserialization
