@@ -374,8 +374,8 @@ TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
 }
 
 // A failed read in one batch must not lose the completions of another batch
-// reaped in the same wave: the error is thrown only after the whole wave is
-// applied to the bookkeeping, so the good batch still completes afterwards.
+// reaped in the same wave: every completion of the wave is applied to the
+// bookkeeping, so the good batch still completes afterwards.
 TYPED_TEST(IoUringManagerTest, ErrorInWaveKeepsOtherBatchesConsistent) {
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
 
@@ -558,6 +558,36 @@ TEST(IoUringManagerDrop, dropSyncManagerHasNothingOutstanding) {
 }
 
 #ifdef QLEVER_HAS_IO_URING
+// A wave reaps the completions of every batch, so `wait` of a good batch can
+// reap the failed read of another batch. The error must be thrown by `wait` of
+// the failed batch, not by `wait` of the good one. (`SyncIoPolicy` throws in
+// `addBatch` instead, so the test is not part of the typed suite.)
+TEST(IoUringManagerErrors, aReadErrorIsThrownByTheWaitOfItsBatch) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
+
+  Manager manager(64);
+  ReadBatchForTesting bad;
+  bad.add(8, 16);  // past EOF: short read
+  ReadBatchForTesting good;
+  good.add({{0, 4}, {4, 4}, {8, 4}});
+  auto badHandle = bad.submitTo(manager, fd);
+  auto goodHandle = good.submitTo(manager, fd);
+
+  // Waiting for the good batch reaps at least its own three reads; the bad
+  // read may or may not be reaped in the same waves.
+  manager.wait(goodHandle);
+  EXPECT_THAT(good.result(), ::testing::ElementsAre("AAAA", "BBBB", "CCCC"));
+  AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(badHandle),
+                               HasSubstr("read fewer bytes than requested"));
+  // The error is reported once; the batch is gone afterwards.
+  EXPECT_NO_THROW(manager.wait(badHandle));
+}
+
 // Drop the manager while reads are still in flight (submitted but never
 // waited). `IoUringPolicy`'s destructor drains the outstanding completions
 // (and logs a warning) before tearing down the ring, so the kernel is done

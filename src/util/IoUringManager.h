@@ -214,16 +214,21 @@ class IoUringPolicy {
   // read is prepared in `addBatch` and erased when its completion is reaped.
   ad_utility::HashMap<uint64_t, OutstandingRead> outstandingReadsByRequestId_;
 
+  // The first failed or short read of each batch, as a static error message.
+  // A wave can reap the reads of any batch, so the error is kept here until
+  // `wait` of its own batch throws it.
+  ad_utility::HashMap<BatchHandle, const char*> firstErrorPerBatch_;
+
   // Block until at least `minComplete` CQEs are ready (capped at the number
-  // of reads the kernel has received), then reap every ready CQE. Throw after
-  // the whole wave is reaped if any read in it failed or was short.
+  // of reads the kernel has received), then reap every ready CQE. Throws only
+  // if waiting fails; read errors are recorded in `firstErrorPerBatch_`.
   // `minComplete` must be > 0 and at most `numOutstandingReadRequests_`.
   void drainAtLeast(unsigned minComplete);
 
   // Apply one completion to the bookkeeping of the outstanding reads. Always
-  // updates the counts, also for a failed read. Return a static error message
-  // if the read failed or was short, and `nullptr` otherwise.
-  [[nodiscard]] const char* processCqe(int numBytesRead, uint64_t requestId);
+  // updates the counts, also for a failed read, and records the first failed or
+  // short read of the batch in `firstErrorPerBatch_`.
+  void processCqe(int numBytesRead, uint64_t requestId);
 
   // Submit all prepared SQEs to the kernel. Throw if `io_uring_submit`
   // fails, including the error description in the message.
@@ -255,7 +260,7 @@ class IoUringPolicy {
 
   // Block until every read in the batch that is represented by the `handle` has
   // completed. (The `handle` was submitted along the read requests using
-  // `addBatch`.) Throws on any I/O error.
+  // `addBatch`.) Throws if a read of this batch failed or was short.
   void wait(BatchHandle handle);
 };
 

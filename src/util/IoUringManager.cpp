@@ -223,7 +223,11 @@ IoUringPolicy::~IoUringPolicy() {
   const size_t numNeverSubmitted = io_uring_sq_ready(&ring_);
   while (numOutstandingReadRequests_ > numNeverSubmitted) {
     io_uring_cqe* cqe = nullptr;
-    if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
+    int ret = 0;
+    do {
+      ret = io_uring_wait_cqe(&ring_, &cqe);
+    } while (ret == -EINTR);
+    if (ret < 0) {
       break;
     }
     io_uring_cqe_seen(&ring_, cqe);
@@ -263,6 +267,13 @@ void IoUringPolicy::addBatch(int fd,
       }
     }
 
+    // Record the read's metadata (the batch it belongs to and how many bytes it
+    // should read) under a unique request id before claiming an SQE, so an
+    // allocation failure here leaves no claimed SQE without metadata behind.
+    const uint64_t requestId = nextRequestIdToAssign_++;
+    outstandingReadsByRequestId_[requestId] =
+        OutstandingRead{handle, numBytesToRead};
+
     // Claim the next free SQE. The check above guarantees a slot is available,
     // so `io_uring_get_sqe` must not return `nullptr` here.
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
@@ -270,17 +281,11 @@ void IoUringPolicy::addBatch(int fd,
 
     // Record the read's parameters in the SQE (this only sets the SQE's fields;
     // the request is not handed to the kernel until a later `io_uring_submit`).
+    // io_uring copies the request id (the SQE's `user_data`) verbatim into the
+    // matching completion, so `processCqe` can recover it.
     io_uring_prep_read(sqe, fd, targetBuf,
                        static_cast<unsigned>(numBytesToRead),
                        static_cast<__u64>(fileOffset));
-
-    // Tag the SQE with a unique request id and record its metadata (the batch
-    // it belongs to and how many bytes it should read). io_uring copies the
-    // request id (the SQE's `user_data`) verbatim into the matching completion,
-    // so `processCqe` can recover it.
-    const uint64_t requestId = nextRequestIdToAssign_++;
-    outstandingReadsByRequestId_[requestId] =
-        OutstandingRead{handle, numBytesToRead};
     io_uring_sqe_set_data64(sqe, requestId);
     numOutstandingReadRequests_++;
   }
@@ -302,6 +307,14 @@ void IoUringPolicy::wait(BatchHandle handle) {
        it = numOutstandingReadRequestsPerBatch_.find(handle)) {
     drainAtLeast(
         static_cast<unsigned>(std::min<size_t>(REAP_WAVE, it->second)));
+  }
+  // An earlier wave (of this or another batch's `wait`, or of `addBatch`) may
+  // have reaped the failed read, so check the recorded error last.
+  if (auto it = firstErrorPerBatch_.find(handle);
+      it != firstErrorPerBatch_.end()) {
+    const char* errorMessage = it->second;
+    firstErrorPerBatch_.erase(it);
+    AD_THROW(errorMessage);
   }
 }
 
@@ -349,10 +362,7 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
 
   // Reap every ready CQE in chunks. `io_uring_peek_batch_cqe` does not block;
   // `io_uring_cq_advance` releases a whole chunk with one CQ-head update
-  // instead of one `io_uring_cqe_seen` per CQE. Every CQE of the wave is
-  // applied to the bookkeeping before any error is thrown, so the outstanding
-  // counts stay consistent and no CQE is processed twice.
-  const char* firstErrorMessage = nullptr;
+  // instead of one `io_uring_cqe_seen` per CQE.
   std::array<io_uring_cqe*, 64> cqes{};
   while (true) {
     const unsigned n = io_uring_peek_batch_cqe(
@@ -362,21 +372,14 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
     }
     for (unsigned i = 0; i < n; ++i) {
       // Recover the id via the 64-bit `user_data` field, see `addBatch`.
-      const char* errorMessage =
-          processCqe(cqes[i]->res, io_uring_cqe_get_data64(cqes[i]));
-      if (firstErrorMessage == nullptr) {
-        firstErrorMessage = errorMessage;
-      }
+      processCqe(cqes[i]->res, io_uring_cqe_get_data64(cqes[i]));
     }
     io_uring_cq_advance(&ring_, n);
-  }
-  if (firstErrorMessage != nullptr) {
-    AD_THROW(firstErrorMessage);
   }
 }
 
 //______________________________________________________________________________
-const char* IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
+void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
   --numOutstandingReadRequests_;
 
   // Every reaped CQE corresponds to exactly one outstanding read whose id we
@@ -397,16 +400,19 @@ const char* IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
     numOutstandingReadRequestsPerBatch_.erase(it);
   }
 
-  // `cqe->res` < 0 is `-errno`.
+  // `cqe->res` < 0 is `-errno`. A result smaller than requested (a partial
+  // read, or 0 at end of file) means we read fewer bytes than expected, which
+  // we treat as an error.
+  const char* errorMessage = nullptr;
   if (numBytesRead < 0) {
-    return "I/O error in IoUringPolicy read operation";
+    errorMessage = "I/O error in IoUringPolicy read operation";
+  } else if (static_cast<size_t>(numBytesRead) !=
+             outstandingRead.expectedNumBytes) {
+    errorMessage = "read fewer bytes than requested in IoUringPolicy";
   }
-  // A result smaller than requested (a partial read, or 0 at end of file) means
-  // we read fewer bytes than expected, which we treat as an error.
-  if (static_cast<size_t>(numBytesRead) != outstandingRead.expectedNumBytes) {
-    return "read fewer bytes than requested in IoUringPolicy";
+  if (errorMessage != nullptr) {
+    firstErrorPerBatch_.try_emplace(outstandingRead.batchHandle, errorMessage);
   }
-  return nullptr;
 }
 
 #endif  // QLEVER_HAS_IO_URING
