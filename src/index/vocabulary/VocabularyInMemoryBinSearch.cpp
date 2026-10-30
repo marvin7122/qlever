@@ -143,7 +143,8 @@ VocabBatchLookupResult VocabularyInMemoryBinSearch::lookupBatch(
   // The placeholders are created up front so that the views into them stay
   // valid (the vector is not resized afterwards).
   auto& placeholders = data->buffer().placeholders_;
-  placeholders.reserve(ql::ranges::count(positions, std::nullopt));
+  placeholders.reserve(ql::ranges::count_if(
+      positions, [](const auto& position) { return !position.has_value(); }));
   auto& views = data->views();
   views.reserve(indices.size());
   for (const auto& [index, position] :
