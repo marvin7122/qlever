@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <climits>
 #include <cstdio>
 #include <cstring>
@@ -36,6 +37,14 @@
 #include "util/PageCacheReadTestHelpers.h"
 
 namespace {
+
+// `value` in decimal, padded with leading zeros to `width` characters, so that
+// distinct values give distinct, recognizable file chunks.
+std::string zeroPaddedNumber(size_t value, size_t width) {
+  std::string digits = std::to_string(value);
+  AD_CONTRACT_CHECK(digits.size() <= width);
+  return std::string(width - digits.size(), '0') + digits;
+}
 
 using namespace ::testing;
 
@@ -320,6 +329,79 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
               ::testing::ElementsAreArray(scenario.expected()));
 }
 
+// A batch much larger than a tiny ring (8 slots, one `REAP_WAVE`) completes.
+// `IoUringPolicy` refills the ring after reaping a whole wave of CQEs in one
+// call, so every refill starts from an empty or nearly empty ring.
+TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanTinyRing) {
+  constexpr size_t N = 80;
+  SequentialReadScenarioForTesting scenario;
+  for (size_t i = 0; i < N; ++i) {
+    scenario.addRead(zeroPaddedNumber(i, 4));
+  }
+  auto [tmp, fd] = makeTempFile(scenario.content());
+  TypeParam manager(8);
+  manager.wait(scenario.submitTo(manager, fd));
+  EXPECT_THAT(scenario.results(),
+              ::testing::ElementsAreArray(scenario.expected()));
+}
+
+// Waiting on the last of many small batches (1, 3 or 5 reads each) reaps the
+// CQEs of the other batches in the same wave. The remaining waits then find
+// their batches already complete and must still see the correct bytes. Batch
+// sizes that are not multiples of the reap wave (1, 3, 5, ...) cover partial
+// waves.
+TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
+  constexpr size_t M = 12;
+  std::string fileContent;
+  std::vector<std::vector<std::string>> expected(M);
+  std::vector<ReadBatchForTesting> batches(M);
+  for (size_t i = 0; i < M; ++i) {
+    const size_t numReads = 2 * (i % 3) + 1;
+    for (size_t j = 0; j < numReads; ++j) {
+      std::string chunk = zeroPaddedNumber(fileContent.size() / 3, 3);
+      batches[i].add(fileContent.size(), chunk.size());
+      fileContent.append(chunk);
+      expected[i].push_back(std::move(chunk));
+    }
+  }
+  auto [tmp, fd] = makeTempFile(fileContent);
+
+  TypeParam manager(64);
+  std::vector<typename TypeParam::BatchHandle> handles;
+  for (auto& batch : batches) {
+    handles.push_back(batch.submitTo(manager, fd));
+  }
+  // Wait on the last batch first, then on the rest in submission order.
+  manager.wait(handles.back());
+  for (size_t i = 0; i + 1 < M; ++i) {
+    manager.wait(handles[i]);
+  }
+  for (size_t i = 0; i < M; ++i) {
+    EXPECT_THAT(batches[i].result(), ::testing::ElementsAreArray(expected[i]))
+        << "mismatch at batch " << i;
+  }
+}
+
+// A failed read in one batch must not lose the completions of another batch
+// reaped in the same wave: every completion of the wave is applied to the
+// bookkeeping, so the good batch still completes afterwards.
+TYPED_TEST(IoUringManagerTest, ErrorInWaveKeepsOtherBatchesConsistent) {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
+
+  TypeParam manager(64);
+  ReadBatchForTesting good;
+  good.add({{0, 4}, {4, 4}, {8, 4}});
+  ReadBatchForTesting bad;
+  bad.add(8, 16);  // past EOF: short read
+
+  // `SyncIoPolicy` reads in `addBatch`, so its throw happens on submission.
+  auto goodHandle = good.submitTo(manager, fd);
+  AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(bad.submitTo(manager, fd)),
+                               HasSubstr("read fewer bytes than requested"));
+  manager.wait(goodHandle);
+  EXPECT_THAT(good.result(), ::testing::ElementsAre("AAAA", "BBBB", "CCCC"));
+}
+
 // Verify that many independent `addBatch` calls can be outstanding (submitted
 // to the kernel but not yet waited on) at once, and that the manager tracks
 // each batch's completion correctly. M batches of one read each are submitted
@@ -462,10 +544,10 @@ TYPED_TEST(IoUringManagerTest, zeroLengthReadsWithNonZeroLengthReads) {
 
 // Dropping a `SyncIoPolicy`-backed manager with reads submitted but never
 // waited: the synchronous policy performs all reads eagerly in `submitTo`, so
-// by the time the manager is destroyed nothing is in flight, the destructor has
-// nothing to drain, and it logs no warning. This is the counterpart to the
+// by the time the manager is destroyed nothing is outstanding, the destructor
+// has nothing to drain, and it logs no warning. This is the counterpart to the
 // io_uring-specific `dropRunningManager` test below.
-TEST(IoUringManagerDrop, dropSyncManagerHasNothingInFlight) {
+TEST(IoUringManagerDrop, dropSyncManagerHasNothingOutstanding) {
   using Manager = ad_utility::BatchManager<ad_utility::SyncIoPolicy>;
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
 
@@ -477,7 +559,7 @@ TEST(IoUringManagerDrop, dropSyncManagerHasNothingInFlight) {
   {
     Manager manager(64);
     batch.submitTo(manager, fd);  // reads happen synchronously here
-    // `manager` is destroyed here; nothing is in flight, so no warning.
+    // `manager` is destroyed here; nothing is outstanding, so no warning.
   }
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
@@ -485,6 +567,183 @@ TEST(IoUringManagerDrop, dropSyncManagerHasNothingInFlight) {
 }
 
 #ifdef QLEVER_HAS_IO_URING
+// A wave reaps the completions of every batch, so `wait` of a good batch can
+// reap the failed read of another batch. The error must be thrown by `wait` of
+// the failed batch, not by `wait` of the good one. (`SyncIoPolicy` throws in
+// `addBatch` instead, so the test is not part of the typed suite.)
+TEST(IoUringManagerErrors, aReadErrorIsThrownByTheWaitOfItsBatch) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
+
+  Manager manager(64);
+  ReadBatchForTesting bad;
+  bad.add(8, 16);  // past EOF: short read
+  ReadBatchForTesting good;
+  good.add({{0, 4}, {4, 4}, {8, 4}});
+  auto badHandle = bad.submitTo(manager, fd);
+  auto goodHandle = good.submitTo(manager, fd);
+
+  // Waiting for the good batch reaps at least its own three reads; the bad
+  // read may or may not be reaped in the same waves.
+  manager.wait(goodHandle);
+  EXPECT_THAT(good.result(), ::testing::ElementsAre("AAAA", "BBBB", "CCCC"));
+  AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(badHandle),
+                               HasSubstr("read fewer bytes than requested"));
+  // The error is reported once; the batch is gone afterwards.
+  EXPECT_NO_THROW(manager.wait(badHandle));
+}
+
+// A scripted `io_uring_submit` for `IoUringPolicy` (see
+// `detail::ringSubmit`): the first `numRealFirst` calls submit, the next
+// `numFailures` calls fail with `-error`, and later calls submit again.
+struct SubmitScript {
+  int numRealFirst = 0;
+  int numFailures = 0;
+  int error = 0;
+  int numFailed = 0;
+};
+SubmitScript submitScript;
+
+int scriptedSubmit(io_uring* ring) {
+  if (submitScript.numRealFirst > 0) {
+    --submitScript.numRealFirst;
+    return io_uring_submit(ring);
+  }
+  if (submitScript.numFailures > 0) {
+    --submitScript.numFailures;
+    ++submitScript.numFailed;
+    return -submitScript.error;
+  }
+  return io_uring_submit(ring);
+}
+
+// Run `IoUringPolicy` with `scriptedSubmit` until destruction.
+class ScopedSubmitScript {
+ public:
+  explicit ScopedSubmitScript(SubmitScript script) {
+    submitScript = script;
+    ad_utility::detail::ringSubmit() = &scriptedSubmit;
+  }
+  ~ScopedSubmitScript() { ad_utility::detail::ringSubmit() = &io_uring_submit; }
+  ScopedSubmitScript(const ScopedSubmitScript&) = delete;
+  ScopedSubmitScript& operator=(const ScopedSubmitScript&) = delete;
+};
+
+// The kernel is briefly out of memory for requests: `addBatch` retries the
+// submit, and the batch completes normally.
+TEST(IoUringManagerErrors, aTransientSubmitFailureIsRetried) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");
+  ScopedSubmitScript script{{.numFailures = 3, .error = EAGAIN}};
+
+  Manager manager(64);
+  ReadBatchForTesting batch;
+  batch.add({{0, 4}, {4, 4}, {8, 4}});
+  manager.wait(batch.submitTo(manager, fd));
+  EXPECT_THAT(batch.result(), ::testing::ElementsAre("AAAA", "BBBB", "CCCC"));
+  EXPECT_EQ(submitScript.numFailed, 3);
+}
+
+// The kernel stays out of memory for requests. The batch fails in its `wait`,
+// and the reads that were not submitted never write into their buffers, also
+// not when the ring works again and a later batch submits the queued SQEs.
+TEST(IoUringManagerErrors, aPersistentSubmitFailureFailsOnlyItsBatch) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJ");
+  // The ring-full submit of reads 0-3 succeeds, every later one fails.
+  ScopedSubmitScript script{
+      {.numRealFirst = 1, .numFailures = INT_MAX, .error = EAGAIN}};
+
+  Manager manager(4);
+  ReadBatchForTesting failing;
+  for (uint64_t offset = 0; offset < 40; offset += 4) {
+    failing.add(offset, 4);
+  }
+  auto failingHandle = failing.submitTo(manager, fd);
+  AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(failingHandle),
+                               HasSubstr("io_uring_submit failed"));
+  const std::string untouched(4, '\0');
+  // Reads 0-3 were submitted and completed, reads 4-7 were queued and turned
+  // into no-ops, and reads 8 and 9 were never queued.
+  EXPECT_THAT(failing.result(),
+              ::testing::ElementsAre("AAAA", "BBBB", "CCCC", "DDDD", untouched,
+                                     untouched, untouched, untouched,
+                                     untouched, untouched));
+
+  // The ring works again: the queued no-ops are submitted with the next batch,
+  // which completes normally.
+  submitScript.numFailures = 0;
+  ReadBatchForTesting good;
+  good.add({{0, 4}, {16, 4}, {36, 4}});
+  manager.wait(good.submitTo(manager, fd));
+  EXPECT_THAT(good.result(), ::testing::ElementsAre("AAAA", "EEEE", "JJJJ"));
+  EXPECT_THAT(::ranges::views::drop(failing.result(), 4),
+              ::testing::Each(untouched));
+}
+
+// A batch whose reads could not be submitted leaves no-ops in every ring slot.
+// While the submit keeps failing, the next batch cannot queue any read, and its
+// `wait` throws.
+TEST(IoUringManagerErrors, aRingFullOfUnsubmittedNoOpsFailsTheNextBatch) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  ScopedSubmitScript script{{.numFailures = INT_MAX, .error = EAGAIN}};
+
+  Manager manager(4);
+  ReadBatchForTesting fillsTheRing;
+  fillsTheRing.add({{0, 4}, {4, 4}, {8, 4}, {12, 4}});
+  auto fillsTheRingHandle = fillsTheRing.submitTo(manager, fd);
+  ReadBatchForTesting next;
+  next.add(0, 4);
+  auto nextHandle = next.submitTo(manager, fd);
+  AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(fillsTheRingHandle),
+                               HasSubstr("io_uring_submit failed"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      manager.wait(nextHandle),
+      HasSubstr("the ring is full of requests that could not be submitted"));
+  EXPECT_THAT(next.result(), ::testing::ElementsAre(std::string(4, '\0')));
+}
+
+// Any submit error other than `EINTR` and `EAGAIN` means that the ring is
+// broken. Throwing could let callers free buffers that the kernel still writes
+// into, so the process terminates.
+TEST(IoUringManagerErrors, aBrokenRingTerminates) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  // Avoid warnings and crashes when running all tests at once.
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
+  auto [tmp, fd] = makeTempFile("AAAABBBB");
+  ScopedSubmitScript script{{.numFailures = INT_MAX, .error = EBADF}};
+
+  ReadBatchForTesting batch;
+  batch.add({{0, 4}, {4, 4}});
+  EXPECT_DEATH_IF_SUPPORTED(
+      {
+        Manager manager(64);
+        manager.wait(batch.submitTo(manager, fd));
+      },
+      "io_uring_submit failed in IoUringPolicy");
+}
+
 // Drop the manager while reads are still in flight (submitted but never
 // waited). `IoUringPolicy`'s destructor drains the outstanding completions
 // (and logs a warning) before tearing down the ring, so the kernel is done
@@ -510,11 +769,11 @@ TEST(IoUringManagerDrop, dropRunningManager) {
   {
     Manager manager(64);
     batch.submitTo(manager, fd);  // submit, but never wait
-    // `manager` is destroyed here; its destructor drains the in-flight reads.
+    // `manager` is destroyed here; its destructor drains the outstanding reads.
   }
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
-  EXPECT_THAT(logStream.str(), ::testing::HasSubstr("still in flight"));
+  EXPECT_THAT(logStream.str(), ::testing::HasSubstr("still outstanding"));
 }
 #endif
 

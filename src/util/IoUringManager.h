@@ -15,6 +15,8 @@
 #include <sys/uio.h>
 
 #include <cstdint>
+#include <limits>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -176,6 +178,15 @@ struct SyncIoPolicy {
 // for more details.
 #ifdef QLEVER_HAS_IO_URING
 
+namespace detail {
+// The `io_uring_submit` that `IoUringPolicy` calls. A replaceable function
+// pointer so that unit tests can inject submit failures; production code never
+// changes it.
+using RingSubmit = int (*)(io_uring* ring);
+// The function `IoUringPolicy` calls (initially `io_uring_submit`).
+RingSubmit& ringSubmit();
+}  // namespace detail
+
 class IoUringPolicy {
  public:
   using BatchHandle = uint64_t;
@@ -184,38 +195,97 @@ class IoUringPolicy {
   io_uring ring_{};
   unsigned ringSize_;
 
-  // Total number of reads that occupy a ring slot but have not yet been reaped
-  // via a completion queue entry (CQE), i.e. that are prepared or submitted but
-  // not yet completed. Used to detect whether the ring is full.
-  size_t numInFlightReadRequests_ = 0;
+  // Total number of outstanding requests: reads (and no-ops of
+  // `neutralizeQueuedReads`) that are prepared (SQE filled in, not yet
+  // submitted), in flight (submitted to the kernel, not yet completed), or
+  // completed but not yet reaped via a completion queue entry (CQE).
+  // `addBatch` keeps it at most `ringSize_`, so that a free SQE is always
+  // available and the completion queue (twice as large as the submission
+  // queue) cannot overflow.
+  size_t numOutstandingReadRequests_ = 0;
 
-  // The same in-flight reads as `numInFlight_`, but broken down per batch:
-  // maps a batch handle to the number of its reads that have not yet completed
-  // (are "in flight"). An entry for a batch (identified by `BatchHandle`) is
-  // removed once `wait()` has observed all of its reads complete.
-  ad_utility::HashMap<BatchHandle, size_t> numInFlightReadRequestsPerBatch_;
+  // The same outstanding reads as `numOutstandingReadRequests_`, but broken
+  // down per batch: maps a batch handle to the number of its reads that have
+  // not yet been reaped. An entry is removed as soon as the last read of its
+  // batch is reaped, which can happen in `addBatch` or in the `wait()` of
+  // another batch.
+  ad_utility::HashMap<BatchHandle, size_t> numOutstandingReadRequestsPerBatch_;
 
   // Per-read metadata needed when a completion is reaped: which batch the read
   // belongs to, and how many bytes it was supposed to read (so that reading
   // fewer bytes than expected can be detected). See
-  // `inFlightReadsByRequestId_`.
-  struct InFlightRead {
+  // `outstandingReadsByRequestId_`.
+  struct OutstandingRead {
     BatchHandle batchHandle;
     size_t expectedNumBytes;
   };
 
   // Monotonically increasing counter that mints a unique request id for each
   // individual read. The id is stored in the SQE's `user_data` and recovered
-  // from the matching CQE to look up the read's `InFlightRead` metadata.
+  // from the matching CQE to look up the read's `OutstandingRead` metadata.
   uint64_t nextRequestIdToAssign_ = 0;
 
   // Maps a read's request id to its metadata. An entry is inserted when the
-  // read is prepared in `addBatch` and erased when its completion is reaped in
-  // `drainOneCqe`.
-  ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
+  // read is prepared in `addBatch` and erased when its completion is reaped.
+  ad_utility::HashMap<uint64_t, OutstandingRead> outstandingReadsByRequestId_;
 
-  // Wait for one CQE and update the in-flight bookkeeping.
-  void drainOneCqe();
+  // The error message of the first failed or short read of each batch, or of
+  // its first read that could not be submitted. A wave can reap the reads of
+  // any batch, so the error is kept here until `wait` of its own batch throws
+  // it.
+  ad_utility::HashMap<BatchHandle, std::string> firstErrorPerBatch_;
+
+  // The request id of an SQE that `neutralizeQueuedReads` turned into a no-op.
+  // Request ids count up from 0, so no read gets this id.
+  static constexpr uint64_t NO_OP_REQUEST_ID =
+      std::numeric_limits<uint64_t>::max();
+
+  // Minimum number of completions to wait for when the ring is full or
+  // `wait()` blocks. Waiting for several CQEs and reaping all ready ones in
+  // one pass amortizes `io_uring_enter` and the CQ-head update over the wave.
+  static constexpr unsigned REAP_WAVE = 8;
+
+  // How often `trySubmit` retries an `io_uring_submit` that fails with
+  // `EAGAIN` before it gives up.
+  static constexpr unsigned MAX_SUBMIT_RETRIES = 16;
+
+  // The number of outstanding requests (reads and no-ops) that the kernel has
+  // received, that is, that are not waiting in the submission queue.
+  size_t numSubmittedRequests() const;
+
+  // Block until at least `minComplete` CQEs are ready, then reap every ready
+  // CQE. `minComplete` must be > 0 and at most `numSubmittedRequests()`.
+  // Read errors are recorded in `firstErrorPerBatch_`. Terminates the process
+  // if waiting fails, see `terminateBecauseRingIsUnusable` in the `.cpp`.
+  void reapAtLeast(unsigned minComplete);
+
+  // Submit the SQEs in the submission queue to the kernel; the kernel may take
+  // only some of them. An `EAGAIN` (the kernel is out of memory for requests)
+  // is retried up to `MAX_SUBMIT_RETRIES` times, each after reaping a
+  // completion or a short sleep. If it persists, the queued reads are turned
+  // into no-ops and fail their batches (see `neutralizeQueuedReads`). Any
+  // other error terminates the process.
+  void trySubmit();
+
+  // Turn every SQE that the kernel has not taken yet into a no-op, so that it
+  // no longer refers to a target buffer, and record `errorMessage` as the error
+  // of the batch of each such read. The read counts as done for its batch, but
+  // its no-op keeps its ring slot until its completion is reaped.
+  void neutralizeQueuedReads(const std::string& errorMessage);
+
+  // Remove the metadata of read `requestId` and count the read as done for its
+  // batch (erasing the batch once its last read is done). Returns the
+  // metadata.
+  OutstandingRead finishRead(uint64_t requestId);
+
+  // Keep `errorMessage` as the error of `handle`, unless the batch already has
+  // one.
+  void recordError(BatchHandle handle, std::string errorMessage);
+
+  // Apply one completion to the bookkeeping of the outstanding requests.
+  // Always updates the counts, also for a failed read, and records the first
+  // failed or short read of the batch in `firstErrorPerBatch_`.
+  void processCqe(int numBytesRead, uint64_t requestId);
 
  public:
   IoUringPolicy(const IoUringPolicy&) = delete;
@@ -227,7 +297,9 @@ class IoUringPolicy {
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
   // calling thread only when the submission queue is full, in order to drain
-  // completion queue entries and free slots in the submission queue. Read `i`
+  // completion queue entries and free slots in the submission queue. Does not
+  // throw on I/O errors: `wait()` reports them, also when the reads could not
+  // be submitted. Read `i`
   // reads `numBytesToRead[i]` bytes from file descriptor `fd`, starting at
   // offset `offsets[i]` (from the start of the file), into the buffer starting
   // at `buffers[i]`. The reads are tracked under `handle`, which can be passed
@@ -238,7 +310,9 @@ class IoUringPolicy {
 
   // Block until every read in the batch that is represented by the `handle` has
   // completed. (The `handle` was submitted along the read requests using
-  // `addBatch`.) Throws on any I/O error.
+  // `addBatch`.) Throws if a read of this batch failed, was short or could not
+  // be submitted. It throws only once none of the batch's reads can write
+  // into its target buffers any more.
   void wait(BatchHandle handle);
 };
 
