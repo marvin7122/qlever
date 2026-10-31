@@ -21,6 +21,12 @@
 
 namespace ad_utility::detail {
 
+// In `detail` because the concept and the trait in this header only
+// constrain and inspect the template arguments of `BatchManager` and
+// `PageCacheFirstPolicy`: they are part of how those templates are
+// implemented, not an interface that callers of a batch manager use
+// (callers use `BatchManagerBase` and `makeBatchManager`).
+
 // Definition of the `ReadPolicy Interface`
 template <typename T>
 CPP_requires(ReadPolicy_,

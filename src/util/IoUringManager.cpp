@@ -65,6 +65,9 @@ std::atomic<bool> pageCacheFastPathSupported{true};
 #endif
 }  // namespace
 
+// In `detail` because these define the test hook declared in
+// `PageCacheFirstPolicy.h`: production code calls `readPageCacheHits`,
+// only tests replace the function pointer behind it.
 namespace detail {
 //______________________________________________________________________________
 int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
@@ -402,6 +405,12 @@ void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
 #endif  // QLEVER_HAS_IO_URING
 
 namespace detail {
+// In `detail` because this is only a building block of `makeBatchManager`
+// below, its only caller: it assembles a manager for one fixed `Policy`.
+// Callers must go through `makeBatchManager`, which owns the backend
+// choice (including the decoration with `PageCacheFirstPolicy` and the
+// io_uring fallback), so this helper is not a public factory and its
+// signature is not a stable interface.
 // Build a `BatchManager` for `Policy`, decorated with `PageCacheFirstPolicy`
 // if the page-cache fast path is supported.
 template <typename Policy>

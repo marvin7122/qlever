@@ -38,6 +38,9 @@ std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
 // if it is not available at compile time.
 bool pageCacheFastPathIsSupported();
 
+// In `detail` because this hook exists only so that tests can inject
+// failures of the page-cache read: production code must call
+// `readPageCacheHits` and must not call or replace this pointer.
 namespace detail {
 // The one `preadv2(fd, iov, iovcnt, offset, RWF_NOWAIT)` call per run that
 // `readPageCacheHits` makes, with the same contract (the number of bytes read,
@@ -57,6 +60,9 @@ PageCacheRead& pageCacheRead();
 void resetPageCacheFastPathSupport();
 }  // namespace detail
 
+// In `detail` because this only repackages the arguments of
+// `PageCacheFirstPolicy::addBatch` (below) into the three spans of the
+// reads that were not served; no other code is meant to construct one.
 namespace detail {
 // The reads of a batch at `positions`, as the three arguments of
 // `ReadPolicy::addBatch`.

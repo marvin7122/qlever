@@ -18,6 +18,10 @@ Checks (on added lines only in `--staged` mode):
          same sense as CPP74.
   CPP51  No plain `enum`; use `enum class`.
          Escape: `// rule-allowed: <reason>` on the same line.
+  QC64   A `namespace detail {` opening must state why its contents are
+         in `detail` (comment block directly above it, or directly
+         inside it). Presence only; whether the stated reason is true
+         stays an LLM/human judgement (QC63/QC64 in the corpus).
 
 Usage:
   check-deterministic-rules.py --staged     # lines added in the index
@@ -47,6 +51,7 @@ VIRTUAL_DTOR_RE = re.compile(
     r"\bvirtual\s+~\w+\s*\(\s*\)\s*(?:=\s*(?:default|delete)|=\s*0)")
 EXPLICIT_CTOR_RE = re.compile(r"^\s*explicit\s+[A-Z]\w*\s*\(")
 PLAIN_ENUM_RE = re.compile(r"^\s*enum\s+(?!class\b|struct\b)[A-Z]\w*\s*(?:\{|;)")
+DETAIL_NS_RE = re.compile(r"^\s*namespace\s+(?:[\w:]+::)?detail\s*\{")
 CXX_EXTENSIONS = (".h", ".hpp", ".cpp", ".cc", ".cxx")
 
 
@@ -90,6 +95,15 @@ def check_line(lines, idx):
             "CPP75",
             "`explicit` constructor without an intent comment: state "
             "which silent conversion it forbids and why (CPP75)"))
+    if DETAIL_NS_RE.match(code) and not (
+        has_intent_comment(lines, idx)
+        or any(l.strip().startswith("//") for l in lines[idx + 1:idx + 4])
+    ):
+        findings.append((
+            "QC64",
+            "`detail` namespace without a reason comment: state why the "
+            "part is not public interface and who its only users are "
+            "(QC64)"))
     if PLAIN_ENUM_RE.match(code):
         findings.append((
             "CPP51",
