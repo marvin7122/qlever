@@ -33,7 +33,7 @@ CPP_requires(
     requires(T& policy, int fd, ql::span<const size_t> numberOfBytesToRead,
              ql::span<const uint64_t> offsets, ql::span<char*> buffers,
              BatchHandle handle)(
-        concepts::constructible_from<T, RingSize>,
+        ::concepts::constructible_from<T, RingSize>,
         // Must provide a method `addBatch` with the following
         // parameters.
         policy.addBatch(fd, numberOfBytesToRead, offsets, buffers, handle),
@@ -47,7 +47,7 @@ CPP_requires(
 // handle that `addBatch` and `wait` take is the wrapper type
 // `ad_utility::BatchHandle` (see `BatchHandle.h`), not a raw integer.
 template <typename T>
-CPP_concept ReadPolicyConcept = concepts::constructible_from<T, RingSize> &&
+CPP_concept ReadPolicyConcept = ::concepts::constructible_from<T, RingSize> &&
                                 CPP_requires_ref(ReadPolicy_, T);
 
 // Satisfied iff `Policy` has a member callable as
