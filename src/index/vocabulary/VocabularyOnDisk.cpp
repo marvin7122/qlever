@@ -12,6 +12,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/bind_front.h>
+#include <fcntl.h>
 
 #include <algorithm>
 #include <array>
@@ -503,6 +504,13 @@ void VocabularyOnDisk::open(const std::string& filename) {
   id_ = nextId++;
   file_.open(filename, "r");
   offsetsFile_.open(filename + offsetSuffix_, "r");
+  // The lookups of `lookupBatch` read single words and offsets at scattered
+  // positions, so kernel readahead only reads pages that are never used (up
+  // to the device's read-ahead window per miss). `operator[]` does its own
+  // read-ahead for sequential lookups.
+  for (int fd : {file_.fd(), offsetsFile_.fd()}) {
+    ::posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM);
+  }
 
   // Read the offset count from the `MmapVectorMetaData` trailer, which is
   // the canonical layout used by both old and new vocabulary files.
