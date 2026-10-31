@@ -18,11 +18,19 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <climits>
 #include <cstring>
+#include <exception>
+#include <iostream>
 #include <stdexcept>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <utility>
 
 #include "util/Exception.h"
+#include "util/ExceptionHandling.h"
 #include "util/Log.h"
 
 namespace ad_utility {
@@ -109,27 +117,33 @@ namespace {
 // The elements of the range of reads in `readPageCacheHits`: the position of a
 // read in its batch, its number of bytes, its file offset and its buffer.
 constexpr auto position = [](const auto& read) { return std::get<0>(read); };
-constexpr auto toIovec = [](const auto& read) {
-  return ::iovec{std::get<3>(read), std::get<1>(read)};
+constexpr auto numBytesOf = [](const auto& read) { return std::get<1>(read); };
+constexpr auto fileOffsetOf = [](const auto& read) {
+  return std::get<2>(read);
 };
-// True if the file range of `next` starts where the one of `previous` ends.
+constexpr auto toIovec = [](const auto& read) {
+  return ::iovec{std::get<3>(read), numBytesOf(read)};
+};
+// True if the file range of `next` starts where that of `previous` ends.
 constexpr auto areAdjacent = [](const auto& previous, const auto& next) {
-  return std::get<2>(previous) + std::get<1>(previous) == std::get<2>(next);
+  return fileOffsetOf(previous) + numBytesOf(previous) == fileOffsetOf(next);
 };
 
+//______________________________________________________________________________
 // Log once that the kernel or file system rejects `RWF_NOWAIT` (`EOPNOTSUPP`)
 // or that `preadv2` does not exist (`ENOSYS`, Linux < 4.6 or a seccomp filter),
 // and switch the fast path off for the rest of the process.
 void disableIfNotSupported(int64_t numBytesRead) {
   if (numBytesRead < 0 && (errno == EOPNOTSUPP || errno == ENOSYS) &&
       pageCacheFastPathSupported.exchange(false)) {
-    AD_LOG_WARN << "preadv2 with RWF_NOWAIT is not supported for the "
-                   "vocabulary files; reading them without the "
-                   "page-cache fast path"
+    AD_LOG_WARN << "preadv2 with RWF_NOWAIT is not supported (EOPNOTSUPP or "
+                   "ENOSYS); reading without the page-cache fast path "
+                   "from now on"
                 << std::endl;
   }
 }
 
+//______________________________________________________________________________
 // Read a `run` of adjacent reads with one `preadv2(RWF_NOWAIT)` call and return
 // how many of its reads, from the front, were read completely. `EAGAIN`, a
 // short read and any other error leave the remaining reads unserved.
@@ -139,14 +153,19 @@ size_t serveRun(int fd, Run run) {
       run | ::ranges::views::transform(toIovec));
   const int64_t numBytesRead = detail::pageCacheRead()(
       fd, iovecs.data(), static_cast<int>(iovecs.size()),
-      static_cast<int64_t>(std::get<2>(*::ranges::begin(run))));
+      static_cast<int64_t>(fileOffsetOf(*::ranges::begin(run))));
   disableIfNotSupported(numBytesRead);
+  if (numBytesRead < 0) {
+    return 0;
+  }
   // The end of each read within the run; a read is served if its end was read.
   auto readEnds = iovecs | ::ranges::views::transform(&::iovec::iov_len) |
                   ::ranges::views::partial_sum;
-  return static_cast<size_t>(::ranges::count_if(readEnds, [&](size_t end) {
-    return numBytesRead >= 0 && end <= static_cast<size_t>(numBytesRead);
-  }));
+  const auto numBytesReadUnsigned = static_cast<size_t>(numBytesRead);
+  return static_cast<size_t>(
+      ::ranges::count_if(readEnds, [numBytesReadUnsigned](size_t end) {
+        return end <= numBytesReadUnsigned;
+      }));
 }
 }  // namespace
 #endif
@@ -161,12 +180,13 @@ std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
 #ifdef QL_PAGE_CACHE_FAST_PATH
   auto reads = ::ranges::views::zip(positions, numBytes, offsets, buffers);
   std::vector<size_t> notServed;
+  notServed.reserve(numBytes.size());
   for (auto adjacentReads : reads | ::ranges::views::chunk_by(areAdjacent)) {
     // One `preadv2` call takes at most `IOV_MAX` buffers.
     for (auto run :
          adjacentReads | ::ranges::views::chunk(static_cast<size_t>(IOV_MAX))) {
       const size_t numServed =
-          pageCacheFastPathSupported.load() ? serveRun(fd, run) : 0;
+          pageCacheFastPathIsSupported() ? serveRun(fd, run) : 0;
       ::ranges::push_back(notServed, run | ::ranges::views::drop(numServed) |
                                          ::ranges::views::transform(position));
     }
@@ -193,196 +213,334 @@ void SyncIoPolicy::addBatch(int fd,
 
 #ifdef QLEVER_HAS_IO_URING
 
-//______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
-  // Set up the submission and completion queues, shared between this process
-  // and the kernel, with (at least) `ringSize_` submission slots in the
-  // submission queue. liburing rounds the requested size up to a power of two,
-  // so the actual ring may be larger than `ringSize`; `ringSize_` is therefore
-  // a conservative (lower) bound for the "ring full" check below. See
-  // https://man7.org/linux/man-pages/man3/io_uring_queue_init.3.html for
-  // details.
-  int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
-  if (ret < 0) {
-    AD_THROW("io_uring_queue_init failed in IoUringManager");
-  }
+namespace {
+// Log that `operation` failed with `error` and terminate the process. Used
+// where the kernel may still hold reads of a batch while the ring cannot be
+// used any more: throwing would let the caller free buffers that the kernel
+// still writes into.
+[[noreturn]] void terminateBecauseRingIsUnusable(std::string_view operation,
+                                                 int error) {
+  const std::string message = absl::StrCat(
+      operation, " failed in IoUringPolicy: ", std::strerror(error),
+      ". The kernel may still write into the buffers of submitted reads, so "
+      "the process cannot continue safely. Terminating");
+  AD_LOG_ERROR << message << std::endl;
+  std::cerr << message << std::endl;
+  std::terminate();
 }
 
-//______________________________________________________________________________
-IoUringPolicy::~IoUringPolicy() {
-  if (numOutstandingReadRequests_ > 0) {
-    AD_LOG_WARN << "IoUringPolicy destroyed with "
-                << numOutstandingReadRequests_
-                << " read request(s) still outstanding; all batches should be "
-                   "`wait()`ed before destroying the policy. Draining them now "
-                   "so the kernel stops writing into the target buffers.\n";
-  }
-  // Reap the outstanding completions before tearing down the ring, so the
-  // kernel is no longer writing into any target buffer once we return. We
-  // deliberately do not call `drainAtLeast` here: it throws on I/O errors, and
-  // a destructor must not throw. We also stop if `io_uring_wait_cqe` fails, to
-  // avoid spinning forever (it would not decrement the outstanding count).
-  while (numOutstandingReadRequests_ > 0) {
-    io_uring_cqe* cqe = nullptr;
-    if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
-      break;
+// `IoUringInterface` via liburing.
+class LiburingRing final : public IoUringInterface {
+ public:
+  explicit LiburingRing(unsigned ringSize) {
+    // Set up the submission and completion queues, shared between this
+    // process and the kernel, with (at least) `ringSize` submission slots.
+    // liburing rounds the requested size up to a power of two, so the actual
+    // ring may be larger. See
+    // https://man7.org/linux/man-pages/man3/io_uring_queue_init.3.html for
+    // details.
+    if (io_uring_queue_init(ringSize, &ring_, /*flags=*/0) < 0) {
+      AD_THROW("io_uring_queue_init failed in IoUringManager");
     }
-    io_uring_cqe_seen(&ring_, cqe);
-    --numOutstandingReadRequests_;
   }
-  io_uring_queue_exit(&ring_);
+
+  // `IoUringPolicy` leaves no read in the ring between batches, only no-ops,
+  // so no read can write into a buffer after the ring is torn down.
+  ~LiburingRing() override { io_uring_queue_exit(&ring_); }
+
+  LiburingRing(const LiburingRing&) = delete;
+  LiburingRing& operator=(const LiburingRing&) = delete;
+
+  bool prepareRead(int fd, char* buffer, size_t numBytes, uint64_t offset,
+                   uint64_t requestId) override {
+    io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
+    if (sqe == nullptr) {
+      return false;
+    }
+    // This only fills in the SQE; the kernel sees it at the next
+    // `io_uring_submit`. io_uring copies the SQE's `user_data` verbatim into
+    // the matching completion.
+    io_uring_prep_read(sqe, fd, buffer, static_cast<unsigned>(numBytes),
+                       static_cast<__u64>(offset));
+    io_uring_sqe_set_data64(sqe, requestId);
+    return true;
+  }
+
+  size_t numQueued() const override { return io_uring_sq_ready(&ring_); }
+
+  int submit() override { return io_uring_submit(&ring_); }
+
+  int waitForCompletions(unsigned minComplete) override {
+    io_uring_cqe* cqe = nullptr;
+    return io_uring_wait_cqes(&ring_, &cqe, minComplete, nullptr, nullptr);
+  }
+
+  size_t popCompletions(ql::span<Completion> completions) override {
+    // `io_uring_peek_batch_cqe` does not block; `io_uring_cq_advance` releases
+    // all of them with one CQ-head update. They are copied first, so nothing
+    // that happens with the results can leave a released CQE unprocessed or a
+    // processed one in the queue.
+    std::array<io_uring_cqe*, 64> cqes{};
+    const unsigned numReady = io_uring_peek_batch_cqe(
+        &ring_, cqes.data(),
+        static_cast<unsigned>(std::min(cqes.size(), completions.size())));
+    for (unsigned i = 0; i < numReady; ++i) {
+      completions[i] =
+          Completion{io_uring_cqe_get_data64(cqes[i]), cqes[i]->res};
+    }
+    io_uring_cq_advance(&ring_, numReady);
+    return numReady;
+  }
+
+  std::vector<uint64_t> cancelQueued(uint64_t noOpRequestId) override {
+    // liburing consumes completions with this id itself (see
+    // `IoUringPolicy::NO_OP_REQUEST_ID`).
+    AD_CORRECTNESS_CHECK(noOpRequestId != LIBURING_UDATA_TIMEOUT);
+    // Without `IORING_SETUP_SQPOLL`, the kernel reads SQEs only inside our own
+    // `io_uring_enter` calls, so the SQEs it has not taken can safely be
+    // rewritten between two calls.
+    AD_CORRECTNESS_CHECK((ring_.flags & IORING_SETUP_SQPOLL) == 0);
+    // The queued SQEs are the `io_uring_sq_ready` positions from the kernel's
+    // head on, and liburing hands out the SQE of position `p` as
+    // `sqes[p & mask]` (`io_uring_get_sqe`, in every version). The SQ array is
+    // not used: liburing <= 2.2 fills it only when it flushes the SQEs to the
+    // kernel. `*kring_mask` exists in every version, `ring_mask` only since
+    // 2.3.
+    const unsigned mask = *ring_.sq.kring_mask;
+    const unsigned head = io_uring_smp_load_acquire(ring_.sq.khead);
+    const unsigned numReady = io_uring_sq_ready(&ring_);
+    std::vector<uint64_t> cancelled;
+    for (const unsigned i : ql::views::iota(0u, numReady)) {
+      io_uring_sqe* sqe = &ring_.sq.sqes[(head + i) & mask];
+      if (sqe->user_data != noOpRequestId) {
+        cancelled.push_back(sqe->user_data);
+      }
+      io_uring_prep_nop(sqe);
+      io_uring_sqe_set_data64(sqe, noOpRequestId);
+    }
+    return cancelled;
+  }
+
+  void backOff() override {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+ private:
+  io_uring ring_{};
+};
+}  // namespace
+
+//______________________________________________________________________________
+std::unique_ptr<IoUringInterface> makeLiburingRing(unsigned ringSize) {
+  return std::make_unique<LiburingRing>(ringSize);
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::addBatch(int fd,
-                             ql::span<const size_t> numBytesToReadPerRequest,
-                             ql::span<const uint64_t> fileOffsetPerRequest,
-                             ql::span<char*> targetBufferPerRequest,
-                             BatchHandle handle) {
-  const size_t numReadRequestsToPerform = numBytesToReadPerRequest.size();
+IoUringPolicy::IoUringPolicy(unsigned ringSize)
+    : IoUringPolicy(ringSize, makeLiburingRing(ringSize)) {}
 
-  if (numReadRequestsToPerform == 0) {
+//______________________________________________________________________________
+IoUringPolicy::IoUringPolicy(unsigned ringSize,
+                             std::unique_ptr<IoUringInterface> ring)
+    : ring_{std::move(ring)}, ringSize_{ringSize} {
+  AD_CONTRACT_CHECK(ringSize_ > 0 && ring_ != nullptr);
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::addBatch(int fd, ql::span<const size_t> numBytesToRead,
+                             ql::span<const uint64_t> offsets,
+                             ql::span<char*> buffers,
+                             [[maybe_unused]] BatchHandle handle) {
+  AD_CONTRACT_CHECK(offsets.size() == numBytesToRead.size() &&
+                    buffers.size() == numBytesToRead.size());
+  if (numBytesToRead.empty()) {
     return;
   }
-  numOutstandingReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
+  Batch batch;
+  batch.numBytes = numBytesToRead;
+  batch.states.assign(numBytesToRead.size(), ReadState::NotQueued);
+  // `run` throws only if a correctness check fails or memory runs out. The
+  // bookkeeping can then no longer tell which reads the kernel still holds, so
+  // the exception must not reach the caller, who would free the buffers.
+  ad_utility::terminateIfThrows(
+      [&]() { run(fd, offsets, buffers, batch); },
+      "IoUringPolicy::addBatch must not throw while the kernel may hold reads");
+  if (batch.error.has_value()) {
+    AD_THROW(std::move(batch.error).value());
+  }
+}
 
-  for (const auto& [numBytesToRead, fileOffset, targetBuf] :
-       ::ranges::views::zip(numBytesToReadPerRequest, fileOffsetPerRequest,
-                            targetBufferPerRequest)) {
-    // The ring has no free slot, so make room: submit what we have prepared so
-    // far and block until enough completions have been drained.
-    if (numOutstandingReadRequests_ >= ringSize_) {
-      // Flush the SQEs prepared so far to the kernel so the kernel can start
-      // servicing them. Their completions will free up submission slots.
-      // Wait for a wave of completions instead of one, and reap every ready
-      // CQE, so a large batch refills the ring in waves rather than one SQE
-      // per reaped CQE.
-      io_uring_submit(&ring_);
-      while (numOutstandingReadRequests_ >= ringSize_) {
-        drainAtLeast(static_cast<unsigned>(
-            std::min<size_t>(REAP_WAVE, numOutstandingReadRequests_)));
-      }
+//______________________________________________________________________________
+void IoUringPolicy::run(int fd, ql::span<const uint64_t> offsets,
+                        ql::span<char*> buffers, Batch& batch) {
+  const size_t numReads = batch.numBytes.size();
+  while (true) {
+    // Fill the free ring slots with the next reads, unless the batch has
+    // failed (then `addBatch` throws anyway). At most `ringSize_` requests are
+    // in the ring, so a free SQE is always available and the completion queue
+    // (twice as large as the submission queue) cannot overflow.
+    while (!batch.error.has_value() && batch.numQueued < numReads &&
+           batch.numSlots() + numNoOpsQueued_ + numNoOpsInKernel_ < ringSize_) {
+      const size_t i = batch.numQueued;
+      AD_CORRECTNESS_CHECK(
+          ring_->prepareRead(fd, buffers[i], batch.numBytes[i], offsets[i], i));
+      batch.states[i] = ReadState::Queued;
+      ++batch.numQueued;
     }
+    submit(batch);
+    checkQueue(batch);
 
-    // Claim the next free SQE. The check above guarantees a slot is available,
-    // so `io_uring_get_sqe` must not return `nullptr` here.
-    io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
-    AD_CORRECTNESS_CHECK(sqe != nullptr);
-
-    // Record the read's parameters in the SQE (this only sets the SQE's fields;
-    // the request is not handed to the kernel until a later `io_uring_submit`).
-    io_uring_prep_read(sqe, fd, targetBuf,
-                       static_cast<unsigned>(numBytesToRead),
-                       static_cast<__u64>(fileOffset));
-
-    // Tag the SQE with a unique request id and record its metadata (the batch
-    // it belongs to and how many bytes it should read). io_uring copies the
-    // request id (the SQE's `user_data`) verbatim into the matching completion,
-    // so `processCqe` can recover it.
-    const uint64_t requestId = nextRequestIdToAssign_++;
-    outstandingReadsByRequestId_[requestId] =
-        OutstandingRead{handle, numBytesToRead};
-    io_uring_sqe_set_data64(sqe, requestId);
-    numOutstandingReadRequests_++;
-  }
-  // Flush the remaining prepared SQEs to the kernel (the loop above only
-  // submits when the submission queue is full, so the last group of SQEs has
-  // not yet been submitted).
-  io_uring_submit(&ring_);
-}
-
-//______________________________________________________________________________
-void IoUringPolicy::wait(BatchHandle handle) {
-  // Drain completions until this batch is gone. `processCqe` erases a batch as
-  // soon as its last read completes, so a present entry always still has
-  // outstanding reads. Waiting for up to `REAP_WAVE` CQEs never waits longer
-  // than this batch needs: it cannot finish before its own remaining reads
-  // complete, and any CQE (also of other batches) counts towards the wave.
-  for (auto it = numOutstandingReadRequestsPerBatch_.find(handle);
-       it != numOutstandingReadRequestsPerBatch_.end();
-       it = numOutstandingReadRequestsPerBatch_.find(handle)) {
-    drainAtLeast(
-        static_cast<unsigned>(std::min<size_t>(REAP_WAVE, it->second)));
+    const size_t numInKernel = batch.numReadsInKernel() + numNoOpsInKernel_;
+    if (numInKernel == 0) {
+      // The queue is empty or holds only no-ops (`submit` cancels the reads it
+      // cannot submit), so the batch is done or has failed.
+      AD_CORRECTNESS_CHECK(batch.numDone == numReads ||
+                           batch.error.has_value());
+      return;
+    }
+    // Wait for a wave of completions, but never for more requests than the
+    // kernel holds.
+    reap(batch,
+         static_cast<unsigned>(std::min<size_t>(REAP_WAVE, numInKernel)));
   }
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::drainAtLeast(unsigned minComplete) {
-  AD_CORRECTNESS_CHECK(minComplete > 0);
-  AD_CORRECTNESS_CHECK(minComplete <= numOutstandingReadRequests_);
+void IoUringPolicy::submit(Batch& batch) {
+  // `io_uring_submit` returns the number of SQEs that the kernel took, or
+  // `-errno`. The SQEs it did not take stay queued. Of the errors listed in
+  // io_uring_enter(2), only `EINTR` and `EAGAIN` can occur for this ring (no
+  // setup flags, and never more requests than CQ slots); the others mean that
+  // the ring is broken. See
+  // https://man7.org/linux/man-pages/man2/io_uring_enter.2.html
+  unsigned numRetries = 0;
+  while (ring_->numQueued() > 0) {
+    const int ret = ring_->submit();
+    if (ret > 0) {
+      onTaken(batch, static_cast<size_t>(ret));
+      // Only an `EAGAIN` that persists cancels the reads.
+      numRetries = 0;
+      continue;
+    }
+    if (ret == -EINTR) {
+      continue;
+    }
+    // A submit that takes nothing although SQEs are queued did not make
+    // progress either, so it is retried like `EAGAIN`.
+    if (ret != 0 && ret != -EAGAIN) {
+      terminateBecauseRingIsUnusable("io_uring_submit", -ret);
+    }
+    if (numRetries == MAX_SUBMIT_RETRIES) {
+      cancelQueuedReads(
+          batch,
+          absl::StrCat("io_uring_submit failed in IoUringPolicy: ",
+                       ret == 0 ? "no SQE was taken" : std::strerror(-ret),
+                       " (after ", MAX_SUBMIT_RETRIES, " retries)"));
+      return;
+    }
+    ++numRetries;
+    // With `EAGAIN` the kernel could not allocate memory for the requests.
+    // Completed requests free some, so wait for one if there is any.
+    if (batch.numReadsInKernel() + numNoOpsInKernel_ > 0) {
+      reap(batch, 1);
+    } else {
+      ring_->backOff();
+    }
+  }
+}
 
-  // Block until at least `minComplete` completion queue entries (CQEs) are
-  // ready. This costs at most one `io_uring_enter` for the whole wave.
-  io_uring_cqe* cqe = nullptr;
+//______________________________________________________________________________
+void IoUringPolicy::onTaken(Batch& batch, size_t numTaken) {
+  // The queued no-ops precede the queued reads: those of earlier batches were
+  // queued before this batch started, and cancelling this batch's reads turns
+  // every queued read into a no-op and stops queueing reads.
+  const size_t numNoOps = std::min(numTaken, numNoOpsQueued_);
+  numNoOpsQueued_ -= numNoOps;
+  numNoOpsInKernel_ += numNoOps;
+  for (size_t k = numNoOps; k < numTaken; ++k) {
+    AD_CORRECTNESS_CHECK(batch.numTaken < batch.numQueued);
+    ReadState& state = batch.states[batch.numTaken++];
+    AD_CORRECTNESS_CHECK(state == ReadState::Queued);
+    state = ReadState::InKernel;
+  }
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::cancelQueuedReads(Batch& batch, std::string errorMessage) {
+  const std::vector<uint64_t> cancelled = ring_->cancelQueued(NO_OP_REQUEST_ID);
+  AD_CORRECTNESS_CHECK(cancelled.size() == batch.numQueued - batch.numTaken);
+  for (const uint64_t requestId : cancelled) {
+    AD_CORRECTNESS_CHECK(requestId >= batch.numTaken &&
+                         requestId < batch.numQueued);
+    ReadState& state = batch.states[requestId];
+    AD_CORRECTNESS_CHECK(state == ReadState::Queued);
+    state = ReadState::Done;
+  }
+  // The cancelled reads are done; their SQEs stay queued as no-ops.
+  batch.numTaken = batch.numQueued;
+  batch.numDone += cancelled.size();
+  numNoOpsQueued_ += cancelled.size();
+  if (!batch.error.has_value()) {
+    batch.error = std::move(errorMessage);
+  }
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::reap(Batch& batch, unsigned minComplete) {
+  AD_CORRECTNESS_CHECK(minComplete > 0 &&
+                       minComplete <=
+                           batch.numReadsInKernel() + numNoOpsInKernel_);
   int ret = 0;
   do {
-    ret = io_uring_wait_cqes(&ring_, &cqe, minComplete, nullptr, nullptr);
+    ret = ring_->waitForCompletions(minComplete);
   } while (ret == -EINTR);
   if (ret < 0) {
-    AD_THROW(absl::StrCat("io_uring_wait_cqes failed in IoUringPolicy: ",
-                          std::strerror(-ret)));
+    terminateBecauseRingIsUnusable("io_uring_wait_cqes", -ret);
   }
 
-  // Reap every ready CQE in chunks. `io_uring_peek_batch_cqe` does not block;
-  // `io_uring_cq_advance` releases a whole chunk with one CQ-head update
-  // instead of one `io_uring_cqe_seen` per CQE. Every CQE of the wave is
-  // applied to the bookkeeping before any error is thrown, so the outstanding
-  // counts stay consistent and no CQE is processed twice.
-  const char* firstErrorMessage = nullptr;
-  std::array<io_uring_cqe*, 64> cqes{};
+  std::array<IoUringInterface::Completion, 64> completions{};
   while (true) {
-    const unsigned n = io_uring_peek_batch_cqe(
-        &ring_, cqes.data(), static_cast<unsigned>(cqes.size()));
-    if (n == 0) {
-      break;
+    const size_t numReady = ring_->popCompletions(completions);
+    if (numReady == 0) {
+      return;
     }
-    for (unsigned i = 0; i < n; ++i) {
-      // Recover the id via the 64-bit `user_data` field, see `addBatch`.
-      const char* errorMessage =
-          processCqe(cqes[i]->res, io_uring_cqe_get_data64(cqes[i]));
-      if (firstErrorMessage == nullptr) {
-        firstErrorMessage = errorMessage;
+    for (const auto& [requestId, result] :
+         ql::views::take(completions, numReady)) {
+      if (requestId == NO_OP_REQUEST_ID) {
+        AD_CORRECTNESS_CHECK(numNoOpsInKernel_ > 0);
+        --numNoOpsInKernel_;
+        continue;
+      }
+      // A read's request id is its index in the batch.
+      AD_CORRECTNESS_CHECK(requestId < batch.numTaken);
+      ReadState& state = batch.states[requestId];
+      AD_CORRECTNESS_CHECK(state == ReadState::InKernel);
+      state = ReadState::Done;
+      ++batch.numDone;
+      // `result` < 0 is `-errno`. A result smaller than requested (a partial
+      // read, or 0 at end of file) means we read fewer bytes than expected,
+      // which we treat as an error. Only the first error of a batch is kept.
+      const size_t expectedNumBytes = batch.numBytes[requestId];
+      if (batch.error.has_value()) {
+        continue;
+      }
+      if (result < 0) {
+        batch.error =
+            absl::StrCat("I/O error in IoUringPolicy read operation: ",
+                         std::strerror(-result));
+      } else if (static_cast<size_t>(result) != expectedNumBytes) {
+        batch.error =
+            absl::StrCat("read fewer bytes than requested in IoUringPolicy (",
+                         result, " of ", expectedNumBytes, ")");
       }
     }
-    io_uring_cq_advance(&ring_, n);
-  }
-  if (firstErrorMessage != nullptr) {
-    AD_THROW(firstErrorMessage);
   }
 }
 
 //______________________________________________________________________________
-const char* IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
-  --numOutstandingReadRequests_;
-
-  // Every reaped CQE corresponds to exactly one outstanding read whose id we
-  // inserted in `addBatch`, so the entry must be present.
-  auto reqIt = outstandingReadsByRequestId_.find(requestId);
-  AD_CORRECTNESS_CHECK(reqIt != outstandingReadsByRequestId_.end());
-  const OutstandingRead outstandingRead = reqIt->second;
-  outstandingReadsByRequestId_.erase(reqIt);
-
-  // Attribute the completion to its batch and decrement that batch's
-  // outstanding count, erasing the batch once its last read is reaped. This
-  // happens also for a failed read, so a batch whose read failed does not stay
-  // outstanding.
-  auto it =
-      numOutstandingReadRequestsPerBatch_.find(outstandingRead.batchHandle);
-  AD_CORRECTNESS_CHECK(it != numOutstandingReadRequestsPerBatch_.end());
-  if (--it->second == 0) {
-    numOutstandingReadRequestsPerBatch_.erase(it);
-  }
-
-  // `cqe->res` < 0 is `-errno`.
-  if (numBytesRead < 0) {
-    return "I/O error in IoUringPolicy read operation";
-  }
-  // A result smaller than requested (a partial read, or 0 at end of file) means
-  // we read fewer bytes than expected, which we treat as an error.
-  if (static_cast<size_t>(numBytesRead) != outstandingRead.expectedNumBytes) {
-    return "read fewer bytes than requested in IoUringPolicy";
-  }
-  return nullptr;
+void IoUringPolicy::checkQueue(const Batch& batch) const {
+  AD_CORRECTNESS_CHECK(ring_->numQueued() ==
+                       numNoOpsQueued_ + (batch.numQueued - batch.numTaken));
 }
 
 #endif  // QLEVER_HAS_IO_URING
