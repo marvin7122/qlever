@@ -637,7 +637,7 @@ TEST(LiburingRing, cancelledReadsCompleteAsNoOps) {
   ASSERT_EQ(ring->waitForCompletions(3), 0);
   std::array<Completion, 8> completions{};
   ASSERT_EQ(ring->popCompletions(completions), 3u);
-  for (const Completion& completion : ::ranges::views::take(completions, 3)) {
+  for (const Completion& completion : ql::views::take(completions, 3)) {
     EXPECT_EQ(completion.requestId, noOp);
     EXPECT_EQ(completion.result, 0);
   }

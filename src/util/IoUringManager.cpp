@@ -285,17 +285,18 @@ class LiburingRing final : public IoUringInterface {
     // `io_uring_enter` calls, so the SQEs it has not taken can safely be
     // rewritten between two calls.
     AD_CORRECTNESS_CHECK((ring_.flags & IORING_SETUP_SQPOLL) == 0);
-    // The queued SQEs are the `io_uring_sq_ready` slots from the kernel's head
-    // on. liburing maps the slots to SQEs one to one (`array[i] == i`); the
-    // indirection is used where the array exists anyway.
+    // The queued SQEs are the `io_uring_sq_ready` positions from the kernel's
+    // head on, and liburing hands out the SQE of position `p` as
+    // `sqes[p & mask]` (`io_uring_get_sqe`, in every version). The SQ array is
+    // not used: liburing <= 2.2 fills it only when it flushes the SQEs to the
+    // kernel. `*kring_mask` exists in every version, `ring_mask` only since
+    // 2.3.
+    const unsigned mask = *ring_.sq.kring_mask;
     const unsigned head = io_uring_smp_load_acquire(ring_.sq.khead);
     const unsigned numReady = io_uring_sq_ready(&ring_);
     std::vector<uint64_t> cancelled;
-    for (unsigned i = 0; i < numReady; ++i) {
-      const unsigned slot = (head + i) & ring_.sq.ring_mask;
-      io_uring_sqe* sqe =
-          &ring_.sq
-               .sqes[ring_.sq.array != nullptr ? ring_.sq.array[slot] : slot];
+    for (const unsigned i : ql::views::iota(0u, numReady)) {
+      io_uring_sqe* sqe = &ring_.sq.sqes[(head + i) & mask];
       if (sqe->user_data != noOpRequestId) {
         cancelled.push_back(sqe->user_data);
       }
@@ -484,7 +485,7 @@ void IoUringPolicy::reap(Batch& batch, unsigned minComplete) {
       return;
     }
     for (const auto& [requestId, result] :
-         ::ranges::views::take(completions, numReady)) {
+         ql::views::take(completions, numReady)) {
       if (requestId == NO_OP_REQUEST_ID) {
         AD_CORRECTNESS_CHECK(numNoOpsInKernel_ > 0);
         --numNoOpsInKernel_;
