@@ -20,3 +20,16 @@ repos:
     rev: v2.2.6
     hooks:
       - id: codespell
+
+  # The deterministic style rules live (project-independently) in the
+  # ocr-runners repository, together with the rule corpus they enforce;
+  # this repo only invokes the checker. Override the location of that
+  # checkout with OCR_RUNNERS_DIR if it is not at ~/code/ocr-runners.
+  - repo: local
+    hooks:
+      - id: deterministic-rules
+        name: deterministic style rules (CPP51/CPP73/CPP74/CPP75/QC64/QC65)
+        entry: bash -c 'python3 "${OCR_RUNNERS_DIR:-$HOME/code/ocr-runners}/rules/tools/check-deterministic-rules.py" --staged'
+        language: system
+        'types_or': [ c++, c ]
+        pass_filenames: false

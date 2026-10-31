@@ -38,6 +38,7 @@
 #include "util/GTestHelpers.h"
 #include "util/IoUringManager.h"
 #include "util/Log.h"
+#include "util/PageCacheReadHook.h"
 #include "util/PageCacheReadTestHelpers.h"
 
 namespace {
@@ -93,18 +94,20 @@ std::pair<TempFile, int> makeTempFile(std::string_view content) {
 // each read produced, in request order.
 class ReadBatchForTesting {
  public:
-  // Add a read of `numBytes` bytes at `offset`; returns the read's index.
-  size_t add(uint64_t offset, size_t numBytes) {
+  // Add a read of `numberOfBytesToRead` bytes at `offset`; returns the read's
+  // index.
+  size_t add(uint64_t offset, size_t numberOfBytesToRead) {
     offsets_.push_back(offset);
-    numBytes_.push_back(numBytes);
-    targetBuffers_.emplace_back(numBytes, '\0');
+    numberOfBytesToRead_.push_back(numberOfBytesToRead);
+    targetBuffers_.emplace_back(numberOfBytesToRead, '\0');
     return targetBuffers_.size() - 1;
   }
 
-  // Add several reads at once from a range of `(offset, numBytes)` pairs.
+  // Add several reads at once from a range of `(offset, numberOfBytesToRead)`
+  // pairs.
   void add(ql::span<const std::pair<uint64_t, size_t>> reads) {
-    for (const auto& [offset, numBytes] : reads) {
-      add(offset, numBytes);
+    for (const auto& [offset, numberOfBytesToRead] : reads) {
+      add(offset, numberOfBytesToRead);
     }
   }
 
@@ -118,7 +121,7 @@ class ReadBatchForTesting {
   template <typename Manager>
   typename Manager::BatchHandle submitTo(Manager& manager, int fd) {
     std::vector<char*> pointers = bufferPointers();
-    return manager.addBatch(fd, numBytes_, offsets_, pointers);
+    return manager.addBatch(fd, numberOfBytesToRead_, offsets_, pointers);
   }
 
   // The bytes read by each read, in request order (valid once the batch has
@@ -133,7 +136,7 @@ class ReadBatchForTesting {
   void submitToPolicy(Policy& policy, int fd,
                       typename Policy::BatchHandle handle) {
     std::vector<char*> pointers = bufferPointers();
-    policy.addBatch(fd, numBytes_, offsets_, pointers, handle);
+    policy.addBatch(fd, numberOfBytesToRead_, offsets_, pointers, handle);
   }
 
  private:
@@ -148,7 +151,7 @@ class ReadBatchForTesting {
                                }));
   }
 
-  std::vector<size_t> numBytes_;
+  std::vector<size_t> numberOfBytesToRead_;
   std::vector<uint64_t> offsets_;
   std::vector<std::string> targetBuffers_;
 };
@@ -255,7 +258,7 @@ TYPED_TEST(IoUringManagerTest, SingleBatch) {
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   manager.wait(batch.submitTo(manager, fd));
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
@@ -267,28 +270,29 @@ TYPED_TEST(IoUringManagerTest, SingleBatch) {
 TYPED_TEST(IoUringManagerTest, mismatchedSpanLengthsThrow) {
   auto [tmp, fd] = makeTempFile("DOESNT_MATTER");
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
 
   std::string buffer(4, '\0');
-  std::vector<size_t> numBytes{4};            // length 1
-  std::vector<uint64_t> fileOffsets{0, 4};    // length 2 -> mismatch
-  std::vector<char*> buffers{buffer.data()};  // length 1
+  std::vector<size_t> numberOfBytesToRead{4};  // length 1
+  std::vector<uint64_t> fileOffsets{0, 4};     // length 2 -> mismatch
+  std::vector<char*> buffers{buffer.data()};   // length 1
 
   AD_EXPECT_THROW_WITH_MESSAGE(
-      std::ignore = manager.addBatch(fd, numBytes, fileOffsets, buffers),
-      HasSubstr("spans must have same length"));
+      std::ignore =
+          manager.addBatch(fd, numberOfBytesToRead, fileOffsets, buffers),
+      HasSubstr("ranges must have the same length"));
 }
 
 // MultipleBatchesSequential: 3 batches submitted and waited in order.
 TYPED_TEST(IoUringManagerTest, MultipleBatchesSequential) {
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDDEEEEFFFFGGGG");
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
 
-  auto makeAndWait = [&](uint64_t offset, size_t numBytes,
+  auto makeAndWait = [&](uint64_t offset, size_t numberOfBytesToRead,
                          std::string_view expected) {
     ReadBatchForTesting batch;
-    batch.add(offset, numBytes);
+    batch.add(offset, numberOfBytesToRead);
     manager.wait(batch.submitTo(manager, fd));
     EXPECT_THAT(batch.result(), ::testing::ElementsAre(expected));
   };
@@ -306,7 +310,7 @@ TYPED_TEST(IoUringManagerTest, MultipleBatchesSequential) {
 TYPED_TEST(IoUringManagerTest, WaitOutOfOrder) {
   auto [tmp, fd] = makeTempFile("AAAABBBB");
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
 
   ReadBatchForTesting batchA;
   batchA.add(0, 4);
@@ -343,7 +347,7 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
   }
 
   auto [tmp, fd] = makeTempFile(scenario.content());
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   manager.wait(scenario.submitTo(manager, fd));
 
   EXPECT_THAT(scenario.results(),
@@ -351,7 +355,7 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
 }
 
 // A batch much larger than the ring completes with every read in its own
-// buffer. Ring 4 is smaller than a `REAP_WAVE`, so the ring-full wait is
+// buffer. Ring 4 is smaller than a `REAP_WAVE_SIZE`, so the ring-full wait is
 // clamped to the outstanding reads; ring 8 is exactly one wave; with ring 256,
 // more than 64 CQEs can be ready at once, so a wave is reaped in several
 // chunks.
@@ -365,7 +369,7 @@ TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanRing) {
       scenario.addRead(absl::StrFormat("%04zu", i));
     }
     auto [tmp, fd] = makeTempFile(scenario.content());
-    TypeParam manager(ringSize);
+    TypeParam manager{ad_utility::RingSize{ringSize}};
     // All reads are page-cache hits; send them through the decorated policy.
     manager.setPageCacheFastPath(false);
     manager.wait(scenario.submitTo(manager, fd));
@@ -396,7 +400,7 @@ TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
   }
   auto [tmp, fd] = makeTempFile(fileContent);
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   // All reads are page-cache hits; send them through the decorated policy.
   manager.setPageCacheFastPath(false);
   std::vector<typename TypeParam::BatchHandle> handles;
@@ -419,7 +423,7 @@ TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
 TYPED_TEST(IoUringManagerTest, ErrorInWaveKeepsOtherBatchesConsistent) {
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   // The reads are page-cache hits; send them through the decorated policy so
   // that `good` and `bad` share the ring.
   manager.setPageCacheFastPath(false);
@@ -455,7 +459,7 @@ TYPED_TEST(IoUringManagerTest, MultipleSmallBatchesPipelined) {
   }
   auto [tmp, fd] = makeTempFile(fileContent);
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
 
   // Add all M batches (one read each) before waiting on any of them.
   std::vector<typename TypeParam::BatchHandle> batchHandles(M);
@@ -481,7 +485,7 @@ TYPED_TEST(IoUringManagerTest, MultipleSmallBatchesPipelined) {
 TYPED_TEST(IoUringManagerTest, ReadPastEofThrows) {
   auto [tmp, fd] = makeTempFile("AAAABBBB");  // 8 bytes
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   ReadBatchForTesting batch;
   batch.add(0, 16);  // request more than the 8 available
 
@@ -538,7 +542,7 @@ TYPED_TEST(IoUringManagerTest, LargeReads) {
   scenario.addRead(second);  // read at offset 32 KiB
   auto [tmp, fd] = makeTempFile(scenario.content());
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   manager.wait(scenario.submitTo(manager, fd));
 
   EXPECT_THAT(scenario.results(),
@@ -552,7 +556,7 @@ TYPED_TEST(IoUringManagerTest, differingReadSizes) {
   ReadBatchForTesting batch;
   batch.add({{8, 1}, {0, 2}, {12, 3}});
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   manager.wait(batch.submitTo(manager, fd));
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("C", "AA", "DDD"));
@@ -565,7 +569,7 @@ TYPED_TEST(IoUringManagerTest, zeroLengthReadsWithNonZeroLengthReads) {
   ReadBatchForTesting batch;
   batch.add({{8, 1}, {0, 0}, {12, 3}});
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   manager.wait(batch.submitTo(manager, fd));
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("C", "", "DDD"));
@@ -586,7 +590,7 @@ TEST(IoUringManagerDrop, dropSyncManagerHasNothingOutstanding) {
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
   {
-    Manager manager(64);
+    Manager manager{ad_utility::RingSize{64}};
     batch.submitTo(manager, fd);  // reads happen synchronously here
     // `manager` is destroyed here; nothing is outstanding, so no warning.
   }
@@ -605,7 +609,7 @@ TEST(IoUringPolicyErrors, failureIsThrownByItsOwnBatch) {
   }
   using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
-  Manager manager(64);
+  Manager manager{ad_utility::RingSize{64}};
   ReadBatchForTesting bad;
   bad.add(8, 16);  // past EOF: short read
   AD_EXPECT_THROW_WITH_MESSAGE(bad.submitTo(manager, fd),
@@ -633,7 +637,7 @@ TEST(IoUringManagerDrop, dropManagerWithoutWait) {
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
   {
-    Manager manager(64);
+    Manager manager{ad_utility::RingSize{64}};
     batch.submitTo(manager, fd);  // never waited for
     EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
   }
@@ -652,7 +656,7 @@ TEST(LiburingRing, cancelledReadsCompleteAsNoOps) {
   // reserves would show up here.
   constexpr uint64_t noOp = ad_utility::IoUringPolicy::noOpRequestId();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");
-  auto ring = ad_utility::makeLiburingRing(8);
+  auto ring = ad_utility::makeLiburingRing(ad_utility::RingSize{8});
   std::vector<std::string> buffers(3, std::string(4, '-'));
   for (size_t i = 0; i < 3; ++i) {
     ASSERT_TRUE(ring->prepareRead(fd, buffers[i].data(), 4, 4 * i, i));
@@ -702,10 +706,12 @@ TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
     faults.waitInterrupted = pick({0, 0.1});
     faults.shortRead = pick({0, 0.01, 0.1});
     faults.readError = pick({0, 0.01});
-    const auto ringSize = static_cast<unsigned>(pick({1, 2, 3, 4, 8, 16}));
+    // `RingSize` admits only powers of two.
+    const auto ringSize = static_cast<unsigned>(pick({1, 2, 4, 8, 16}));
     auto fakeRing = std::make_unique<FakeIoUring>(file, ringSize, faults, seed);
     FakeIoUring& fake = *fakeRing;
-    ad_utility::IoUringPolicy policy{ringSize, std::move(fakeRing)};
+    ad_utility::IoUringPolicy policy{ad_utility::RingSize{ringSize},
+                                     std::move(fakeRing)};
 
     for (size_t batchIndex = 0; batchIndex < 10; ++batchIndex) {
       ReadBatchForTesting batch;
@@ -721,7 +727,8 @@ TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
       fake.resetObservations();
       bool threw = false;
       try {
-        batch.submitToPolicy(policy, /*fd=*/-1, batchIndex);
+        batch.submitToPolicy(policy, /*fd=*/-1,
+                             ad_utility::BatchHandle{batchIndex});
       } catch (const std::exception& e) {
         threw = true;
         EXPECT_THAT(e.what(), HasSubstr("IoUringPolicy"));
@@ -756,14 +763,16 @@ TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
 TEST(IoUringPolicyModel, spansOfDifferentLengthsThrow) {
   using ad_utility::testing::FakeIoUring;
   ad_utility::IoUringPolicy policy{
-      8, std::make_unique<FakeIoUring>("AAAA", 8, FakeIoUring::Faults{}, 0)};
+      ad_utility::RingSize{8},
+      std::make_unique<FakeIoUring>("AAAA", 8, FakeIoUring::Faults{}, 0)};
   std::vector<size_t> numBytes{4, 4};
   std::vector<uint64_t> offsets{0};
   std::string buffer(8, '-');
   std::vector<char*> buffers{buffer.data(), buffer.data() + 4};
   AD_EXPECT_THROW_WITH_MESSAGE(
-      policy.addBatch(/*fd=*/-1, numBytes, offsets, buffers, 0),
-      HasSubstr("offsets.size() == numBytesToRead.size()"));
+      policy.addBatch(/*fd=*/-1, numBytes, offsets, buffers,
+                      ad_utility::BatchHandle{0}),
+      HasSubstr("offsets.size() == numberOfBytesToRead.size()"));
 }
 
 // A failed wait, and a submit error other than `EINTR` and `EAGAIN` while
@@ -778,10 +787,11 @@ TEST(IoUringPolicyModel, aBrokenRingTerminates) {
   ::testing::FLAGS_gtest_death_test_style = "threadsafe";
   auto readWith = [](FakeIoUring::Faults faults) {
     ad_utility::IoUringPolicy policy{
-        8, std::make_unique<FakeIoUring>("AAAABBBB", 8, faults, 0)};
+        ad_utility::RingSize{8},
+        std::make_unique<FakeIoUring>("AAAABBBB", 8, faults, 0)};
     ReadBatchForTesting batch;
     batch.add({{0, 4}, {4, 4}});
-    batch.submitToPolicy(policy, /*fd=*/-1, 0);
+    batch.submitToPolicy(policy, /*fd=*/-1, ad_utility::BatchHandle{0});
   };
   FakeIoUring::Faults brokenSubmit;
   brokenSubmit.brokenSubmitErrno = EBADF;
@@ -798,16 +808,12 @@ TEST(IoUringPolicyModel, aBrokenRingTerminates) {
                             "io_uring_wait_cqes failed in IoUringPolicy");
 }
 
-// `IoUringPolicy` needs a ring size > 0 and a ring.
+// `IoUringPolicy` needs a ring. (A ring size of 0 cannot even be constructed,
+// see the `RingSize` test.)
 TEST(IoUringPolicyModel, invalidConstructionThrows) {
-  using ad_utility::testing::FakeIoUring;
-  auto makeFake = [] {
-    return std::make_unique<FakeIoUring>("AAAA", 8, FakeIoUring::Faults{}, 0);
-  };
-  AD_EXPECT_THROW_WITH_MESSAGE(ad_utility::IoUringPolicy(0, makeFake()),
-                               HasSubstr("ringSize_ > 0"));
-  AD_EXPECT_THROW_WITH_MESSAGE(ad_utility::IoUringPolicy(8, nullptr),
-                               HasSubstr("ring_ != nullptr"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      ad_utility::IoUringPolicy(ad_utility::RingSize{8}, nullptr),
+      HasSubstr("ring_ != nullptr"));
 }
 #endif
 
@@ -819,7 +825,7 @@ TYPED_TEST(IoUringManagerTest, waitOnNonExistingBatch) {
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   auto realHandle = batch.submitTo(manager, fd);
 
   manager.wait(realHandle);
@@ -833,14 +839,14 @@ TYPED_TEST(IoUringManagerTest, waitOnNonExistingBatch) {
 // issued.
 TYPED_TEST(IoUringManagerTest, fakeHandle) {
   // create a handle for which no request has been queued.
-  auto fakeHandle = 999;
+  typename TypeParam::BatchHandle fakeHandle{999};
 
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
 
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   auto realHandle = batch.submitTo(manager, fd);
 
   // waiting on fake handle should never block.
@@ -861,6 +867,19 @@ void expectManagerWorks(ad_utility::BatchManagerBase& manager) {
   batch.add({{4, 4}, {0, 4}});
   manager.wait(batch.submitTo(manager, fd));
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("BBBB", "AAAA"));
+}
+
+// The universe of `RingSize` is the powers of two from 1 to 4096, with
+// 256 as the default; everything else is rejected at construction, so
+// that no consumer of a `RingSize` ever has to re-check it.
+TEST(RingSize, OnlyPowersOfTwoUpTo4096AreValid) {
+  EXPECT_EQ(ad_utility::RingSize{}.value(), 256u);
+  EXPECT_EQ(ad_utility::RingSize{1}.value(), 1u);
+  EXPECT_EQ(ad_utility::RingSize{64}.value(), 64u);
+  EXPECT_EQ(ad_utility::RingSize{4096}.value(), 4096u);
+  EXPECT_THROW(ad_utility::RingSize{0}, ad_utility::Exception);
+  EXPECT_THROW(ad_utility::RingSize{3}, ad_utility::Exception);
+  EXPECT_THROW(ad_utility::RingSize{8192}, ad_utility::Exception);
 }
 
 // True if `manager` is a `BatchManager` for `Policy`, decorated with
@@ -915,12 +934,12 @@ TEST(MakeBatchManager, backendMatchesFlagWhenIoUringPreferred) {
 // the buffers (filled with '-' before the call).
 std::pair<std::vector<size_t>, std::vector<std::string>> readHits(
     int fd, const std::vector<std::pair<uint64_t, size_t>>& reads) {
-  std::vector<size_t> numBytes;
+  std::vector<size_t> numberOfBytesToRead;
   std::vector<uint64_t> offsets;
   std::vector<std::string> buffers;
   for (const auto& [offset, size] : reads) {
     offsets.push_back(offset);
-    numBytes.push_back(size);
+    numberOfBytesToRead.push_back(size);
     buffers.emplace_back(size, '-');
   }
   std::vector<char*> targets;
@@ -928,7 +947,7 @@ std::pair<std::vector<size_t>, std::vector<std::string>> readHits(
     targets.push_back(buffer.data());
   }
   auto notServed =
-      ad_utility::readPageCacheHits(fd, numBytes, offsets, targets);
+      ad_utility::readPageCacheHits(fd, numberOfBytesToRead, offsets, targets);
   return {std::move(notServed), std::move(buffers)};
 }
 
@@ -988,7 +1007,7 @@ TEST(ReadPageCacheHits, mixedBatchWithShortRead) {
 using pageCacheReadTestHelpers::ScopedPageCacheRead;
 
 // Number of calls of the injected page-cache reads below.
-size_t numPageCacheReads = 0;
+size_t numberOfPageCacheReads = 0;
 
 // Read into the buffers of `iov` with plain blocking `pread` calls (which work
 // on any file system, unlike `preadv2` with `RWF_NOWAIT`) and return the
@@ -1003,16 +1022,16 @@ int64_t blockingFill(int fd, const ::iovec* iov, int iovcnt, int64_t offset) {
     auto* base = static_cast<char*>(iov[i].iov_base);
     size_t remaining = iov[i].iov_len;
     while (remaining > 0) {
-      ssize_t numBytesRead = ::pread(fd, base, remaining, offset + total);
-      if (numBytesRead < 0) {
+      ssize_t numberOfBytesRead = ::pread(fd, base, remaining, offset + total);
+      if (numberOfBytesRead < 0) {
         return -1;
       }
-      if (numBytesRead == 0) {
+      if (numberOfBytesRead == 0) {
         return total;
       }
-      base += numBytesRead;
-      remaining -= static_cast<size_t>(numBytesRead);
-      total += numBytesRead;
+      base += numberOfBytesRead;
+      remaining -= static_cast<size_t>(numberOfBytesRead);
+      total += numberOfBytesRead;
     }
   }
   return total;
@@ -1021,29 +1040,30 @@ int64_t blockingFill(int fd, const ::iovec* iov, int iovcnt, int64_t offset) {
 // A fully cached run, counted.
 int64_t countedCachedRead(int fd, const ::iovec* iov, int iovcnt,
                           int64_t offset) {
-  ++numPageCacheReads;
+  ++numberOfPageCacheReads;
   return blockingFill(fd, iov, iovcnt, offset);
 }
 
 // `EAGAIN` (nothing cached), counted.
 int64_t countedNothingCached(int fd, const ::iovec* iov, int iovcnt,
                              int64_t offset) {
-  ++numPageCacheReads;
+  ++numberOfPageCacheReads;
   return pageCacheReadTestHelpers::nothingCached(fd, iov, iovcnt, offset);
 }
 
 // `EOPNOTSUPP`, counted.
 int64_t countedNotSupported(int fd, const ::iovec* iov, int iovcnt,
                             int64_t offset) {
-  ++numPageCacheReads;
+  ++numberOfPageCacheReads;
   return pageCacheReadTestHelpers::notSupported(fd, iov, iovcnt, offset);
 }
 
 // Only the first 6 bytes of every run are "cached": the whole run is read, but
 // only 6 bytes are reported as read.
 int64_t sixBytesCached(int fd, const ::iovec* iov, int iovcnt, int64_t offset) {
-  int64_t numBytesRead = blockingFill(fd, iov, iovcnt, offset);
-  return numBytesRead < 0 ? numBytesRead : std::min<int64_t>(numBytesRead, 6);
+  int64_t numberOfBytesRead = blockingFill(fd, iov, iovcnt, offset);
+  return numberOfBytesRead < 0 ? numberOfBytesRead
+                               : std::min<int64_t>(numberOfBytesRead, 6);
 }
 
 // `RWF_NOWAIT` may return 0 before the end of the file (readv(2)).
@@ -1095,16 +1115,16 @@ TEST(ReadPageCacheHits, partialAndZeroByteReads) {
 TEST(ReadPageCacheHits, notSupportedDisablesTheFastPath) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
-  numPageCacheReads = 0;
+  numberOfPageCacheReads = 0;
   {
     ScopedPageCacheRead inject{&countedNotSupported};
     auto [notServed, buffers] = readHits(fd, {{0, 4}, {8, 4}, {12, 2}});
     EXPECT_EQ(notServed, allPositions(3));
-    EXPECT_EQ(numPageCacheReads, 1u);
+    EXPECT_EQ(numberOfPageCacheReads, 1u);
     EXPECT_FALSE(ad_utility::pageCacheFastPathIsSupported());
     auto [notServed2, unusedBuffers] = readHits(fd, {{0, 4}});
     EXPECT_EQ(notServed2, allPositions(1));
-    EXPECT_EQ(numPageCacheReads, 1u);
+    EXPECT_EQ(numberOfPageCacheReads, 1u);
   }
   // The guard re-enabled the fast path.
   EXPECT_TRUE(ad_utility::pageCacheFastPathIsSupported());
@@ -1121,11 +1141,11 @@ TEST(ReadPageCacheHits, runsAreSplitAtIovMax) {
   for (size_t i = 0; i < numReads; ++i) {
     reads.emplace_back(i, 1);
   }
-  numPageCacheReads = 0;
+  numberOfPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedCachedRead};
   auto [notServed, buffers] = readHits(fd, reads);
   EXPECT_TRUE(notServed.empty());
-  EXPECT_EQ(numPageCacheReads, 2u);
+  EXPECT_EQ(numberOfPageCacheReads, 2u);
   EXPECT_EQ(buffers.front(), "x");
   EXPECT_EQ(buffers.back(), "y");
 }
@@ -1135,19 +1155,18 @@ TEST(ReadPageCacheHits, runsAreSplitAtIovMax) {
 TEST(ReadPageCacheHits, emptyBatchAndContract) {
   auto [tmp, fd] = makeTempFile("AAAA");
   EXPECT_TRUE(ad_utility::readPageCacheHits(fd, {}, {}, {}).empty());
-  std::vector<size_t> numBytes{4, 4};
+  std::vector<size_t> numberOfBytesToRead{4, 4};
   std::vector<uint64_t> offsets{0};
   std::string buffer(8, '-');
   std::vector<char*> targets{buffer.data(), buffer.data() + 4};
   AD_EXPECT_THROW_WITH_MESSAGE(
-      ad_utility::readPageCacheHits(fd, numBytes, offsets, targets),
-      HasSubstr("offsets.size() == numBytes.size()"));
+      ad_utility::readPageCacheHits(fd, numberOfBytesToRead, offsets, targets),
+      HasSubstr("offsets.size() == numberOfBytesToRead.size()"));
 }
 
 // A `ReadPolicy` that reads synchronously and records the reads it receives.
 // The records are static because a `BatchManager` owns its policy.
 struct RecordingPolicy {
-  using BatchHandle = uint64_t;
   // The number of reads of every `addBatch` call.
   static inline std::vector<size_t> batchSizes;
   // The file offsets of all reads, in the order of arrival.
@@ -1157,18 +1176,20 @@ struct RecordingPolicy {
     receivedOffsets.clear();
   }
 
-  explicit RecordingPolicy([[maybe_unused]] unsigned ringSize) {}
-  void addBatch(int fd, ql::span<const size_t> numBytes,
+  // `explicit`, so that a bare ring size cannot silently convert to a
+  // policy where a policy is expected.
+  explicit RecordingPolicy([[maybe_unused]] ad_utility::RingSize ringSize) {}
+  void addBatch(int fd, ql::span<const size_t> numberOfBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-                [[maybe_unused]] BatchHandle handle) {
-    batchSizes.push_back(numBytes.size());
-    for (size_t i = 0; i < numBytes.size(); ++i) {
+                [[maybe_unused]] ad_utility::BatchHandle handle) {
+    batchSizes.push_back(numberOfBytesToRead.size());
+    for (size_t i = 0; i < numberOfBytesToRead.size(); ++i) {
       receivedOffsets.push_back(offsets[i]);
-      ad_utility::SyncIoPolicy::readFullyOrThrow(fd, buffers[i], numBytes[i],
-                                                 offsets[i]);
+      ad_utility::SyncIoPolicy::readFullyOrThrow(
+          fd, buffers[i], numberOfBytesToRead[i], offsets[i]);
     }
   }
-  void wait([[maybe_unused]] BatchHandle handle) {}
+  void wait([[maybe_unused]] ad_utility::BatchHandle handle) {}
 };
 
 using RecordedManager =
@@ -1176,7 +1197,7 @@ using RecordedManager =
 
 // Only the first run of adjacent reads is "cached", all later runs are not.
 int64_t firstRunCached(int fd, const ::iovec* iov, int iovcnt, int64_t offset) {
-  if (numPageCacheReads++ == 0) {
+  if (numberOfPageCacheReads++ == 0) {
     return blockingFill(fd, iov, iovcnt, offset);
   }
   return pageCacheReadTestHelpers::nothingCached(fd, iov, iovcnt, offset);
@@ -1189,9 +1210,9 @@ TEST(PageCacheFirstPolicy, onlyTheMissesAreForwarded) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   RecordingPolicy::reset();
-  numPageCacheReads = 0;
+  numberOfPageCacheReads = 0;
   ScopedPageCacheRead inject{&firstRunCached};
-  RecordedManager manager(64);
+  RecordedManager manager{ad_utility::RingSize{64}};
   ReadBatchForTesting batch;
   batch.add({{0, 4}, {4, 4}, {12, 4}, {8, 4}});
   manager.wait(batch.submitTo(manager, fd));
@@ -1199,7 +1220,7 @@ TEST(PageCacheFirstPolicy, onlyTheMissesAreForwarded) {
   EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}));
   EXPECT_THAT(RecordingPolicy::receivedOffsets,
               ElementsAre(uint64_t{12}, uint64_t{8}));
-  EXPECT_EQ(numPageCacheReads, size_t{3});
+  EXPECT_EQ(numberOfPageCacheReads, size_t{3});
 }
 
 // If the page-cache read serves every read, the decorated policy receives an
@@ -1208,16 +1229,16 @@ TEST(PageCacheFirstPolicy, aBatchThatIsServedCompletelyHasNothingToWaitFor) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   RecordingPolicy::reset();
-  numPageCacheReads = 0;
+  numberOfPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedCachedRead};
-  RecordedManager manager(64);
+  RecordedManager manager{ad_utility::RingSize{64}};
   ReadBatchForTesting batch;
   batch.add({{0, 4}, {8, 4}});
   manager.wait(batch.submitTo(manager, fd));
   EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
   EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{0}));
   EXPECT_TRUE(RecordingPolicy::receivedOffsets.empty());
-  EXPECT_EQ(numPageCacheReads, size_t{2});
+  EXPECT_EQ(numberOfPageCacheReads, size_t{2});
 }
 
 // If the page-cache read serves nothing, the decorated policy receives the
@@ -1226,9 +1247,9 @@ TEST(PageCacheFirstPolicy, aBatchThatIsNotServedIsPassedOnUnchanged) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   RecordingPolicy::reset();
-  numPageCacheReads = 0;
+  numberOfPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedNothingCached};
-  RecordedManager manager(64);
+  RecordedManager manager{ad_utility::RingSize{64}};
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
   manager.wait(batch.submitTo(manager, fd));
@@ -1237,7 +1258,7 @@ TEST(PageCacheFirstPolicy, aBatchThatIsNotServedIsPassedOnUnchanged) {
   EXPECT_THAT(RecordingPolicy::receivedOffsets,
               ElementsAre(uint64_t{8}, uint64_t{0}, uint64_t{12}));
   // One page-cache read per run; the three reads are not adjacent.
-  EXPECT_EQ(numPageCacheReads, size_t{3});
+  EXPECT_EQ(numberOfPageCacheReads, size_t{3});
 }
 
 // With the fast path switched off through the manager, the page-cache read is
@@ -1246,9 +1267,9 @@ TEST(PageCacheFirstPolicy, theFastPathCanBeSwitchedOffAndOn) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   RecordingPolicy::reset();
-  numPageCacheReads = 0;
+  numberOfPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedCachedRead};
-  RecordedManager manager(64);
+  RecordedManager manager{ad_utility::RingSize{64}};
   ad_utility::BatchManagerBase& base = manager;
   base.setPageCacheFastPath(false);
   {
@@ -1256,7 +1277,7 @@ TEST(PageCacheFirstPolicy, theFastPathCanBeSwitchedOffAndOn) {
     batch.add({{0, 4}, {8, 4}});
     manager.wait(batch.submitTo(manager, fd));
     EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
-    EXPECT_EQ(numPageCacheReads, size_t{0});
+    EXPECT_EQ(numberOfPageCacheReads, size_t{0});
     EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}));
   }
   base.setPageCacheFastPath(true);
@@ -1265,7 +1286,7 @@ TEST(PageCacheFirstPolicy, theFastPathCanBeSwitchedOffAndOn) {
     batch.add({{0, 4}, {8, 4}});
     manager.wait(batch.submitTo(manager, fd));
     EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
-    EXPECT_EQ(numPageCacheReads, size_t{2});
+    EXPECT_EQ(numberOfPageCacheReads, size_t{2});
     EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}, size_t{0}));
   }
 }
@@ -1276,9 +1297,9 @@ TEST(PageCacheFirstPolicy, anUnsupportedFastPathIsLeftAlone) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   RecordingPolicy::reset();
-  numPageCacheReads = 0;
+  numberOfPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedNotSupported};
-  RecordedManager manager(64);
+  RecordedManager manager{ad_utility::RingSize{64}};
   for (int round = 0; round < 2; ++round) {
     ReadBatchForTesting batch;
     batch.add({{0, 4}, {8, 4}});
@@ -1286,7 +1307,7 @@ TEST(PageCacheFirstPolicy, anUnsupportedFastPathIsLeftAlone) {
     EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
     EXPECT_FALSE(ad_utility::pageCacheFastPathIsSupported());
   }
-  EXPECT_EQ(numPageCacheReads, size_t{1});
+  EXPECT_EQ(numberOfPageCacheReads, size_t{1});
   EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}, size_t{2}));
 }
 

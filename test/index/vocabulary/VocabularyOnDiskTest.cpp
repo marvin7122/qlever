@@ -26,6 +26,7 @@
 #include "util/File.h"
 #include "util/Forward.h"
 #include "util/MmapVector.h"
+#include "util/PageCacheReadHook.h"
 #include "util/jthread.h"
 
 namespace {
@@ -325,6 +326,28 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
   EXPECT_THAT(*withFastPath, ::testing::ElementsAreArray(*withoutFastPath));
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
       *vocab, withFastPath, indices);
+}
+
+// The batch-manager backend is chosen when the vocabulary is opened, from
+// the `vocabulary-prefer-io-uring` runtime parameter. With the parameter
+// off, the synchronous backend is used; the lookup results must be the
+// same either way.
+TEST(VocabularyOnDisk, LookupBatchFollowsThePreferIoUringParameter) {
+  std::array<size_t, 8> indices{2, 0, 3, 1, 1, 4, 0, 3};
+  auto resetParameter =
+      setRuntimeParameterForTest<&RuntimeParameters::vocabularyPreferIoUring_>(
+          false);
+  {
+    auto vocab = createExampleVocabulary();
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+  }
+  setRuntimeParameter<&RuntimeParameters::vocabularyPreferIoUring_>(true);
+  {
+    auto vocab = createExampleVocabulary();
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+  }
 }
 
 namespace {
