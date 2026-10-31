@@ -198,6 +198,7 @@ TEST(RuntimeParameters, allParametersAreRegistered) {
   check(params.vacuumMinimumBlockSize_);
   check(params.disableCaching_);
   check(params.vocabularyPageCacheFastPath_);
+  check(params.vocabularyPreferIoUring_);
   check(params.logLevel_);
   check(params.constructDeduplication_);
   EXPECT_EQ(totalSize,
