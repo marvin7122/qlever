@@ -14,6 +14,7 @@
 #include <absl/functional/bind_front.h>
 
 #include <algorithm>
+#include <functional>
 #include <array>
 #include <atomic>
 
@@ -393,6 +394,13 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
   return VocabBatchLookupData::asResult(std::move(data));
 }
 
+namespace {
+// The words of a batch in the caller's order, viewing into a batch that was
+// read in file order (the buffer, which keeps it alive).
+struct ReorderedVocabBatchLookupData
+    : VocabLookupDataCommonBase<VocabBatchLookupResult> {};
+}  // namespace
+
 // _____________________________________________________________________________
 VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
     ql::span<const size_t> indices) const {
@@ -415,8 +423,33 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
   // change between two lookups.
   manager->setPageCacheFastPath(
       getRuntimeParameter<&RuntimeParameters::vocabularyPageCacheFastPath_>());
-  auto offsetPairs = readOffsetPairs(*manager, indices);
-  return readStrings(*manager, offsetPairs);
+  // Read the words in the order of their position in the files: then the
+  // offsets of consecutive indices are one range, and adjacent words merge into
+  // one read (the page-cache fast path merges only adjacent ranges). Each
+  // distinct index is read once.
+  if (ql::ranges::adjacent_find(indices, std::greater_equal<>{}) ==
+      indices.end()) {
+    auto offsetPairs = readOffsetPairs(*manager, indices);
+    return readStrings(*manager, offsetPairs);
+  }
+  std::vector<size_t> sortedIndices(indices.begin(), indices.end());
+  ql::ranges::sort(sortedIndices);
+  sortedIndices.erase(std::unique(sortedIndices.begin(), sortedIndices.end()),
+                      sortedIndices.end());
+  auto offsetPairs = readOffsetPairs(*manager, sortedIndices);
+  auto sortedWords = readStrings(*manager, offsetPairs);
+
+  // Hand out the words in the order of `indices`; the result keeps the sorted
+  // result, which owns the bytes, alive.
+  auto data = std::make_shared<ReorderedVocabBatchLookupData>();
+  data->views().reserve(indices.size());
+  for (size_t index : indices) {
+    const auto rank = static_cast<size_t>(
+        ql::ranges::lower_bound(sortedIndices, index) - sortedIndices.begin());
+    data->views().push_back((*sortedWords)[rank]);
+  }
+  data->buffer() = std::move(sortedWords);
+  return ReorderedVocabBatchLookupData::asResult(std::move(data));
 }
 
 // _____________________________________________________________________________
