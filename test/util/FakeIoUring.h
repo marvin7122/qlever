@@ -62,6 +62,18 @@ class FakeIoUring final : public IoUringInterface {
   // Whether, since the last `resetObservations`, a read was made short or
   // failed, or `cancelQueued` was called.
   bool injectedReadFault() const { return injectedReadFault_; }
+
+  // How often each fault was injected over the lifetime of the ring, so that
+  // tests can check that their faults actually occur.
+  struct FaultCounts {
+    size_t partialSubmits = 0;
+    size_t interruptedSubmits = 0;
+    size_t outOfMemorySubmits = 0;
+    size_t interruptedWaits = 0;
+    size_t faultyReads = 0;
+    size_t cancelledReads = 0;
+  };
+  const FaultCounts& faultCounts() const { return faultCounts_; }
   bool cancelled() const { return cancelled_; }
   void resetObservations() {
     injectedReadFault_ = false;
@@ -97,18 +109,22 @@ class FakeIoUring final : public IoUringInterface {
     }
     if (eagainBurstLeft_ > 0) {
       --eagainBurstLeft_;
+      ++faultCounts_.outOfMemorySubmits;
       return -EAGAIN;
     }
     if (happens(faults_.submitOutOfMemory)) {
       eagainBurstLeft_ = uniform(1, faults_.maxEagainBurst) - 1;
+      ++faultCounts_.outOfMemorySubmits;
       return -EAGAIN;
     }
     if (happens(faults_.submitInterrupted)) {
+      ++faultCounts_.interruptedSubmits;
       return -EINTR;
     }
     size_t numTaken = queue_.size();
     if (numTaken > 1 && happens(faults_.partialSubmit)) {
       numTaken = uniform(1, numTaken - 1);
+      ++faultCounts_.partialSubmits;
     }
     for (size_t i = 0; i < numTaken; ++i) {
       kernel_.push_back(queue_.front());
@@ -126,6 +142,7 @@ class FakeIoUring final : public IoUringInterface {
       return -faults_.brokenWaitErrno;
     }
     if (happens(faults_.waitInterrupted)) {
+      ++faultCounts_.interruptedWaits;
       return -EINTR;
     }
     // A real wait for more completions than requests in the kernel would
@@ -152,6 +169,7 @@ class FakeIoUring final : public IoUringInterface {
     for (Request& request : queue_) {
       if (!request.isNoOp) {
         cancelledIds.push_back(request.requestId);
+        ++faultCounts_.cancelledReads;
       }
       request = Request{true, nullptr, 0, 0, noOpRequestId};
     }
@@ -200,6 +218,7 @@ class FakeIoUring final : public IoUringInterface {
     }
     if (happens(faults_.readError)) {
       injectedReadFault_ = true;
+      ++faultCounts_.faultyReads;
       return -EIO;
     }
     size_t numBytes =
@@ -210,6 +229,7 @@ class FakeIoUring final : public IoUringInterface {
     }
     if (numBytes != request.numBytes) {
       injectedReadFault_ = true;
+      ++faultCounts_.faultyReads;
     }
     if (numBytes > 0) {
       std::memcpy(request.buffer, file_.data() + request.offset, numBytes);
@@ -227,6 +247,7 @@ class FakeIoUring final : public IoUringInterface {
   size_t eagainBurstLeft_ = 0;
   bool injectedReadFault_ = false;
   bool cancelled_ = false;
+  FaultCounts faultCounts_;
 };
 
 }  // namespace ad_utility::testing

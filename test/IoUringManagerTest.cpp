@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <iostream>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -662,6 +663,7 @@ TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
   for (size_t i = 0; i < 64; ++i) {
     file += zeroPaddedNumber(i, 4);
   }
+  FakeIoUring::FaultCounts total;
   for (uint32_t seed = 0; seed < 300; ++seed) {
     SCOPED_TRACE(absl::StrCat("seed ", seed));
     std::mt19937 random{seed};
@@ -710,7 +712,27 @@ TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
         }
       }
     }
+    const auto& counts = fake.faultCounts();
+    total.partialSubmits += counts.partialSubmits;
+    total.interruptedSubmits += counts.interruptedSubmits;
+    total.outOfMemorySubmits += counts.outOfMemorySubmits;
+    total.interruptedWaits += counts.interruptedWaits;
+    total.faultyReads += counts.faultyReads;
+    total.cancelledReads += counts.cancelledReads;
   }
+  // Every kind of fault occurred.
+  EXPECT_GT(total.partialSubmits, 0u);
+  EXPECT_GT(total.interruptedSubmits, 0u);
+  EXPECT_GT(total.outOfMemorySubmits, 0u);
+  EXPECT_GT(total.interruptedWaits, 0u);
+  EXPECT_GT(total.faultyReads, 0u);
+  EXPECT_GT(total.cancelledReads, 0u);
+  std::cout << "IoUringPolicyModel fault counts: partial submits "
+            << total.partialSubmits << ", interrupted submits "
+            << total.interruptedSubmits << ", EAGAIN submits "
+            << total.outOfMemorySubmits << ", interrupted waits "
+            << total.interruptedWaits << ", faulty reads " << total.faultyReads
+            << ", cancelled reads " << total.cancelledReads << std::endl;
 }
 
 // A submit error other than `EINTR` and `EAGAIN`, and a failed wait, mean that

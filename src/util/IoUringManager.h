@@ -57,7 +57,7 @@ CPP_requires(ReadPolicy_,
                  policy.wait(handle)));
 
 // The pluggable I/O backend of `BatchManager`: it specifies how the reads in a
-// batch are carried out. See `IoUringPolicy` (asynchronous, via io_uring) and
+// batch are carried out. See `IoUringPolicy` (via io_uring) and
 // `SyncIoPolicy` (blocking `pread` fallback) below. Must additionally be
 // constructible from a ringsize (`unsigned`). Also require that `T` must expose
 // an unsigned integral `BatchHandle` type.
