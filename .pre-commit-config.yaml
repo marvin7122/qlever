@@ -20,3 +20,12 @@ repos:
     rev: v2.2.6
     hooks:
       - id: codespell
+
+  - repo: local
+    hooks:
+      - id: deterministic-rules
+        name: deterministic style rules (CPP51/CPP73/CPP74/CPP75)
+        entry: python3 misc/check-deterministic-rules.py --staged
+        language: system
+        'types_or': [ c++, c ]
+        pass_filenames: false
