@@ -16,6 +16,9 @@ using std::string;
 
 // _____________________________________________________________________________
 void VocabularyInMemoryBinSearch::open(const string& fileName) {
+  // A directory built on previous (e.g. empty) contents must not survive
+  // into the newly loaded vocabulary, where every lookup would then miss.
+  indexRankDirectory_.reset();
   AD_CORRECTNESS_CHECK(
       words().size() == 0 && indices().empty(),
       "Calling open on the same vocabulary twice is probably a bug");
@@ -35,6 +38,9 @@ void VocabularyInMemoryBinSearch::open(const string& fileName) {
 // _____________________________________________________________________________
 std::optional<size_t> VocabularyInMemoryBinSearch::positionOfIndex(
     uint64_t index) const {
+  if (indexRankDirectory_.has_value()) {
+    return indexRankDirectory_->rankIfContained(index);
+  }
   auto indices = this->indices();
   auto it = ql::ranges::lower_bound(indices, index);
   if (it != indices.end() && *it == index) {
@@ -44,9 +50,24 @@ std::optional<size_t> VocabularyInMemoryBinSearch::positionOfIndex(
 }
 
 // _____________________________________________________________________________
+void VocabularyInMemoryBinSearch::buildIndexRankDirectory(bool useHugePages) {
+  indexRankDirectory_.reset();
+  // If the largest contained index is `UINT64_MAX`, `endIndex()` wraps to
+  // zero; fall back to binary search instead of building a bogus directory.
+  if (!indices().empty() && endIndex() == 0) {
+    return;
+  }
+  indexRankDirectory_.emplace(indices(), endIndex(), useHugePages);
+}
+
+// _____________________________________________________________________________
 uint64_t VocabularyInMemoryBinSearch::indexAtPosition(size_t position) const {
   auto indices = this->indices();
-  AD_CORRECTNESS_CHECK(position < indices.size());
+  // Hot path (once per looked-up position): a bounds check here costs
+  // measurable export CPU (profiled ~8 % across the vocab checks), so this is
+  // an expensive check — still active in debug/test builds, compiled out with
+  // NDEBUG.
+  AD_EXPENSIVE_CHECK(position < indices.size());
   return indices[position];
 }
 
@@ -59,7 +80,9 @@ uint64_t VocabularyInMemoryBinSearch::endIndex() const {
 // _____________________________________________________________________________
 std::string_view VocabularyInMemoryBinSearch::wordAtPosition(
     size_t position) const {
-  AD_CORRECTNESS_CHECK(position < words().size());
+  // Hot path (once per looked-up word, plus once per prefetch): see
+  // `indexAtPosition` above for why this is an expensive check.
+  AD_EXPENSIVE_CHECK(position < words().size());
   return words()[position];
 }
 
@@ -103,6 +126,7 @@ void VocabularyInMemoryBinSearch::close() {
   // Batch-lookup results that are still alive keep the previous words.
   words_ = std::make_shared<const Words>();
   indices_ = {};
+  indexRankDirectory_.reset();
 }
 
 // _____________________________________________________________________________

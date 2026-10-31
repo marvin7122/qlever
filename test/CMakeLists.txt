@@ -394,6 +394,7 @@ addLinkAndDiscoverTestNoLibs(AsyncStreamTest)
 addLinkAndDiscoverTest(BitUtilsTest)
 
 addLinkAndDiscoverTest(HyperLogLogTest)
+addLinkAndDiscoverTestNoLibs(BitVectorWithRankTest qlever_util)
 
 addLinkAndDiscoverTest(NBitIntegerTest)
 

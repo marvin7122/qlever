@@ -281,6 +281,35 @@ struct RuntimeParameters {
   SizeT permutationWriterNumBlocksInFlight_{
       4, "permutation-writer-num-blocks-in-flight"};
 
+  // If set to true, loading a vocabulary that keeps some of its words in RAM
+  // (`VocabularyInternalExternal`) also builds a bit vector with one bit per
+  // vocabulary index plus rank counters (see `ad_utility::BitVectorWithRank`).
+  // Checking whether an index is in RAM, and finding its word there, then
+  // costs one cache line instead of a binary search over the sorted indices of
+  // the words in RAM. Costs 8/7 bits per vocabulary index of the full index
+  // range, which also spans the words that stay on disk, so the directory
+  // is much larger than the words kept in RAM. Read when the index
+  // is loaded; changing it later has no effect.
+  Bool vocabularyInternalRankLookup_{true, "vocabulary-internal-rank-lookup"};
+
+  // With the rank directory above, `VocabularyInternalExternal::lookupBatch`
+  // prefetches the rank directory block of the index this many positions ahead
+  // in the batch, and (in a second pass) the offsets and the first bytes of
+  // the in-RAM words that many and twice that many positions ahead. 0 turns
+  // prefetching off. The default 8 was the best of 4/8/16/32 on Wikidata.
+  SizeT vocabularyInternalRankPrefetchDistance_{
+      8, "vocabulary-internal-rank-prefetch-distance"};
+
+  // If set to true, the rank directory above is allocated 2 MiB-aligned and
+  // marked for transparent huge pages (`madvise(MADV_HUGEPAGE)`), so that a
+  // lookup costs one cache miss instead of one cache miss plus one TLB miss.
+  // The 2 MiB alignment rounds the allocation up even when transparent huge
+  // pages are disabled, so enabling this always costs up to 2 MiB of slack;
+  // the huge-page benefit itself additionally requires transparent huge pages
+  // in "always" or "madvise" mode. Read when the index is loaded.
+  Bool vocabularyInternalRankHugePages_{false,
+                                        "vocabulary-internal-rank-hugepages"};
+
   // Only blocks of this size or larger will be considered for vacuuming.
   SizeT vacuumMinimumBlockSize_{100, "vacuum-minimum-block-size"};
 
