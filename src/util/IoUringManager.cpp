@@ -28,22 +28,23 @@
 namespace ad_utility {
 
 //______________________________________________________________________________
-void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
+void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer,
+                                    size_t numberOfBytesToRead,
                                     uint64_t fileOffset) {
-  // `pread` reads up to `numBytes` bytes from file descriptor `fd` at offset
-  // `fileOffset` (from the start of the file) into `targetBuffer`. The file
-  // offset is not changed. On success, it returns the number of bytes read (0
-  // indicates end of file); on error it returns -1 and sets `errno`. See
-  // https://man7.org/linux/man-pages/man2/pread.2.html for more details.
-  const ssize_t numBytesRead =
-      pread(fd, targetBuffer, numBytes, static_cast<off_t>(fileOffset));
+  // `pread` reads up to `numberOfBytesToRead` bytes from file descriptor `fd`
+  // at offset `fileOffset` (from the start of the file) into `targetBuffer`.
+  // The file offset is not changed. On success, it returns the number of bytes
+  // read (0 indicates end of file); on error it returns -1 and sets `errno`.
+  // See https://man7.org/linux/man-pages/man2/pread.2.html for more details.
+  const ssize_t numberOfBytesRead = pread(fd, targetBuffer, numberOfBytesToRead,
+                                          static_cast<off_t>(fileOffset));
 
-  if (numBytesRead < 0) {
+  if (numberOfBytesRead < 0) {
     AD_THROW("pread failed in readFullyOrThrow");
   }
   // A result smaller than requested (a partial read, or 0 at end of file) means
   // we read fewer bytes than expected, which we treat as an error.
-  if (static_cast<size_t>(numBytesRead) != numBytes) {
+  if (static_cast<size_t>(numberOfBytesRead) != numberOfBytesToRead) {
     AD_THROW("read fewer bytes than requested in readFullyOrThrow");
   }
 }
@@ -65,6 +66,9 @@ std::atomic<bool> pageCacheFastPathSupported{true};
 #endif
 }  // namespace
 
+// In `detail` because these define the test hook declared in
+// `PageCacheFirstPolicy.h`: production code calls `readPageCacheHits`,
+// only tests replace the function pointer behind it.
 namespace detail {
 //______________________________________________________________________________
 int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
@@ -125,8 +129,8 @@ constexpr auto areAdjacent = [](const auto& previous, const auto& next) {
 // Log once that the kernel or file system rejects `RWF_NOWAIT` (`EOPNOTSUPP`)
 // or that `preadv2` does not exist (`ENOSYS`, Linux < 4.6 or a seccomp filter),
 // and switch the fast path off for the rest of the process.
-void disableIfNotSupported(int64_t numBytesRead) {
-  if (numBytesRead < 0 && (errno == EOPNOTSUPP || errno == ENOSYS) &&
+void disableIfNotSupported(int64_t numberOfBytesRead) {
+  if (numberOfBytesRead < 0 && (errno == EOPNOTSUPP || errno == ENOSYS) &&
       pageCacheFastPathSupported.exchange(false)) {
     AD_LOG_WARN << "preadv2 with RWF_NOWAIT is not supported (EOPNOTSUPP or "
                    "ENOSYS); reading without the page-cache fast path "
@@ -143,44 +147,48 @@ template <typename Run>
 size_t serveRun(int fd, Run run) {
   const auto iovecs = ::ranges::to<std::vector<::iovec>>(
       run | ::ranges::views::transform(toIovec));
-  const int64_t numBytesRead = detail::pageCacheRead()(
+  const int64_t numberOfBytesRead = detail::pageCacheRead()(
       fd, iovecs.data(), static_cast<int>(iovecs.size()),
       static_cast<int64_t>(fileOffsetOf(*::ranges::begin(run))));
-  disableIfNotSupported(numBytesRead);
-  if (numBytesRead < 0) {
+  disableIfNotSupported(numberOfBytesRead);
+  if (numberOfBytesRead < 0) {
     return 0;
   }
   // The end of each read within the run; a read is served if its end was read.
   auto readEnds = iovecs | ::ranges::views::transform(&::iovec::iov_len) |
                   ::ranges::views::partial_sum;
-  const auto numBytesReadUnsigned = static_cast<size_t>(numBytesRead);
+  const auto numberOfBytesReadUnsigned = static_cast<size_t>(numberOfBytesRead);
   return static_cast<size_t>(
-      ::ranges::count_if(readEnds, [numBytesReadUnsigned](size_t end) {
-        return end <= numBytesReadUnsigned;
+      ::ranges::count_if(readEnds, [numberOfBytesReadUnsigned](size_t end) {
+        return end <= numberOfBytesReadUnsigned;
       }));
 }
 }  // namespace
 #endif
 
 //______________________________________________________________________________
-std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
-                                      ql::span<const uint64_t> offsets,
-                                      ql::span<char*> buffers) {
-  AD_CONTRACT_CHECK(offsets.size() == numBytes.size() &&
-                    buffers.size() == numBytes.size());
-  auto positions = ::ranges::views::iota(size_t{0}, numBytes.size());
+std::vector<size_t> readPageCacheHits(
+    int fd, ql::span<const size_t> numberOfBytesToRead,
+    ql::span<const uint64_t> offsets, ql::span<char*> buffers) {
+  AD_CONTRACT_CHECK(offsets.size() == numberOfBytesToRead.size() &&
+                        buffers.size() == numberOfBytesToRead.size(),
+                    "The three spans describe the same reads, so they "
+                    "must have the same length.");
+  auto positions = ::ranges::views::iota(size_t{0}, numberOfBytesToRead.size());
 #ifdef QL_PAGE_CACHE_FAST_PATH
-  auto reads = ::ranges::views::zip(positions, numBytes, offsets, buffers);
+  auto reads =
+      ::ranges::views::zip(positions, numberOfBytesToRead, offsets, buffers);
   std::vector<size_t> notServed;
-  notServed.reserve(numBytes.size());
+  notServed.reserve(numberOfBytesToRead.size());
   for (auto adjacentReads : reads | ::ranges::views::chunk_by(areAdjacent)) {
     // One `preadv2` call takes at most `IOV_MAX` buffers.
     for (auto run :
          adjacentReads | ::ranges::views::chunk(static_cast<size_t>(IOV_MAX))) {
-      const size_t numServed =
+      const size_t numberOfServedReads =
           pageCacheFastPathIsSupported() ? serveRun(fd, run) : 0;
-      ::ranges::push_back(notServed, run | ::ranges::views::drop(numServed) |
-                                         ::ranges::views::transform(position));
+      ::ranges::push_back(notServed,
+                          run | ::ranges::views::drop(numberOfServedReads) |
+                              ::ranges::views::transform(position));
     }
   }
   return notServed;
@@ -191,30 +199,31 @@ std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
 }
 
 //______________________________________________________________________________
-void SyncIoPolicy::addBatch(int fd,
-                            ql::span<const size_t> numBytesToReadPerRequest,
-                            ql::span<const uint64_t> fileOffsetPerRequest,
-                            ql::span<char*> targetBufferPerRequest,
-                            [[maybe_unused]] BatchHandle handle) const {
-  for (const auto& [numBytesToRead, fileOffset, targetBuf] :
-       ::ranges::views::zip(numBytesToReadPerRequest, fileOffsetPerRequest,
+void SyncIoPolicy::addBatch(
+    int fd, ql::span<const size_t> numberOfBytesToReadPerRequest,
+    ql::span<const uint64_t> fileOffsetPerRequest,
+    ql::span<char*> targetBufferPerRequest,
+    [[maybe_unused]] BatchHandle handle) const {
+  for (const auto& [numberOfBytesToRead, fileOffset, targetBuf] :
+       ::ranges::views::zip(numberOfBytesToReadPerRequest, fileOffsetPerRequest,
                             targetBufferPerRequest)) {
-    SyncIoPolicy::readFullyOrThrow(fd, targetBuf, numBytesToRead, fileOffset);
+    SyncIoPolicy::readFullyOrThrow(fd, targetBuf, numberOfBytesToRead,
+                                   fileOffset);
   }
 }
 
 #ifdef QLEVER_HAS_IO_URING
 
 //______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
+IoUringPolicy::IoUringPolicy(RingSize ringSize) : ringSize_(ringSize) {
   // Set up the submission and completion queues, shared between this process
-  // and the kernel, with (at least) `ringSize_` submission slots in the
-  // submission queue. liburing rounds the requested size up to a power of two,
-  // so the actual ring may be larger than `ringSize`; `ringSize_` is therefore
-  // a conservative (lower) bound for the "ring full" check below. See
+  // and the kernel, with exactly `ringSize_` submission slots in the
+  // submission queue. (`RingSize` is always a power of two, so the rounding
+  // up that liburing otherwise does cannot make the actual ring larger
+  // than the size that the "ring full" check below uses.) See
   // https://man7.org/linux/man-pages/man3/io_uring_queue_init.3.html for
   // details.
-  int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
+  int ret = io_uring_queue_init(ringSize_.value(), &ring_, /*flags=*/0);
   if (ret < 0) {
     AD_THROW("io_uring_queue_init failed in IoUringManager");
   }
@@ -222,9 +231,9 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
 
 //______________________________________________________________________________
 IoUringPolicy::~IoUringPolicy() {
-  if (numOutstandingReadRequests_ > 0) {
+  if (numberOfOutstandingReadRequests() > 0) {
     AD_LOG_WARN << "IoUringPolicy destroyed with "
-                << numOutstandingReadRequests_
+                << numberOfOutstandingReadRequests()
                 << " read request(s) still outstanding; all batches should be "
                    "`wait()`ed before destroying the policy. Draining them now "
                    "so the kernel stops writing into the target buffers.\n";
@@ -234,68 +243,79 @@ IoUringPolicy::~IoUringPolicy() {
   // deliberately do not call `drainAtLeast` here: it throws on I/O errors, and
   // a destructor must not throw. We also stop if `io_uring_wait_cqe` fails, to
   // avoid spinning forever (it would not decrement the outstanding count).
-  while (numOutstandingReadRequests_ > 0) {
+  while (numberOfOutstandingReadRequests() > 0) {
     io_uring_cqe* cqe = nullptr;
     if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
       break;
     }
+    // Attribute the completion to its batch, as in `processCqe`, but
+    // without recording failures: the policy is being destroyed anyway.
+    const uint64_t requestId = io_uring_cqe_get_data64(cqe);
     io_uring_cqe_seen(&ring_, cqe);
-    --numOutstandingReadRequests_;
+    if (auto outstandingReadIt = outstandingReadsByRequestId_.find(requestId);
+        outstandingReadIt != outstandingReadsByRequestId_.end()) {
+      const BatchHandle batchHandle = outstandingReadIt->second.batchHandle;
+      outstandingReadsByRequestId_.erase(outstandingReadIt);
+      if (outstandingReadCounts_.forBatch(batchHandle) > 0) {
+        outstandingReadCounts_.countReadReaped(batchHandle);
+      }
+    }
   }
   io_uring_queue_exit(&ring_);
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::addBatch(int fd,
-                             ql::span<const size_t> numBytesToReadPerRequest,
-                             ql::span<const uint64_t> fileOffsetPerRequest,
-                             ql::span<char*> targetBufferPerRequest,
-                             BatchHandle handle) {
-  const size_t numReadRequestsToPerform = numBytesToReadPerRequest.size();
+void IoUringPolicy::addBatch(
+    int fd, ql::span<const size_t> numberOfBytesToReadPerRequest,
+    ql::span<const uint64_t> fileOffsetPerRequest,
+    ql::span<char*> targetBufferPerRequest, BatchHandle handle) {
+  const size_t numberOfReadRequestsToPerform =
+      numberOfBytesToReadPerRequest.size();
 
-  if (numReadRequestsToPerform == 0) {
+  if (numberOfReadRequestsToPerform == 0) {
     return;
   }
-  numOutstandingReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
-
-  for (const auto& [numBytesToRead, fileOffset, targetBuf] :
-       ::ranges::views::zip(numBytesToReadPerRequest, fileOffsetPerRequest,
+  for (const auto& [numberOfBytesToRead, fileOffset, targetBuf] :
+       ::ranges::views::zip(numberOfBytesToReadPerRequest, fileOffsetPerRequest,
                             targetBufferPerRequest)) {
     // The ring has no free slot, so make room: submit what we have prepared so
     // far and block until enough completions have been drained.
-    if (numOutstandingReadRequests_ >= ringSize_) {
+    if (numberOfOutstandingReadRequests() >= ringSize_.value()) {
       // Flush the SQEs prepared so far to the kernel so the kernel can start
       // servicing them. Their completions will free up submission slots.
       // Wait for a wave of completions instead of one, and reap every ready
       // CQE, so a large batch refills the ring in waves rather than one SQE
       // per reaped CQE.
       io_uring_submit(&ring_);
-      while (numOutstandingReadRequests_ >= ringSize_) {
-        drainAtLeast(static_cast<unsigned>(
-            std::min<size_t>(REAP_WAVE, numOutstandingReadRequests_)));
+      while (numberOfOutstandingReadRequests() >= ringSize_.value()) {
+        drainAtLeast(static_cast<unsigned>(std::min<size_t>(
+            REAP_WAVE_SIZE, numberOfOutstandingReadRequests())));
       }
     }
 
     // Claim the next free SQE. The check above guarantees a slot is available,
     // so `io_uring_get_sqe` must not return `nullptr` here.
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
-    AD_CORRECTNESS_CHECK(sqe != nullptr);
+    AD_CORRECTNESS_CHECK(
+        sqe != nullptr,
+        "A submission slot must be free, because the number of "
+        "outstanding reads is kept below the ring size.");
 
     // Record the read's parameters in the SQE (this only sets the SQE's fields;
     // the request is not handed to the kernel until a later `io_uring_submit`).
     io_uring_prep_read(sqe, fd, targetBuf,
-                       static_cast<unsigned>(numBytesToRead),
+                       static_cast<unsigned>(numberOfBytesToRead),
                        static_cast<__u64>(fileOffset));
 
     // Tag the SQE with a unique request id and record its metadata (the batch
     // it belongs to and how many bytes it should read). io_uring copies the
     // request id (the SQE's `user_data`) verbatim into the matching completion,
     // so `processCqe` can recover it.
-    const uint64_t requestId = nextRequestIdToAssign_++;
+    const uint64_t requestId = nextRequestIdToAssign_.mintNext();
     outstandingReadsByRequestId_[requestId] =
-        OutstandingRead{handle, numBytesToRead};
+        OutstandingRead{handle, numberOfBytesToRead};
     io_uring_sqe_set_data64(sqe, requestId);
-    numOutstandingReadRequests_++;
+    outstandingReadCounts_.countReadPrepared(handle);
   }
   // Flush the remaining prepared SQEs to the kernel (the loop above only
   // submits when the submission queue is full, so the last group of SQEs has
@@ -307,14 +327,13 @@ void IoUringPolicy::addBatch(int fd,
 void IoUringPolicy::wait(BatchHandle handle) {
   // Drain completions until this batch is gone. `processCqe` erases a batch as
   // soon as its last read completes, so a present entry always still has
-  // outstanding reads. Waiting for up to `REAP_WAVE` CQEs never waits longer
-  // than this batch needs: it cannot finish before its own remaining reads
-  // complete, and any CQE (also of other batches) counts towards the wave.
-  for (auto it = numOutstandingReadRequestsPerBatch_.find(handle);
-       it != numOutstandingReadRequestsPerBatch_.end();
-       it = numOutstandingReadRequestsPerBatch_.find(handle)) {
-    drainAtLeast(
-        static_cast<unsigned>(std::min<size_t>(REAP_WAVE, it->second)));
+  // outstanding reads. Waiting for up to `REAP_WAVE_SIZE` CQEs never waits
+  // longer than this batch needs: it cannot finish before its own remaining
+  // reads complete, and any CQE (also of other batches) counts towards the
+  // wave.
+  while (outstandingReadCounts_.forBatch(handle) > 0) {
+    drainAtLeast(static_cast<unsigned>(std::min<size_t>(
+        REAP_WAVE_SIZE, outstandingReadCounts_.forBatch(handle))));
   }
   // Throw only now that every read of the batch is reaped, so the kernel no
   // longer writes into its buffers.
@@ -328,8 +347,14 @@ void IoUringPolicy::wait(BatchHandle handle) {
 
 //______________________________________________________________________________
 void IoUringPolicy::drainAtLeast(unsigned minComplete) {
-  AD_CORRECTNESS_CHECK(minComplete > 0);
-  AD_CORRECTNESS_CHECK(minComplete <= numOutstandingReadRequests_);
+  AD_CORRECTNESS_CHECK(
+      minComplete > 0,
+      "Draining must wait for at least one completion; waiting for "
+      "zero would return without reaping anything.");
+  AD_CORRECTNESS_CHECK(
+      minComplete <= numberOfOutstandingReadRequests(),
+      "Cannot wait for more completions than there are submitted "
+      "outstanding reads; a read that is only prepared never completes.");
 
   // Block until at least `minComplete` completion queue entries (CQEs) are
   // ready. This typically costs one `io_uring_enter` for the whole wave (and
@@ -366,35 +391,31 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
-  --numOutstandingReadRequests_;
-
+void IoUringPolicy::processCqe(int numberOfBytesRead, uint64_t requestId) {
   // Every reaped CQE corresponds to exactly one outstanding read whose id we
   // inserted in `addBatch`, so the entry must be present.
-  auto reqIt = outstandingReadsByRequestId_.find(requestId);
-  AD_CORRECTNESS_CHECK(reqIt != outstandingReadsByRequestId_.end());
-  const OutstandingRead outstandingRead = reqIt->second;
-  outstandingReadsByRequestId_.erase(reqIt);
+  auto outstandingReadIt = outstandingReadsByRequestId_.find(requestId);
+  AD_CORRECTNESS_CHECK(
+      outstandingReadIt != outstandingReadsByRequestId_.end(),
+      "Every reaped CQE corresponds to exactly one outstanding read "
+      "whose id was inserted in `addBatch`.");
 
-  // Attribute the completion to its batch and decrement that batch's
-  // outstanding count, erasing the batch once its last read is reaped. This
-  // happens also for a failed read, so a batch whose read failed does not stay
-  // outstanding.
-  auto it =
-      numOutstandingReadRequestsPerBatch_.find(outstandingRead.batchHandle);
-  AD_CORRECTNESS_CHECK(it != numOutstandingReadRequestsPerBatch_.end());
-  if (--it->second == 0) {
-    numOutstandingReadRequestsPerBatch_.erase(it);
-  }
+  const OutstandingRead outstandingRead = outstandingReadIt->second;
+  outstandingReadsByRequestId_.erase(outstandingReadIt);
+
+  // Attribute the completion to its batch and count it as reaped (which
+  // erases the batch once its last read is reaped). This happens also for
+  // a failed read, so a batch whose read failed does not stay outstanding.
+  outstandingReadCounts_.countReadReaped(outstandingRead.batchHandle);
 
   // `cqe->res` < 0 is `-errno`. A result smaller than requested (a partial
   // read, or 0 at end of file) means we read fewer bytes than expected, which
   // we treat as an error.
   const char* errorMessage = nullptr;
-  if (numBytesRead < 0) {
+  if (numberOfBytesRead < 0) {
     errorMessage = "I/O error in IoUringPolicy read operation";
-  } else if (static_cast<size_t>(numBytesRead) !=
-             outstandingRead.expectedNumBytes) {
+  } else if (static_cast<size_t>(numberOfBytesRead) !=
+             outstandingRead.expectedNumberOfReadBytes) {
     errorMessage = "read fewer bytes than requested in IoUringPolicy";
   }
   if (errorMessage != nullptr) {
@@ -404,5 +425,45 @@ void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
 }
 
 #endif  // QLEVER_HAS_IO_URING
+
+namespace detail {
+// In `detail` because this is only a building block of `makeBatchManager`
+// below, its only caller: it assembles a manager for one fixed `Policy`.
+// Callers must go through `makeBatchManager`, which owns the backend
+// choice (including the decoration with `PageCacheFirstPolicy` and the
+// io_uring fallback), so this helper is not a public factory and its
+// signature is not a stable interface.
+// Build a `BatchManager` for `Policy`, decorated with `PageCacheFirstPolicy`
+// if the page-cache fast path is supported.
+template <typename Policy>
+std::unique_ptr<BatchManagerBase> makeBatchManagerFor(RingSize ringSize) {
+  if (pageCacheFastPathIsSupported()) {
+    return std::make_unique<BatchManager<PageCacheFirstPolicy<Policy>>>(
+        ringSize);
+  }
+  return std::make_unique<BatchManager<Policy>>(ringSize);
+}
+}  // namespace detail
+
+//______________________________________________________________________________
+std::unique_ptr<BatchManagerBase> makeBatchManager(bool& preferIoUring,
+                                                   RingSize ringSize) {
+#ifdef QLEVER_HAS_IO_URING
+  if (preferIoUring) {
+    try {
+      return detail::makeBatchManagerFor<IoUringPolicy>(ringSize);
+    } catch (const std::exception& e) {
+      preferIoUring = false;
+      AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
+                  << e.what()
+                  << "); falling back to synchronous pread for vocabulary "
+                     "lookups\n";
+    }
+  }
+#else
+  preferIoUring = false;
+#endif
+  return detail::makeBatchManagerFor<SyncIoPolicy>(ringSize);
+}
 
 }  // namespace ad_utility

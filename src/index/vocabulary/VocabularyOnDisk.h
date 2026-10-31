@@ -52,7 +52,7 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // never reused.
   uint64_t id_ = 0;
 
-  // Pool of persistent `BatchIoManager`s for `lookupBatch`.
+  // Pool of persistent batch managers for `lookupBatch`.
   mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>
       ioManagers_;
