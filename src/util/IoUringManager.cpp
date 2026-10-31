@@ -291,8 +291,8 @@ void IoUringPolicy::addBatch(
       // per reaped CQE.
       io_uring_submit(&ring_);
       while (numberOfOutstandingReadRequests() >= ringSize_.value()) {
-        drainAtLeast(static_cast<unsigned>(
-            std::min<size_t>(REAP_WAVE, numberOfOutstandingReadRequests())));
+        drainAtLeast(static_cast<unsigned>(std::min<size_t>(
+            REAP_WAVE_SIZE, numberOfOutstandingReadRequests())));
       }
     }
 
@@ -330,14 +330,15 @@ void IoUringPolicy::addBatch(
 void IoUringPolicy::wait(BatchHandle handle) {
   // Drain completions until this batch is gone. `processCqe` erases a batch as
   // soon as its last read completes, so a present entry always still has
-  // outstanding reads. Waiting for up to `REAP_WAVE` CQEs never waits longer
-  // than this batch needs: it cannot finish before its own remaining reads
-  // complete, and any CQE (also of other batches) counts towards the wave.
+  // outstanding reads. Waiting for up to `REAP_WAVE_SIZE` CQEs never waits
+  // longer than this batch needs: it cannot finish before its own remaining
+  // reads complete, and any CQE (also of other batches) counts towards the
+  // wave.
   for (auto it = numberOfOutstandingReadRequestsPerBatch_.find(handle);
        it != numberOfOutstandingReadRequestsPerBatch_.end();
        it = numberOfOutstandingReadRequestsPerBatch_.find(handle)) {
     drainAtLeast(
-        static_cast<unsigned>(std::min<size_t>(REAP_WAVE, it->second)));
+        static_cast<unsigned>(std::min<size_t>(REAP_WAVE_SIZE, it->second)));
   }
   // Throw only now that every read of the batch is reaped, so the kernel no
   // longer writes into its buffers.

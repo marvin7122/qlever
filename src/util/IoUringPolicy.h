@@ -53,12 +53,6 @@ class IoUringPolicy {
   // removed as soon as the last read of its batch is reaped: usually in
   // the `wait()` of that batch, but also in `addBatch` or in the `wait()`
   // of another batch, which reap every ready CQE.
-  //
-  // This map is the single source of truth for the outstanding counts:
-  // the total number of outstanding reads is derived from it (see
-  // `numberOfOutstandingReadRequests` below) instead of being kept in a
-  // separate counter, so the total and the per-batch counts cannot drift
-  // apart.
   ad_utility::HashMap<BatchHandle, size_t>
       numberOfOutstandingReadRequestsPerBatch_;
 
@@ -104,7 +98,7 @@ class IoUringPolicy {
   // to this many completions (fewer if fewer requests can complete), then reap
   // all ready ones from the completion queue in one pass. This amortizes
   // `io_uring_enter` and the completion-queue-head update over the wave.
-  static constexpr unsigned REAP_WAVE = 8;
+  static constexpr unsigned REAP_WAVE_SIZE = 8;
 
   // Block the application thread until at least `minComplete` CQEs are ready,
   // then reap every ready CQE.

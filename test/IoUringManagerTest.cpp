@@ -335,7 +335,7 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
 }
 
 // A batch much larger than the ring completes with every read in its own
-// buffer. Ring 4 is smaller than a `REAP_WAVE`, so the ring-full wait is
+// buffer. Ring 4 is smaller than a `REAP_WAVE_SIZE`, so the ring-full wait is
 // clamped to the outstanding reads; ring 8 is exactly one wave; with ring 256,
 // more than 64 CQEs can be ready at once, so a wave is reaped in several
 // chunks.
