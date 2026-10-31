@@ -8,7 +8,8 @@ in the review corpus).
 
 Checks (on added lines only in `--staged` mode):
   CPP73  No type alias that merely renames a primitive type
-         (`using BatchHandle = uint64_t;`) - use a wrapper type.
+         (`using BatchHandle = uint64_t;`) or `std::string` - use a
+         wrapper type.
          Escape: `// alias-allowed: <reason>` on the same line.
   CPP74  A `virtual` destructor that is `= default`ed, `= delete`d, or
          pure virtual must have an intent comment (the contiguous
@@ -35,7 +36,8 @@ PRIMITIVE = (
     r"(?:bool|char|char8_t|char16_t|char32_t|wchar_t|"
     r"(?:signed|unsigned)\s+(?:char|short(?:\s+int)?|int|long(?:\s+long)?(?:\s+int)?)|"
     r"short(?:\s+int)?|int|long(?:\s+long)?(?:\s+int)?|float|double|long\s+double|"
-    r"(?:std::)?(?:u?int(?:8|16|32|64)_t|size_t|ptrdiff_t|intptr_t|uintptr_t))"
+    r"(?:std::)?(?:u?int(?:8|16|32|64)_t|size_t|ptrdiff_t|intptr_t|uintptr_t)|"
+    r"std::string|std::basic_string<char>)"
 )
 USING_RE = re.compile(
     rf"^\s*using\s+(?P<name>[A-Za-z_]\w*)\s*=\s*(?:const\s+)?{PRIMITIVE}\s*;")
@@ -74,7 +76,8 @@ def check_line(lines, idx):
     if match and "alias-allowed:" not in line:
         findings.append((
             "CPP73",
-            f"alias `{match.group('name')}` renames a primitive type; use "
+            f"alias `{match.group('name')}` renames a primitive type or "
+            "`std::string`; use "
             "a wrapper type instead, or mark an intentional interop alias "
             "with `// alias-allowed: <reason>`"))
     if VIRTUAL_DTOR_RE.search(code) and not has_intent_comment(lines, idx):
