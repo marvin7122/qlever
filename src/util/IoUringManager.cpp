@@ -256,11 +256,8 @@ IoUringPolicy::~IoUringPolicy() {
         outstandingReadIt != outstandingReadsByRequestId_.end()) {
       const BatchHandle batchHandle = outstandingReadIt->second.batchHandle;
       outstandingReadsByRequestId_.erase(outstandingReadIt);
-      if (auto batchCountIt =
-              numberOfOutstandingReadRequestsPerBatch_.find(batchHandle);
-          batchCountIt != numberOfOutstandingReadRequestsPerBatch_.end() &&
-          --batchCountIt->second == 0) {
-        numberOfOutstandingReadRequestsPerBatch_.erase(batchCountIt);
+      if (outstandingReadCounts_.forBatch(batchHandle) > 0) {
+        outstandingReadCounts_.countReadReaped(batchHandle);
       }
     }
   }
@@ -318,7 +315,7 @@ void IoUringPolicy::addBatch(
     outstandingReadsByRequestId_[requestId] =
         OutstandingRead{handle, numberOfBytesToRead};
     io_uring_sqe_set_data64(sqe, requestId);
-    ++numberOfOutstandingReadRequestsPerBatch_[handle];
+    outstandingReadCounts_.countReadPrepared(handle);
   }
   // Flush the remaining prepared SQEs to the kernel (the loop above only
   // submits when the submission queue is full, so the last group of SQEs has
@@ -334,11 +331,9 @@ void IoUringPolicy::wait(BatchHandle handle) {
   // longer than this batch needs: it cannot finish before its own remaining
   // reads complete, and any CQE (also of other batches) counts towards the
   // wave.
-  for (auto it = numberOfOutstandingReadRequestsPerBatch_.find(handle);
-       it != numberOfOutstandingReadRequestsPerBatch_.end();
-       it = numberOfOutstandingReadRequestsPerBatch_.find(handle)) {
-    drainAtLeast(
-        static_cast<unsigned>(std::min<size_t>(REAP_WAVE_SIZE, it->second)));
+  while (outstandingReadCounts_.forBatch(handle) > 0) {
+    drainAtLeast(static_cast<unsigned>(std::min<size_t>(
+        REAP_WAVE_SIZE, outstandingReadCounts_.forBatch(handle))));
   }
   // Throw only now that every read of the batch is reaped, so the kernel no
   // longer writes into its buffers.
@@ -408,20 +403,10 @@ void IoUringPolicy::processCqe(int numberOfBytesRead, uint64_t requestId) {
   const OutstandingRead outstandingRead = outstandingReadIt->second;
   outstandingReadsByRequestId_.erase(outstandingReadIt);
 
-  // Attribute the completion to its batch and decrement that batch's
-  // outstanding count, erasing the batch once its last read is reaped. This
-  // happens also for a failed read, so a batch whose read failed does not stay
-  // outstanding.
-  auto batchCountIt = numberOfOutstandingReadRequestsPerBatch_.find(
-      outstandingRead.batchHandle);
-
-  AD_CORRECTNESS_CHECK(
-      batchCountIt != numberOfOutstandingReadRequestsPerBatch_.end(),
-      "The batch of a reaped read must still have outstanding reads.");
-
-  if (--batchCountIt->second == 0) {
-    numberOfOutstandingReadRequestsPerBatch_.erase(batchCountIt);
-  }
+  // Attribute the completion to its batch and count it as reaped (which
+  // erases the batch once its last read is reaped). This happens also for
+  // a failed read, so a batch whose read failed does not stay outstanding.
+  outstandingReadCounts_.countReadReaped(outstandingRead.batchHandle);
 
   // `cqe->res` < 0 is `-errno`. A result smaller than requested (a partial
   // read, or 0 at end of file) means we read fewer bytes than expected, which

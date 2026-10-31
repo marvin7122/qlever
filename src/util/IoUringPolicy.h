@@ -26,6 +26,7 @@
 
 #include "backports/span.h"
 #include "util/BatchHandle.h"
+#include "util/Exception.h"
 #include "util/HashMap.h"
 #include "util/MonotonicCounter.h"
 #include "util/RingSize.h"
@@ -45,29 +46,67 @@ class IoUringPolicy {
   io_uring ring_{};
   RingSize ringSize_;
 
-  // The outstanding reads, broken down per batch: maps a batch handle to
-  // the number of its reads that are prepared (SQE filled in, not yet
-  // submitted), in flight (submitted to the kernel, not yet completed), or
-  // completed but not yet reaped via a completion queue entry (CQE). A
-  // read is counted when it is prepared in `addBatch`, and an entry is
-  // removed as soon as the last read of its batch is reaped: usually in
-  // the `wait()` of that batch, but also in `addBatch` or in the `wait()`
-  // of another batch, which reap every ready CQE.
-  ad_utility::HashMap<BatchHandle, size_t>
-      numberOfOutstandingReadRequestsPerBatch_;
-
-  // The total number of outstanding reads: the sum over the per-batch
-  // counts above. `addBatch` keeps it at most `ringSize_`, so that a free
-  // SQE is always available and the completion queue (twice as large as
-  // the submission queue) cannot overflow. Deriving the total is cheap:
-  // at most `ringSize_` reads are outstanding, so there are at most that
-  // many batches to sum over.
-  size_t numberOfOutstandingReadRequests() const {
-    size_t total = 0;
-    for (const auto& entry : numberOfOutstandingReadRequestsPerBatch_) {
-      total += entry.second;
+  // The outstanding reads: reads that are prepared (SQE filled in,
+  // not yet submitted), in flight (submitted to the kernel, not yet
+  // completed), or completed but not yet reaped via a completion queue
+  // entry (CQE), broken down per batch, plus their total.
+  //
+  // The total is a stored value (reading it is O(1)), but it is not a
+  // second, independently maintained fact: both numbers live only
+  // inside this class, and its two operations are the only way to
+  // change them, each updating the per-batch count and the total
+  // together. So the invariant "the total equals the sum over the
+  // batches" is enforced by encapsulation - no code outside this class
+  // can move one of the numbers without the other.
+  class OutstandingReadCounts {
+   public:
+    // Count one more prepared read of `handle` as outstanding.
+    void countReadPrepared(BatchHandle handle) {
+      ++total_;
+      ++numberOfOutstandingReadRequestsPerBatch_[handle];
     }
-    return total;
+
+    // Count one reaped read of `handle` as no longer outstanding.
+    void countReadReaped(BatchHandle handle) {
+      auto batchCountIt = numberOfOutstandingReadRequestsPerBatch_.find(handle);
+      AD_CORRECTNESS_CHECK(
+          batchCountIt != numberOfOutstandingReadRequestsPerBatch_.end(),
+          "A reaped read must belong to a batch with outstanding "
+          "reads; its completion is attributed to that batch.");
+      --total_;
+      if (--batchCountIt->second == 0) {
+        numberOfOutstandingReadRequestsPerBatch_.erase(batchCountIt);
+      }
+    }
+
+    // The total number of outstanding reads. O(1): the sum is kept, not
+    // recomputed, and it cannot drift from the per-batch counts because
+    // only the two operations above change either of them.
+    [[nodiscard]] size_t total() const { return total_; }
+
+    // The number of outstanding reads of `handle` (0 if the batch has
+    // none left, or never had any).
+    [[nodiscard]] size_t forBatch(BatchHandle handle) const {
+      auto batchCountIt = numberOfOutstandingReadRequestsPerBatch_.find(handle);
+      return batchCountIt == numberOfOutstandingReadRequestsPerBatch_.end()
+                 ? size_t{0}
+                 : batchCountIt->second;
+    }
+
+   private:
+    size_t total_ = 0;
+    ad_utility::HashMap<BatchHandle, size_t>
+        numberOfOutstandingReadRequestsPerBatch_;
+  };
+
+  OutstandingReadCounts outstandingReadCounts_;
+
+  // The total number of outstanding reads. `addBatch` keeps it at most
+  // `ringSize_`, so that a free SQE is always available and the
+  // completion queue (twice as large as the submission queue) cannot
+  // overflow.
+  size_t numberOfOutstandingReadRequests() const {
+    return outstandingReadCounts_.total();
   }
 
   // Batches with a failed or short read, mapped to the message of their first
