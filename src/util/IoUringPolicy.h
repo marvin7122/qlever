@@ -56,8 +56,7 @@ class IoUringPolicy {
   // inside this class, and its two operations are the only way to
   // change them, each updating the per-batch count and the total
   // together. So the invariant "the total equals the sum over the
-  // batches" is enforced by encapsulation - no code outside this class
-  // can move one of the numbers without the other.
+  // batches" is enforced by encapsulation.
   class OutstandingReadCounts {
    public:
     // Count one more prepared read of `handle` as outstanding.
@@ -68,14 +67,15 @@ class IoUringPolicy {
 
     // Count one reaped read of `handle` as no longer outstanding.
     void countReadReaped(BatchHandle handle) {
-      auto batchCountIt = numberOfOutstandingReadRequestsPerBatch_.find(handle);
+      auto batchCountIterator =
+          numberOfOutstandingReadRequestsPerBatch_.find(handle);
       AD_CORRECTNESS_CHECK(
-          batchCountIt != numberOfOutstandingReadRequestsPerBatch_.end(),
+          batchCountIterator != numberOfOutstandingReadRequestsPerBatch_.end(),
           "A reaped read must belong to a batch with outstanding "
           "reads; its completion is attributed to that batch.");
       --total_;
-      if (--batchCountIt->second == 0) {
-        numberOfOutstandingReadRequestsPerBatch_.erase(batchCountIt);
+      if (--batchCountIterator->second == 0) {
+        numberOfOutstandingReadRequestsPerBatch_.erase(batchCountIterator);
       }
     }
 
@@ -87,10 +87,12 @@ class IoUringPolicy {
     // The number of outstanding reads of `handle` (0 if the batch has
     // none left, or never had any).
     [[nodiscard]] size_t forBatch(BatchHandle handle) const {
-      auto batchCountIt = numberOfOutstandingReadRequestsPerBatch_.find(handle);
-      return batchCountIt == numberOfOutstandingReadRequestsPerBatch_.end()
+      auto batchCountIterator =
+          numberOfOutstandingReadRequestsPerBatch_.find(handle);
+      return batchCountIterator ==
+                     numberOfOutstandingReadRequestsPerBatch_.end()
                  ? size_t{0}
-                 : batchCountIt->second;
+                 : batchCountIterator->second;
     }
 
    private:

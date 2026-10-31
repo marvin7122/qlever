@@ -252,10 +252,12 @@ IoUringPolicy::~IoUringPolicy() {
     // without recording failures: the policy is being destroyed anyway.
     const uint64_t requestId = io_uring_cqe_get_data64(cqe);
     io_uring_cqe_seen(&ring_, cqe);
-    if (auto outstandingReadIt = outstandingReadsByRequestId_.find(requestId);
-        outstandingReadIt != outstandingReadsByRequestId_.end()) {
-      const BatchHandle batchHandle = outstandingReadIt->second.batchHandle;
-      outstandingReadsByRequestId_.erase(outstandingReadIt);
+    if (auto outstandingReadIterator =
+            outstandingReadsByRequestId_.find(requestId);
+        outstandingReadIterator != outstandingReadsByRequestId_.end()) {
+      const BatchHandle batchHandle =
+          outstandingReadIterator->second.batchHandle;
+      outstandingReadsByRequestId_.erase(outstandingReadIterator);
       if (outstandingReadCounts_.forBatch(batchHandle) > 0) {
         outstandingReadCounts_.countReadReaped(batchHandle);
       }
@@ -394,14 +396,14 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
 void IoUringPolicy::processCqe(int numberOfBytesRead, uint64_t requestId) {
   // Every reaped CQE corresponds to exactly one outstanding read whose id we
   // inserted in `addBatch`, so the entry must be present.
-  auto outstandingReadIt = outstandingReadsByRequestId_.find(requestId);
+  auto outstandingReadIterator = outstandingReadsByRequestId_.find(requestId);
   AD_CORRECTNESS_CHECK(
-      outstandingReadIt != outstandingReadsByRequestId_.end(),
+      outstandingReadIterator != outstandingReadsByRequestId_.end(),
       "Every reaped CQE corresponds to exactly one outstanding read "
       "whose id was inserted in `addBatch`.");
 
-  const OutstandingRead outstandingRead = outstandingReadIt->second;
-  outstandingReadsByRequestId_.erase(outstandingReadIt);
+  const OutstandingRead outstandingRead = outstandingReadIterator->second;
+  outstandingReadsByRequestId_.erase(outstandingReadIterator);
 
   // Attribute the completion to its batch and count it as reaped (which
   // erases the batch once its last read is reaped). This happens also for
