@@ -291,6 +291,30 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
       *vocab, withFastPath, indices);
 }
 
+// The batch-manager backend is chosen when the vocabulary is opened, from
+// the `vocabulary-prefer-io-uring` runtime parameter. With the parameter
+// off, the synchronous backend is used; the lookup results must be the
+// same either way.
+TEST(VocabularyOnDisk, LookupBatchFollowsThePreferIoUringParameter) {
+  std::array<size_t, 8> indices{2, 0, 3, 1, 1, 4, 0, 3};
+  // The parameter is on by default; restore the default after the test.
+  absl::Cleanup resetParameter{[]() {
+    setRuntimeParameter<&RuntimeParameters::vocabularyPreferIoUring_>(true);
+  }};
+  setRuntimeParameter<&RuntimeParameters::vocabularyPreferIoUring_>(false);
+  {
+    auto vocab = createExampleVocabulary();
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+  }
+  setRuntimeParameter<&RuntimeParameters::vocabularyPreferIoUring_>(true);
+  {
+    auto vocab = createExampleVocabulary();
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+  }
+}
+
 // Count the page-cache reads; none of them finds anything cached.
 size_t numCountedPageCacheReads = 0;
 int64_t countedNothingCached(int fd, const ::iovec* iov, int iovcnt,

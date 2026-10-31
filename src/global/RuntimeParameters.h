@@ -266,6 +266,12 @@ struct RuntimeParameters {
   // synchronous reads, see `PageCacheFirstPolicy`).
   Bool vocabularyPageCacheFastPath_{true, "vocabulary-page-cache-fast-path"};
 
+  // Prefer the io_uring backend for the batch managers of
+  // `VocabularyOnDisk::lookupBatch` (see `makeBatchManager`). If io_uring
+  // is not compiled in or its setup fails at runtime, the synchronous
+  // backend is used instead (and this parameter has no further effect).
+  Bool vocabularyPreferIoUring_{true, "vocabulary-prefer-io-uring"};
+
   // The maximal number of blocks per permutation that are queued for or
   // currently being compressed and written (see
   // `CompressedRelationWriter::makeBlockWriteQueue`). Each of them is held in

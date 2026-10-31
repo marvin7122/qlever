@@ -46,7 +46,7 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // The number of words stored in the vocabulary.
   size_t size_ = 0;
 
-  // Pool of persistent `BatchIoManager`s for `lookupBatch`.
+  // Pool of persistent batch managers for `lookupBatch`.
   mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>
       ioManagers_;
