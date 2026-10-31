@@ -11,14 +11,13 @@
 #ifndef QLEVER_SRC_UTIL_PAGECACHEFIRSTPOLICY_H
 #define QLEVER_SRC_UTIL_PAGECACHEFIRSTPOLICY_H
 
-#include <sys/uio.h>
-
 #include <cstdint>
 #include <type_traits>
 #include <vector>
 
 #include "backports/algorithm.h"
 #include "backports/span.h"
+#include "util/Algorithm.h"
 #include "util/BatchHandle.h"
 #include "util/IoUringManagerConcepts.h"
 #include "util/RingSize.h"
@@ -38,28 +37,6 @@ std::vector<size_t> readPageCacheHits(
 // False once `readPageCacheHits` found that `RWF_NOWAIT` is not supported, or
 // if it is not available at compile time.
 bool pageCacheFastPathIsSupported();
-
-// In `detail` because this hook exists only so that tests can inject
-// failures of the page-cache read: production code must call
-// `readPageCacheHits` and must not call or replace this pointer.
-namespace detail {
-// The one `preadv2(fd, iov, iovcnt, offset, RWF_NOWAIT)` call per run that
-// `readPageCacheHits` makes, with the same contract (the number of bytes read,
-// or -1 with `errno` set). A replaceable function pointer so that unit tests
-// can inject `EAGAIN`, short reads and `EOPNOTSUPP`; production code never
-// changes it.
-using PageCacheRead = int64_t (*)(int fd, const ::iovec* iov, int iovcnt,
-                                  int64_t offset);
-// The default: the system call. Where it is not available it fails with
-// `EOPNOTSUPP` (it is never called there).
-int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
-                            int64_t offset);
-// The function `readPageCacheHits` calls (initially `systemPageCacheRead`).
-PageCacheRead& pageCacheRead();
-// Undo the effect of an `EOPNOTSUPP` on `pageCacheFastPathIsSupported()`, for
-// tests that injected one.
-void resetPageCacheFastPathSupport();
-}  // namespace detail
 
 // In `detail` because this only repackages the arguments of
 // `PageCacheFirstPolicy::addBatch` (below) into the three spans of the
@@ -83,9 +60,8 @@ struct SelectedReads {
   template <typename T>
   static std::vector<std::remove_const_t<T>> selectAt(
       ql::span<T> values, ql::span<const size_t> positions) {
-    return ::ranges::to<std::vector<std::remove_const_t<T>>>(
-        positions |
-        ql::views::transform([values](size_t i) { return values[i]; }));
+    return ad_utility::transform(positions,
+                                 [values](size_t i) { return values[i]; });
   }
 };
 }  // namespace detail

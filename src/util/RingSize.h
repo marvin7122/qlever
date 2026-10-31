@@ -11,6 +11,8 @@
 #ifndef QLEVER_SRC_UTIL_RINGSIZE_H
 #define QLEVER_SRC_UTIL_RINGSIZE_H
 
+#include <absl/numeric/bits.h>
+
 #include "util/Exception.h"
 
 namespace ad_utility {
@@ -42,7 +44,8 @@ class RingSize {
   // The largest ring size in the universe of this type.
   static constexpr unsigned MAX_VALUE = 4096;
 
-  // The default size (256).
+  // The default size: `value_` is initialized to `DEFAULT_VALUE`, which
+  // satisfies the invariant, so the default also enforces it.
   RingSize() = default;
 
   // `explicit`, so that a bare integer cannot silently convert to a
@@ -50,7 +53,7 @@ class RingSize {
   // of two between 1 and `MAX_VALUE`.
   explicit RingSize(unsigned value) : value_{value} {
     AD_CONTRACT_CHECK(
-        value >= 1 && value <= MAX_VALUE && (value & (value - 1)) == 0,
+        value >= 1 && value <= MAX_VALUE && absl::has_single_bit(value),
         "A ring size must be a power of two between 1 and 4096.");
   }
 

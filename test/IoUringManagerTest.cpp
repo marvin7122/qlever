@@ -38,6 +38,7 @@
 #include "util/GTestHelpers.h"
 #include "util/IoUringManager.h"
 #include "util/Log.h"
+#include "util/PageCacheReadHook.h"
 #include "util/PageCacheReadTestHelpers.h"
 
 namespace {

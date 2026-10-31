@@ -32,6 +32,7 @@
 #include "util/Exception.h"
 #include "util/ExceptionHandling.h"
 #include "util/Log.h"
+#include "util/PageCacheReadHook.h"
 
 namespace ad_utility {
 
@@ -178,10 +179,9 @@ size_t serveRun(int fd, Run run) {
 std::vector<size_t> readPageCacheHits(
     int fd, ql::span<const size_t> numberOfBytesToRead,
     ql::span<const uint64_t> offsets, ql::span<char*> buffers) {
-  AD_CONTRACT_CHECK(offsets.size() == numberOfBytesToRead.size() &&
-                        buffers.size() == numberOfBytesToRead.size(),
-                    "The three spans describe the same reads, so they "
-                    "must have the same length.");
+  // The three spans describe the same reads, so they must have the
+  // same length.
+  validateSameLength(numberOfBytesToRead, offsets, buffers);
   auto positions = ::ranges::views::iota(size_t{0}, numberOfBytesToRead.size());
 #ifdef QL_PAGE_CACHE_FAST_PATH
   auto reads =

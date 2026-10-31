@@ -26,6 +26,7 @@
 #include "util/File.h"
 #include "util/Forward.h"
 #include "util/MmapVector.h"
+#include "util/PageCacheReadHook.h"
 #include "util/jthread.h"
 
 namespace {
