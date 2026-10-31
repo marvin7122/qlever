@@ -25,6 +25,16 @@
 #include "util/Exception.h"
 #include "util/Log.h"
 
+#ifdef QLEVER_HAS_IO_URING
+#include <liburing.h>
+// `liburing.h` pulls in the kernel header `<linux/fs.h>`, which defines
+// the macro `BLOCK_SIZE`. QLever does not use that macro, and the name
+// breaks later headers that declare an identifier of that name, so get
+// rid of it again. Kept in this `.cpp` (after all other includes) so
+// that no includer of `IoUringPolicy.h` is exposed to it.
+#undef BLOCK_SIZE
+#endif
+
 namespace ad_utility {
 
 //______________________________________________________________________________
@@ -215,7 +225,13 @@ void SyncIoPolicy::addBatch(
 #ifdef QLEVER_HAS_IO_URING
 
 //______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(RingSize ringSize) : ringSize_(ringSize) {
+struct IoUringPolicy::Ring {
+  io_uring value{};
+};
+
+//______________________________________________________________________________
+IoUringPolicy::IoUringPolicy(RingSize ringSize)
+    : ring_(std::make_unique<Ring>()), ringSize_(ringSize) {
   // Set up the submission and completion queues, shared between this process
   // and the kernel, with exactly `ringSize_` submission slots in the
   // submission queue. (`RingSize` is always a power of two, so the rounding
@@ -223,7 +239,7 @@ IoUringPolicy::IoUringPolicy(RingSize ringSize) : ringSize_(ringSize) {
   // than the size that the "ring full" check below uses.) See
   // https://man7.org/linux/man-pages/man3/io_uring_queue_init.3.html for
   // details.
-  int ret = io_uring_queue_init(ringSize_.value(), &ring_, /*flags=*/0);
+  int ret = io_uring_queue_init(ringSize_.value(), &ring_->value, /*flags=*/0);
   if (ret < 0) {
     AD_THROW("io_uring_queue_init failed in IoUringManager");
   }
@@ -245,13 +261,13 @@ IoUringPolicy::~IoUringPolicy() {
   // avoid spinning forever (it would not decrement the outstanding count).
   while (numberOfOutstandingReadRequests() > 0) {
     io_uring_cqe* cqe = nullptr;
-    if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
+    if (io_uring_wait_cqe(&ring_->value, &cqe) < 0) {
       break;
     }
     // Attribute the completion to its batch, as in `processCqe`, but
     // without recording failures: the policy is being destroyed anyway.
     const uint64_t requestId = io_uring_cqe_get_data64(cqe);
-    io_uring_cqe_seen(&ring_, cqe);
+    io_uring_cqe_seen(&ring_->value, cqe);
     if (auto outstandingReadIterator =
             outstandingReadsByRequestId_.find(requestId);
         outstandingReadIterator != outstandingReadsByRequestId_.end()) {
@@ -263,7 +279,7 @@ IoUringPolicy::~IoUringPolicy() {
       }
     }
   }
-  io_uring_queue_exit(&ring_);
+  io_uring_queue_exit(&ring_->value);
 }
 
 //______________________________________________________________________________
@@ -288,7 +304,7 @@ void IoUringPolicy::addBatch(
       // Wait for a wave of completions instead of one, and reap every ready
       // CQE, so a large batch refills the ring in waves rather than one SQE
       // per reaped CQE.
-      io_uring_submit(&ring_);
+      io_uring_submit(&ring_->value);
       while (numberOfOutstandingReadRequests() >= ringSize_.value()) {
         drainAtLeast(static_cast<unsigned>(std::min<size_t>(
             REAP_WAVE_SIZE, numberOfOutstandingReadRequests())));
@@ -297,7 +313,7 @@ void IoUringPolicy::addBatch(
 
     // Claim the next free SQE. The check above guarantees a slot is available,
     // so `io_uring_get_sqe` must not return `nullptr` here.
-    io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
+    io_uring_sqe* sqe = io_uring_get_sqe(&ring_->value);
     AD_CORRECTNESS_CHECK(
         sqe != nullptr,
         "A submission slot must be free, because the number of "
@@ -322,7 +338,7 @@ void IoUringPolicy::addBatch(
   // Flush the remaining prepared SQEs to the kernel (the loop above only
   // submits when the submission queue is full, so the last group of SQEs has
   // not yet been submitted).
-  io_uring_submit(&ring_);
+  io_uring_submit(&ring_->value);
 }
 
 //______________________________________________________________________________
@@ -364,7 +380,8 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
   io_uring_cqe* cqe = nullptr;
   int ret = 0;
   do {
-    ret = io_uring_wait_cqes(&ring_, &cqe, minComplete, nullptr, nullptr);
+    ret =
+        io_uring_wait_cqes(&ring_->value, &cqe, minComplete, nullptr, nullptr);
   } while (ret == -EINTR);
   if (ret < 0) {
     AD_THROW(absl::StrCat("io_uring_wait_cqes failed in IoUringPolicy: ",
@@ -379,7 +396,7 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
   std::array<io_uring_cqe*, 64> cqes{};
   while (true) {
     const unsigned n = io_uring_peek_batch_cqe(
-        &ring_, cqes.data(), static_cast<unsigned>(cqes.size()));
+        &ring_->value, cqes.data(), static_cast<unsigned>(cqes.size()));
     if (n == 0) {
       break;
     }
@@ -388,7 +405,7 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
       // Recover the id via the 64-bit `user_data` field, see `addBatch`.
       processCqe(cqe->res, io_uring_cqe_get_data64(cqe));
     }
-    io_uring_cq_advance(&ring_, n);
+    io_uring_cq_advance(&ring_->value, n);
   }
 }
 

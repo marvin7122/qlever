@@ -11,18 +11,8 @@
 #ifndef QLEVER_SRC_UTIL_IOURINGPOLICY_H
 #define QLEVER_SRC_UTIL_IOURINGPOLICY_H
 
-#ifdef QLEVER_HAS_IO_URING
-#include <liburing.h>
-// `liburing.h` pulls in the kernel header `<linux/fs.h>`, which defines a macro
-// `BLOCK_SIZE`. That is a very common identifier, and a macro of that name
-// breaks every header that later declares something with that name (for
-// example `boost/sort/common/util/circular_buffer.hpp`, which is pulled in by
-// `util/blockSort/BoostSortHeaders.h`). QLever does not use the macro, so we
-// simply get rid of it again.
-#undef BLOCK_SIZE
-#endif
-
 #include <cstdint>
+#include <memory>
 
 #include "backports/span.h"
 #include "util/BatchHandle.h"
@@ -41,9 +31,13 @@ namespace ad_utility {
 // via `wait()`. Single-threaded use only. See https://github.com/axboe/liburing
 // for more details.
 class IoUringPolicy {
- public:
  private:
-  io_uring ring_{};
+  // The ring itself, defined only in the `.cpp`: a forward declaration
+  // suffices here, so this header does not have to include `<liburing.h>`.
+  // That header leaks kernel macros (notably `BLOCK_SIZE` from
+  // `<linux/fs.h>`) into every includer of this header.
+  struct Ring;
+  std::unique_ptr<Ring> ring_;
   RingSize ringSize_;
 
   // How many reads are currently outstanding, in total and per batch.
@@ -98,16 +92,12 @@ class IoUringPolicy {
   void processCqe(int numberOfBytesRead, uint64_t requestId);
 
  public:
-  // Not copyable or movable: this policy owns the io_uring ring and the
-  // bookkeeping of its outstanding reads. A copy would double-own the
-  // ring, and so would a merely defaulted move: it would copy `ring_`
-  // member by member (the ring file descriptor and the pointers into
-  // the memory-mapped submission and completion queues), leaving two
-  // objects to tear the same ring down in `io_uring_queue_exit`. A
-  // hand-written move could transfer the ring and the bookkeeping, and
-  // the outstanding batches would survive it, but no caller needs one:
-  // the policy is only ever held inside its `BatchManager`, which a
-  // `std::unique_ptr` owns.
+  // Not copyable or movable: this policy owns the io_uring ring (via
+  // `ring_`) and the bookkeeping of its outstanding reads, so a copy
+  // would double-own the ring. A hand-written move could transfer both,
+  // and the outstanding batches would survive it, but no caller needs
+  // one: the policy is only ever held inside its `BatchManager`, which
+  // a `std::unique_ptr` owns.
   IoUringPolicy(const IoUringPolicy&) = delete;
   IoUringPolicy& operator=(const IoUringPolicy&) = delete;
   IoUringPolicy(IoUringPolicy&&) = delete;
