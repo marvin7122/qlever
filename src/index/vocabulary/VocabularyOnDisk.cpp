@@ -509,11 +509,12 @@ void VocabularyOnDisk::open(const std::string& filename) {
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
 
-  // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
+  // Initialize pool of persistent batch managers for `lookupBatch`.
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
-  bool preferIoUring = true;
+  bool preferIoUring =
+      getRuntimeParameter<&RuntimeParameters::vocabularyPreferIoUring_>();
   auto makeManager = [&preferIoUring]() {
     return ad_utility::makeBatchManager(preferIoUring);
   };
