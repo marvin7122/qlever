@@ -6,9 +6,11 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <boost/asio/post.hpp>
 #include <boost/asio/use_future.hpp>
 #include <memory>
+#include <numeric>
 #include <range/v3/view/enumerate.hpp>
 #include <string_view>
 #include <vector>
@@ -39,13 +41,39 @@ struct InternalWord {
 std::vector<InternalWord> findInternalWords(
     const VocabularyInMemoryBinSearch& internalVocab,
     ql::span<const size_t> indices) {
+  // Visit the indices in increasing order, and start each search where the
+  // previous one ended (exponential search): the indices of a batch are close
+  // to each other, so each search touches a few neighbouring cache lines of
+  // the large sorted index array instead of a full binary search over it.
+  std::vector<size_t> order(indices.size());
+  std::iota(order.begin(), order.end(), size_t{0});
+  ql::ranges::sort(order, {}, [&indices](size_t i) { return indices[i]; });
+  const auto all = internalVocab.indices();
+  const size_t numAll = all.size();
   std::vector<InternalWord> internalWords;
-  for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
-    if (const auto word = internalVocab[index]) {
+  size_t low = 0;
+  for (size_t position : order) {
+    const uint64_t index = indices[position];
+    // Find the first entry `>= index` in `[low, numAll)`: grow the step until
+    // it overshoots, then binary-search the last step.
+    size_t step = 1;
+    size_t high = low;
+    while (high < numAll && all[high] < index) {
+      low = high + 1;
+      high += step;
+      step *= 2;
+    }
+    high = std::min(high, numAll);
+    low = static_cast<size_t>(
+        std::lower_bound(all.begin() + low, all.begin() + high, index) -
+        all.begin());
+    if (low < numAll && all[low] == index) {
       internalWords.push_back(
-          InternalWord{static_cast<size_t>(position), word.value()});
+          InternalWord{position, internalVocab.wordAtPosition(low)});
     }
   }
+  // The callers expect the internal words in the order of `indices`.
+  ql::ranges::sort(internalWords, {}, &InternalWord::position);
   return internalWords;
 }
 
