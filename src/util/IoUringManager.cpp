@@ -401,4 +401,39 @@ void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
 
 #endif  // QLEVER_HAS_IO_URING
 
+namespace detail {
+// Build a `BatchManager` for `Policy`, decorated with `PageCacheFirstPolicy`
+// if the page-cache fast path is supported.
+template <typename Policy>
+std::unique_ptr<BatchManagerBase> makeBatchManagerFor(unsigned ringSize) {
+  if (pageCacheFastPathIsSupported()) {
+    return std::make_unique<BatchManager<PageCacheFirstPolicy<Policy>>>(
+        ringSize);
+  }
+  return std::make_unique<BatchManager<Policy>>(ringSize);
+}
+}  // namespace detail
+
+//______________________________________________________________________________
+std::unique_ptr<BatchManagerBase> makeBatchManager(bool& preferIoUring,
+                                                   unsigned ringSize) {
+#ifdef QLEVER_HAS_IO_URING
+  if (preferIoUring) {
+    try {
+      return detail::makeBatchManagerFor<IoUringPolicy>(ringSize);
+    } catch (const std::exception& e) {
+      preferIoUring = false;
+      AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
+                  << e.what()
+                  << "); falling back to synchronous pread for vocabulary "
+                     "lookups"
+                  << std::endl;
+    }
+  }
+#else
+  preferIoUring = false;
+#endif
+  return detail::makeBatchManagerFor<SyncIoPolicy>(ringSize);
+}
+
 }  // namespace ad_utility

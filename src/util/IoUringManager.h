@@ -11,13 +11,8 @@
 #ifndef QLEVER_SRC_UTIL_IOURINGMANAGER_H
 #define QLEVER_SRC_UTIL_IOURINGMANAGER_H
 
-#include <gtest/gtest_prod.h>
-#include <sys/uio.h>
-
 #include <cstdint>
 #include <memory>
-#include <type_traits>
-#include <utility>
 
 #include "backports/algorithm.h"
 #include "backports/span.h"
@@ -26,7 +21,6 @@
 #include "util/Exception.h"
 #include "util/IoUringManagerConcepts.h"
 #include "util/IoUringPolicy.h"
-#include "util/Log.h"
 #include "util/MonotonicCounter.h"
 #include "util/PageCacheFirstPolicy.h"
 #include "util/SyncIoPolicy.h"
@@ -57,18 +51,6 @@ class BatchManagerBase {
   // Managers without a page-cache fast path ignore it.
   virtual void setPageCacheFastPath([[maybe_unused]] bool enabled) {}
 };
-
-namespace detail {
-// True iff `Policy` has a page-cache fast path that can be switched.
-template <typename Policy, typename = void>
-inline constexpr bool hasPageCacheFastPathSwitch = false;
-
-template <typename Policy>
-inline constexpr bool hasPageCacheFastPathSwitch<
-    Policy,
-    std::void_t<decltype(std::declval<Policy&>().setPageCacheFastPath(true))>> =
-    true;
-}  // namespace detail
 
 // `BatchManager` owns the batch bookkeeping (minting a `BatchHandle` per batch,
 // validating the input spans) and delegates the reads from the underlying
@@ -130,72 +112,23 @@ class BatchManager final : public BatchManagerBase {
   MonotonicCounter nextBatchHandle_;
 };
 
-#ifdef QLEVER_HAS_IO_URING
-using BatchIoManager = BatchManager<IoUringPolicy>;
-#else
-using BatchIoManager = BatchManager<SyncIoPolicy>;
-#endif
-
-namespace detail {
-// The one `preadv2(fd, iov, iovcnt, offset, RWF_NOWAIT)` call per run that
-// `readPageCacheHits` makes, with the same contract (the number of bytes read,
-// or -1 with `errno` set). A replaceable function pointer so that unit tests
-// can inject `EAGAIN`, short reads and `EOPNOTSUPP`; production code never
-// changes it.
-using PageCacheRead = int64_t (*)(int fd, const ::iovec* iov, int iovcnt,
-                                  int64_t offset);
-// The default: the system call. Where it is not available it fails with
-// `EOPNOTSUPP` (it is never called there).
-int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
-                            int64_t offset);
-// The function `readPageCacheHits` calls (initially `systemPageCacheRead`).
-PageCacheRead& pageCacheRead();
-// Undo the effect of an `EOPNOTSUPP` on `pageCacheFastPathIsSupported()`, for
-// tests that injected one.
-void resetPageCacheFastPathSupport();
-}  // namespace detail
-
-namespace detail {
-// Build a `BatchManager` for `Policy`, decorated with `PageCacheFirstPolicy` if
-// the page-cache fast path is supported.
-template <typename Policy>
-std::unique_ptr<BatchManagerBase> makeBatchManagerFor(unsigned ringSize) {
-  if (pageCacheFastPathIsSupported()) {
-    return std::make_unique<BatchManager<PageCacheFirstPolicy<Policy>>>(
-        ringSize);
-  }
-  return std::make_unique<BatchManager<Policy>>(ringSize);
-}
-}  // namespace detail
-
-// Build a batch manager. When io_uring is compiled in and the runtime flag
-// `preferIoUring` is set, try to build an `IoUringManager`. If its setup
-// syscall fails at runtime clear `preferIoUring` and fall back to a
-// `SyncIoManager`. Passing the flag by reference makes this probe-once: after
-// the first failure, every subsequent call goes straight to the sync manager,
-// so we don't repeat a failing syscall. Where `preadv2(RWF_NOWAIT)` is
-// available, the manager serves page-cache hits first (`PageCacheFirstPolicy`,
-// switched with `BatchManagerBase::setPageCacheFastPath`).
-inline std::unique_ptr<BatchManagerBase> makeBatchManager(
-    bool& preferIoUring, unsigned ringSize = 256) {
-#ifdef QLEVER_HAS_IO_URING
-  if (preferIoUring) {
-    try {
-      return detail::makeBatchManagerFor<IoUringPolicy>(ringSize);
-    } catch (const std::exception& e) {
-      preferIoUring = false;
-      AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
-                  << e.what()
-                  << "); falling back to synchronous pread for vocabulary "
-                     "lookups"
-                  << std::endl;
-    }
-  }
-#else
-  preferIoUring = false;
-#endif
-  return detail::makeBatchManagerFor<SyncIoPolicy>(ringSize);
-}
+// Build a batch manager. Which backend is used is a runtime decision:
+// when io_uring is compiled in and `preferIoUring` is set, try an
+// `IoUringPolicy` manager; if its setup syscall fails at runtime, clear
+// `preferIoUring` and fall back to a `SyncIoPolicy` manager. Passing the
+// flag by reference makes this probe-once: after the first failure, every
+// subsequent call goes straight to the sync manager, so we don't repeat a
+// failing syscall. `VocabularyOnDisk` passes the
+// `vocabulary-prefer-io-uring` runtime parameter as `preferIoUring`.
+//
+// Where `preadv2(RWF_NOWAIT)` is available, the manager serves page-cache
+// hits first (`PageCacheFirstPolicy`, the default) and the rest through
+// the chosen policy. The fast path can be switched off and on at runtime
+// via `BatchManagerBase::setPageCacheFastPath`, as `VocabularyOnDisk`
+// does per lookup with the `vocabulary-page-cache-fast-path` runtime
+// parameter.
+std::unique_ptr<BatchManagerBase> makeBatchManager(bool& preferIoUring,
+                                                   unsigned ringSize = 256);
 
 }  // namespace ad_utility
 
