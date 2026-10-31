@@ -22,6 +22,10 @@ Checks (on added lines only in `--staged` mode):
          in `detail` (comment block directly above it, or directly
          inside it). Presence only; whether the stated reason is true
          stays an LLM/human judgement (QC63/QC64 in the corpus).
+  QC65   Presence half: a defaulted/deleted special member or operator,
+         and a framework/container hook (`AbslHashValue`, an
+         `AD_SERIALIZE...` friend), must have an intent comment.
+         Whether the comment states a true intent stays QC65 review.
 
 Usage:
   check-deterministic-rules.py --staged     # lines added in the index
@@ -52,6 +56,10 @@ VIRTUAL_DTOR_RE = re.compile(
 EXPLICIT_CTOR_RE = re.compile(r"^\s*explicit\s+[A-Z]\w*\s*\(")
 PLAIN_ENUM_RE = re.compile(r"^\s*enum\s+(?!class\b|struct\b)[A-Z]\w*\s*(?:\{|;)")
 DETAIL_NS_RE = re.compile(r"^\s*namespace\s+(?:[\w:]+::)?detail\s*\{")
+DEFAULTED_OR_DELETED_RE = re.compile(
+    r"(?:~?\w+\s*\([^)]*\)|operator\S+\s*\([^)]*\))\s*"
+    r"(?:const|noexcept|override|final|&|&&)*\s*=\s*(?:default|delete)\b")
+FRAMEWORK_HOOK_RE = re.compile(r"\bAbslHashValue\b|\bAD_SERIALIZE")
 CXX_EXTENSIONS = (".h", ".hpp", ".cpp", ".cc", ".cxx")
 
 
@@ -95,6 +103,21 @@ def check_line(lines, idx):
             "CPP75",
             "`explicit` constructor without an intent comment: state "
             "which silent conversion it forbids and why (CPP75)"))
+    is_defaulted_or_hook = (
+        (DEFAULTED_OR_DELETED_RE.search(code)
+         and not VIRTUAL_DTOR_RE.search(code))
+        or FRAMEWORK_HOOK_RE.search(code))
+    # Grouped declarations (the four deleted copy/move operations, a
+    # `template` line above a friend) share one comment block, so for
+    # this check any comment in the eight lines above also counts.
+    has_recent_comment = "//" in line or any(
+        l.strip().startswith("//") for l in lines[max(0, idx - 8):idx])
+    if is_defaulted_or_hook and not has_recent_comment:
+        findings.append((
+            "QC65",
+            "defaulted/deleted member or framework hook without an "
+            "intent comment: state why it exists and who needs it "
+            "(QC65)"))
     if DETAIL_NS_RE.match(code) and not (
         has_intent_comment(lines, idx)
         or any(l.strip().startswith("//") for l in lines[idx + 1:idx + 4])
