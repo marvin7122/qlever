@@ -12,8 +12,6 @@
 #define QLEVER_SRC_UTIL_IOURINGMANAGERCONCEPTS_H
 
 #include <cstdint>
-#include <type_traits>
-#include <utility>
 
 #include "backports/concepts.h"
 #include "backports/span.h"

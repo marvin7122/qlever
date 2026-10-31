@@ -26,9 +26,9 @@
 
 #include "backports/span.h"
 #include "util/BatchHandle.h"
-#include "util/Exception.h"
 #include "util/HashMap.h"
 #include "util/MonotonicCounter.h"
+#include "util/OutstandingReadCounts.h"
 #include "util/RingSize.h"
 
 namespace ad_utility {
@@ -46,61 +46,7 @@ class IoUringPolicy {
   io_uring ring_{};
   RingSize ringSize_;
 
-  // The outstanding reads: reads that are prepared (SQE filled in,
-  // not yet submitted), in flight (submitted to the kernel, not yet
-  // completed), or completed but not yet reaped via a completion queue
-  // entry (CQE), broken down per batch, plus their total.
-  //
-  // The total is a stored value (reading it is O(1)), but it is not a
-  // second, independently maintained fact: both numbers live only
-  // inside this class, and its two operations are the only way to
-  // change them, each updating the per-batch count and the total
-  // together. So the invariant "the total equals the sum over the
-  // batches" is enforced by encapsulation.
-  class OutstandingReadCounts {
-   public:
-    // Count one more prepared read of `handle` as outstanding.
-    void countReadPrepared(BatchHandle handle) {
-      ++total_;
-      ++numberOfOutstandingReadRequestsPerBatch_[handle];
-    }
-
-    // Count one reaped read of `handle` as no longer outstanding.
-    void countReadReaped(BatchHandle handle) {
-      auto batchCountIterator =
-          numberOfOutstandingReadRequestsPerBatch_.find(handle);
-      AD_CORRECTNESS_CHECK(
-          batchCountIterator != numberOfOutstandingReadRequestsPerBatch_.end(),
-          "A reaped read must belong to a batch with outstanding "
-          "reads; its completion is attributed to that batch.");
-      --total_;
-      if (--batchCountIterator->second == 0) {
-        numberOfOutstandingReadRequestsPerBatch_.erase(batchCountIterator);
-      }
-    }
-
-    // The total number of outstanding reads. O(1): the sum is kept, not
-    // recomputed, and it cannot drift from the per-batch counts because
-    // only the two operations above change either of them.
-    [[nodiscard]] size_t total() const { return total_; }
-
-    // The number of outstanding reads of `handle` (0 if the batch has
-    // none left, or never had any).
-    [[nodiscard]] size_t forBatch(BatchHandle handle) const {
-      auto batchCountIterator =
-          numberOfOutstandingReadRequestsPerBatch_.find(handle);
-      return batchCountIterator ==
-                     numberOfOutstandingReadRequestsPerBatch_.end()
-                 ? size_t{0}
-                 : batchCountIterator->second;
-    }
-
-   private:
-    size_t total_ = 0;
-    ad_utility::HashMap<BatchHandle, size_t>
-        numberOfOutstandingReadRequestsPerBatch_;
-  };
-
+  // How many reads are currently outstanding, in total and per batch.
   OutstandingReadCounts outstandingReadCounts_;
 
   // The total number of outstanding reads. `addBatch` keeps it at most
@@ -137,22 +83,13 @@ class IoUringPolicy {
 
   // The size of a wave: when the ring is full or `wait()` blocks, wait for up
   // to this many completions (fewer if fewer requests can complete), then reap
-  // all ready ones from the completion queue in one pass. This amortizes
-  // `io_uring_enter` and the completion-queue-head update over the wave.
+  // all ready completion queue entries from the completion queue in one pass.
+  // This amortizes `io_uring_enter` and the completion-queue-head update over
+  // the wave.
   static constexpr unsigned REAP_WAVE_SIZE = 8;
 
   // Block the application thread until at least `minComplete` CQEs are ready,
   // then reap every ready CQE.
-  //
-  // Precondition: `minComplete` is > 0 and at most the number of reads that
-  // have been submitted and not yet reaped. A read whose SQE is only
-  // prepared (filled in, not yet submitted) never produces a completion, so
-  // it must not be counted in `minComplete`.
-  //
-  // The two callers guarantee this in different ways: `addBatch` calls
-  // `io_uring_submit` before draining when the ring is full, and `wait` only
-  // ever waits for batches whose `addBatch` has already submitted all of
-  // their reads before returning.
   void drainAtLeast(unsigned minComplete);
 
   // Apply one completion to the bookkeeping of the outstanding reads. Always

@@ -14,11 +14,9 @@
 #include <cstdint>
 #include <memory>
 
-#include "backports/algorithm.h"
 #include "backports/span.h"
 #include "util/Algorithm.h"
 #include "util/BatchHandle.h"
-#include "util/Exception.h"
 #include "util/IoUringManagerConcepts.h"
 #include "util/IoUringPolicy.h"
 #include "util/MonotonicCounter.h"
