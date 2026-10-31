@@ -320,9 +320,9 @@ class IoUringPolicy {
   static constexpr uint64_t NO_OP_REQUEST_ID =
       std::numeric_limits<uint64_t>::max();
 
-  // Minimum number of completions to wait for at once. Waiting for several
-  // CQEs and reaping all ready ones in one pass amortizes `io_uring_enter` over
-  // the wave.
+  // The size of a wave: wait for up to this many completions at once (fewer if
+  // fewer requests are in the kernel), then reap all ready ones in one pass.
+  // This amortizes `io_uring_enter` and the CQ-head update over the wave.
   static constexpr unsigned REAP_WAVE = 8;
 
   // How often an `io_uring_submit` that fails with `EAGAIN` is retried before
