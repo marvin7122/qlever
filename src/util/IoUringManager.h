@@ -195,10 +195,13 @@ class IoUringPolicy {
   io_uring ring_{};
   unsigned ringSize_;
 
-  // Total number of outstanding reads: reads that occupy a ring slot because
-  // they are prepared (SQE filled in, not yet submitted), in flight (submitted
-  // to the kernel, not yet completed), or completed but not yet reaped via a
-  // completion queue entry (CQE). Used to detect whether the ring is full.
+  // Total number of outstanding requests: reads (and no-ops of
+  // `neutralizeQueuedReads`) that are prepared (SQE filled in, not yet
+  // submitted), in flight (submitted to the kernel, not yet completed), or
+  // completed but not yet reaped via a completion queue entry (CQE).
+  // `addBatch` keeps it at most `ringSize_`, so that a free SQE is always
+  // available and the completion queue (twice as large as the submission
+  // queue) cannot overflow.
   size_t numOutstandingReadRequests_ = 0;
 
   // The same outstanding reads as `numOutstandingReadRequests_`, but broken
@@ -236,6 +239,11 @@ class IoUringPolicy {
   // Request ids count up from 0, so no read gets this id.
   static constexpr uint64_t NO_OP_REQUEST_ID =
       std::numeric_limits<uint64_t>::max();
+
+  // Minimum number of completions to wait for when the ring is full or
+  // `wait()` blocks. Waiting for several CQEs and reaping all ready ones in
+  // one pass amortizes `io_uring_enter` and the CQ-head update over the wave.
+  static constexpr unsigned REAP_WAVE = 8;
 
   // How often `trySubmit` retries an `io_uring_submit` that fails with
   // `EAGAIN` before it gives up.
@@ -286,11 +294,6 @@ class IoUringPolicy {
   // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
   explicit IoUringPolicy(unsigned ringSize);
   ~IoUringPolicy();
-
-  // Minimum number of completions to wait for when the ring is full or
-  // `wait()` blocks. Waiting for several CQEs and reaping all ready ones in
-  // one pass amortizes `io_uring_enter` and the CQ-head update over the wave.
-  static constexpr unsigned REAP_WAVE = 8;
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
   // calling thread only when the submission queue is full, in order to drain
