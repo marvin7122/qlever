@@ -210,9 +210,9 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
 
 //______________________________________________________________________________
 IoUringPolicy::~IoUringPolicy() {
-  if (numOutstandingReadRequests_ > 0) {
+  if (numOutstandingReadRequests() > 0) {
     AD_LOG_WARN << "IoUringPolicy destroyed with "
-                << numOutstandingReadRequests_
+                << numOutstandingReadRequests()
                 << " read request(s) still outstanding; all batches should be "
                    "`wait()`ed before destroying the policy. Draining them now "
                    "so the kernel stops writing into the target buffers.\n";
@@ -222,13 +222,25 @@ IoUringPolicy::~IoUringPolicy() {
   // deliberately do not call `drainAtLeast` here: it throws on I/O errors, and
   // a destructor must not throw. We also stop if `io_uring_wait_cqe` fails, to
   // avoid spinning forever (it would not decrement the outstanding count).
-  while (numOutstandingReadRequests_ > 0) {
+  while (numOutstandingReadRequests() > 0) {
     io_uring_cqe* cqe = nullptr;
     if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
       break;
     }
+    // Attribute the completion to its batch, as in `processCqe`, but
+    // without recording failures: the policy is being destroyed anyway.
+    const uint64_t requestId = io_uring_cqe_get_data64(cqe);
     io_uring_cqe_seen(&ring_, cqe);
-    --numOutstandingReadRequests_;
+    if (auto reqIt = outstandingReadsByRequestId_.find(requestId);
+        reqIt != outstandingReadsByRequestId_.end()) {
+      const BatchHandle batchHandle = reqIt->second.batchHandle;
+      outstandingReadsByRequestId_.erase(reqIt);
+      if (auto it = numOutstandingReadRequestsPerBatch_.find(batchHandle);
+          it != numOutstandingReadRequestsPerBatch_.end() &&
+          --it->second == 0) {
+        numOutstandingReadRequestsPerBatch_.erase(it);
+      }
+    }
   }
   io_uring_queue_exit(&ring_);
 }
@@ -244,23 +256,21 @@ void IoUringPolicy::addBatch(int fd,
   if (numReadRequestsToPerform == 0) {
     return;
   }
-  numOutstandingReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
-
   for (const auto& [numBytesToRead, fileOffset, targetBuf] :
        ::ranges::views::zip(numBytesToReadPerRequest, fileOffsetPerRequest,
                             targetBufferPerRequest)) {
     // The ring has no free slot, so make room: submit what we have prepared so
     // far and block until enough completions have been drained.
-    if (numOutstandingReadRequests_ >= ringSize_) {
+    if (numOutstandingReadRequests() >= ringSize_) {
       // Flush the SQEs prepared so far to the kernel so the kernel can start
       // servicing them. Their completions will free up submission slots.
       // Wait for a wave of completions instead of one, and reap every ready
       // CQE, so a large batch refills the ring in waves rather than one SQE
       // per reaped CQE.
       io_uring_submit(&ring_);
-      while (numOutstandingReadRequests_ >= ringSize_) {
+      while (numOutstandingReadRequests() >= ringSize_) {
         drainAtLeast(static_cast<unsigned>(
-            std::min<size_t>(REAP_WAVE, numOutstandingReadRequests_)));
+            std::min<size_t>(REAP_WAVE, numOutstandingReadRequests())));
       }
     }
 
@@ -279,11 +289,11 @@ void IoUringPolicy::addBatch(int fd,
     // it belongs to and how many bytes it should read). io_uring copies the
     // request id (the SQE's `user_data`) verbatim into the matching completion,
     // so `processCqe` can recover it.
-    const uint64_t requestId = nextRequestIdToAssign_++;
+    const uint64_t requestId = nextRequestIdToAssign_.mintNext();
     outstandingReadsByRequestId_[requestId] =
         OutstandingRead{handle, numBytesToRead};
     io_uring_sqe_set_data64(sqe, requestId);
-    numOutstandingReadRequests_++;
+    ++numOutstandingReadRequestsPerBatch_[handle];
   }
   // Flush the remaining prepared SQEs to the kernel (the loop above only
   // submits when the submission queue is full, so the last group of SQEs has
@@ -317,7 +327,7 @@ void IoUringPolicy::wait(BatchHandle handle) {
 //______________________________________________________________________________
 void IoUringPolicy::drainAtLeast(unsigned minComplete) {
   AD_CORRECTNESS_CHECK(minComplete > 0);
-  AD_CORRECTNESS_CHECK(minComplete <= numOutstandingReadRequests_);
+  AD_CORRECTNESS_CHECK(minComplete <= numOutstandingReadRequests());
 
   // Block until at least `minComplete` completion queue entries (CQEs) are
   // ready. This typically costs one `io_uring_enter` for the whole wave (and
@@ -355,8 +365,6 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
 
 //______________________________________________________________________________
 void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
-  --numOutstandingReadRequests_;
-
   // Every reaped CQE corresponds to exactly one outstanding read whose id we
   // inserted in `addBatch`, so the entry must be present.
   auto reqIt = outstandingReadsByRequestId_.find(requestId);

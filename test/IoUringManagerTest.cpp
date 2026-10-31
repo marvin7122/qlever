@@ -666,7 +666,7 @@ TYPED_TEST(IoUringManagerTest, waitOnNonExistingBatch) {
 // issued.
 TYPED_TEST(IoUringManagerTest, fakeHandle) {
   // create a handle for which no request has been queued.
-  auto fakeHandle = 999;
+  typename TypeParam::BatchHandle fakeHandle{999};
 
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
 
@@ -966,7 +966,6 @@ TEST(ReadPageCacheHits, emptyBatchAndContract) {
 // A `ReadPolicy` that reads synchronously and records the reads it receives.
 // The records are static because a `BatchManager` owns its policy.
 struct RecordingPolicy {
-  using BatchHandle = uint64_t;
   // The number of reads of every `addBatch` call.
   static inline std::vector<size_t> batchSizes;
   // The file offsets of all reads, in the order of arrival.
@@ -979,7 +978,7 @@ struct RecordingPolicy {
   explicit RecordingPolicy([[maybe_unused]] unsigned ringSize) {}
   void addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-                [[maybe_unused]] BatchHandle handle) {
+                [[maybe_unused]] ad_utility::BatchHandle handle) {
     batchSizes.push_back(numBytes.size());
     for (size_t i = 0; i < numBytes.size(); ++i) {
       receivedOffsets.push_back(offsets[i]);
@@ -987,7 +986,7 @@ struct RecordingPolicy {
                                                  offsets[i]);
     }
   }
-  void wait([[maybe_unused]] BatchHandle handle) {}
+  void wait([[maybe_unused]] ad_utility::BatchHandle handle) {}
 };
 
 using RecordedManager =
