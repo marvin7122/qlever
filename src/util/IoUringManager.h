@@ -15,6 +15,7 @@
 #include <sys/uio.h>
 
 #include <cstdint>
+#include <memory>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -84,14 +85,11 @@ class BatchManagerBase {
 };
 
 namespace detail {
-// True iff `Policy` has a page-cache fast path that can be switched.
-template <typename Policy, typename = void>
-inline constexpr bool hasPageCacheFastPathSwitch = false;
+// Satisfied iff `Policy` has a member callable as `setPageCacheFastPath(true)`,
+// i.e. a switchable page-cache fast path.
 template <typename Policy>
-inline constexpr bool hasPageCacheFastPathSwitch<
-    Policy,
-    std::void_t<decltype(std::declval<Policy&>().setPageCacheFastPath(true))>> =
-    true;
+CPP_requires(HasPageCacheFastPathSwitch,
+             requires(Policy& policy)(policy.setPageCacheFastPath(true)));
 }  // namespace detail
 
 // `BatchManager` owns the batch bookkeeping (minting a `BatchHandle` per batch,
@@ -135,7 +133,8 @@ class BatchManager final : public BatchManagerBase {
 
   // Forward the switch to the policy if it has one.
   void setPageCacheFastPath([[maybe_unused]] bool enabled) override {
-    if constexpr (detail::hasPageCacheFastPathSwitch<ReadPolicy>) {
+    if constexpr (CPP_requires_ref(detail::HasPageCacheFastPathSwitch,
+                                   ReadPolicy)) {
       policy_.setPageCacheFastPath(enabled);
     }
   }
@@ -209,38 +208,60 @@ class IoUringPolicy {
   io_uring ring_{};
   unsigned ringSize_;
 
-  // Total number of reads that occupy a ring slot but have not yet been reaped
-  // via a completion queue entry (CQE), i.e. that are prepared or submitted but
-  // not yet completed. Used to detect whether the ring is full.
-  size_t numInFlightReadRequests_ = 0;
+  // Total number of outstanding reads: reads that are prepared (SQE filled in,
+  // not yet submitted), in flight (submitted to the kernel, not yet
+  // completed), or completed but not yet reaped via a completion queue entry
+  // (CQE). `addBatch` keeps it at most `ringSize_`, so that a free SQE is
+  // always available and the completion queue (twice as large as the
+  // submission queue) cannot overflow.
+  size_t numOutstandingReadRequests_ = 0;
 
-  // The same in-flight reads as `numInFlight_`, but broken down per batch:
-  // maps a batch handle to the number of its reads that have not yet completed
-  // (are "in flight"). An entry for a batch (identified by `BatchHandle`) is
-  // removed once `wait()` has observed all of its reads complete.
-  ad_utility::HashMap<BatchHandle, size_t> numInFlightReadRequestsPerBatch_;
+  // The same outstanding reads as `numOutstandingReadRequests_`, but broken
+  // down per batch: maps a batch handle to the number of its reads that have
+  // not yet been reaped. An entry is removed as soon as the last read of its
+  // batch is reaped: usually in the `wait()` of that batch, but also in
+  // `addBatch` or in the `wait()` of another batch, which reap every ready CQE.
+  ad_utility::HashMap<BatchHandle, size_t> numOutstandingReadRequestsPerBatch_;
+
+  // Batches with a failed or short read, mapped to the message of their first
+  // failure. `addBatch` and the `wait()` of another batch also reap CQEs, so a
+  // failure is kept here until the `wait()` of its own batch throws it.
+  ad_utility::HashMap<BatchHandle, const char*> failedBatches_;
 
   // Per-read metadata needed when a completion is reaped: which batch the read
   // belongs to, and how many bytes it was supposed to read (so that reading
   // fewer bytes than expected can be detected). See
-  // `inFlightReadsByRequestId_`.
-  struct InFlightRead {
+  // `outstandingReadsByRequestId_`.
+  struct OutstandingRead {
     BatchHandle batchHandle;
     size_t expectedNumBytes;
   };
 
   // Monotonically increasing counter that mints a unique request id for each
   // individual read. The id is stored in the SQE's `user_data` and recovered
-  // from the matching CQE to look up the read's `InFlightRead` metadata.
+  // from the matching CQE to look up the read's `OutstandingRead` metadata.
   uint64_t nextRequestIdToAssign_ = 0;
 
   // Maps a read's request id to its metadata. An entry is inserted when the
-  // read is prepared in `addBatch` and erased when its completion is reaped in
-  // `drainOneCqe`.
-  ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
+  // read is prepared in `addBatch` and erased when its completion is reaped.
+  ad_utility::HashMap<uint64_t, OutstandingRead> outstandingReadsByRequestId_;
 
-  // Wait for one CQE and update the in-flight bookkeeping.
-  void drainOneCqe();
+  // The size of a wave: when the ring is full or `wait()` blocks, wait for up
+  // to this many completions (fewer if fewer requests can complete), then reap
+  // all ready ones in one pass. This amortizes `io_uring_enter` and the
+  // CQ-head update over the wave.
+  static constexpr unsigned REAP_WAVE = 8;
+
+  // Block until at least `minComplete` CQEs are ready, then reap every ready
+  // CQE. `minComplete` must be > 0 and at most the number of submitted reads
+  // that are not yet reaped: a read that is only prepared (SQE filled in, not
+  // yet submitted) never completes, so both callers submit before they drain.
+  void drainAtLeast(unsigned minComplete);
+
+  // Apply one completion to the bookkeeping of the outstanding reads. Always
+  // updates the counts, also for a failed read, and records a failed or short
+  // read in `failedBatches_`.
+  void processCqe(int numBytesRead, uint64_t requestId);
 
  public:
   IoUringPolicy(const IoUringPolicy&) = delete;
@@ -263,7 +284,8 @@ class IoUringPolicy {
 
   // Block until every read in the batch that is represented by the `handle` has
   // completed. (The `handle` was submitted along the read requests using
-  // `addBatch`.) Throws on any I/O error.
+  // `addBatch`.) Throws if a read of this batch failed or was short, after all
+  // of its reads are reaped.
   void wait(BatchHandle handle);
 };
 
@@ -276,14 +298,17 @@ using BatchIoManager = BatchManager<SyncIoPolicy>;
 // non-blocking `preadv2(RWF_NOWAIT)` calls, one call per run of adjacent file
 // ranges (split into chunks of at most `IOV_MAX` reads), and return the
 // positions of the other reads in ascending order. The caller issues those
-// through its regular path, which also reports errors.
+// through its regular path, which also reports errors. A call that fails with
+// `EOPNOTSUPP` or `ENOSYS` switches the fast path off for the whole process
+// (see `pageCacheFastPathIsSupported`).
 // Precondition: the three spans have the same length.
 std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
                                       ql::span<const uint64_t> offsets,
                                       ql::span<char*> buffers);
 
-// False once `readPageCacheHits` found that `RWF_NOWAIT` is not supported, or
-// if it is not available at compile time.
+// Return whether `readPageCacheHits` may use `preadv2(RWF_NOWAIT)`: false if it
+// is not compiled in, or once a call has failed with `EOPNOTSUPP` or `ENOSYS`.
+// That latch is process-wide.
 bool pageCacheFastPathIsSupported();
 
 namespace detail {
@@ -306,8 +331,9 @@ void resetPageCacheFastPathSupport();
 }  // namespace detail
 
 namespace detail {
-// The reads of a batch at `positions`, as the three arguments of
-// `ReadPolicy::addBatch`.
+// Owning copies of the reads of a batch at the indices `positions` into the
+// three equally long spans, in the order of `positions`, as the `numBytes`,
+// `offsets` and `buffers` arguments of `Policy::addBatch`.
 struct SelectedReads {
   std::vector<size_t> numBytes_;
   std::vector<uint64_t> offsets_;
@@ -342,6 +368,7 @@ class PageCacheFirstPolicy {
  public:
   using BatchHandle = typename Policy::BatchHandle;
 
+  // `ringSize` is forwarded to the constructor of the wrapped `Policy`.
   explicit PageCacheFirstPolicy(unsigned ringSize) : policy_(ringSize) {}
 
   PageCacheFirstPolicy(const PageCacheFirstPolicy&) = delete;
@@ -352,8 +379,8 @@ class PageCacheFirstPolicy {
   void setPageCacheFastPath(bool enabled) { enabled_ = enabled; }
 
   // Serve the reads of the batch that are in the page cache and pass the others
-  // on to the decorated policy. The contract of the arguments is the one of
-  // `readPageCacheHits` and of `Policy::addBatch`.
+  // on to the decorated policy. The arguments have the contract of
+  // `readPageCacheHits` and `Policy::addBatch`.
   void addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle) {
