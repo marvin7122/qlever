@@ -52,18 +52,13 @@ template <typename T>
 CPP_concept ReadPolicyConcept = concepts::constructible_from<T, RingSize> &&
                                 CPP_requires_ref(ReadPolicy_, T);
 
-// True iff `Policy` has a page-cache fast path that can be switched on
-// and off via a `setPageCacheFastPath(bool)` member (as
-// `PageCacheFirstPolicy` does). `BatchManager` uses this to forward its
-// own switch only to policies that have one.
-template <typename Policy, typename = void>
-inline constexpr bool hasPageCacheFastPathSwitch = false;
-
+// Satisfied iff `Policy` has a member callable as
+// `setPageCacheFastPath(true)`, i.e. a switchable page-cache fast path
+// (as `PageCacheFirstPolicy` has one). `BatchManager` uses this to
+// forward its own switch only to policies that have one.
 template <typename Policy>
-inline constexpr bool hasPageCacheFastPathSwitch<
-    Policy,
-    std::void_t<decltype(std::declval<Policy&>().setPageCacheFastPath(true))>> =
-    true;
+CPP_requires(HasPageCacheFastPathSwitch,
+             requires(Policy& policy)(policy.setPageCacheFastPath(true)));
 
 }  // namespace ad_utility::detail
 

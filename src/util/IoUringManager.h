@@ -102,7 +102,8 @@ class BatchManager final : public BatchManagerBase {
 
   // Forward the switch to the policy if it has one.
   void setPageCacheFastPath([[maybe_unused]] bool enabled) override {
-    if constexpr (detail::hasPageCacheFastPathSwitch<ReadPolicy>) {
+    if constexpr (CPP_requires_ref(detail::HasPageCacheFastPathSwitch,
+                                   ReadPolicy)) {
       policy_.setPageCacheFastPath(enabled);
     }
   }
