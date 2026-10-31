@@ -30,13 +30,21 @@ class BatchHandle {
   BatchHandle() = default;
 
   // `explicit`, so that a bare integer cannot silently convert to a
-  // batch handle where a handle is expected.
+  // `BatchHandle` where a handle is expected.
   explicit BatchHandle(uint64_t value) : value_{value} {}
 
   [[nodiscard]] uint64_t value() const { return value_; }
 
+  // Two handles are equal iff they were minted for the same batch. The
+  // comparison is needed so that handles can be compared at all (for
+  // example in tests) and so that hash containers can resolve collisions
+  // between different handles that hash to the same bucket.
   bool operator==(const BatchHandle&) const = default;
 
+  // Hash by the wrapped value, so that a `BatchHandle` can be used as the
+  // key of an absl hash container (the per-batch bookkeeping maps of
+  // `IoUringPolicy` do exactly that). Without this hook, `HashMap`
+  // would not accept the wrapper type as a key.
   template <typename H>
   friend H AbslHashValue(H h, const BatchHandle& handle) {
     return H::combine(std::move(h), handle.value_);
