@@ -16,12 +16,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <limits>
 
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
+#include "util/Log.h"
 #include "util/MmapVector.h"
 #include "util/StringUtils.h"
 #include "util/Views.h"
@@ -29,18 +31,40 @@
 using OffsetAndSize = VocabularyOnDisk::OffsetAndSize;
 
 // ____________________________________________________________________________
+VocabularyOnDisk::OffsetPair VocabularyOnDisk::offsetPairAt(
+    size_t index) const {
+  AD_CONTRACT_CHECK(index < size());
+  if (offsetsAreMemoryMapped()) {
+    // The offsets region holds `size() + 1` entries, so `index + 1` is a
+    // valid entry for every word index. The region is mapped from file offset
+    // 0, so `data()` is page-aligned and so is every `Offset` read here.
+    const auto* base = static_cast<const Offset*>(offsetsMapping_.data());
+    return {base[index], base[index + 1]};
+  }
+  // Read the offset of the word at `index` and the offset of the next word
+  // (which marks the end of the word at `index`) in a single `pread`.
+  std::array<Offset, 2> offsets{};
+  readConsecutiveOffsets(index, offsets);
+  return {offsets[0], offsets[1]};
+}
+
+// ____________________________________________________________________________
 OffsetAndSize VocabularyOnDisk::getOffsetAndSize(uint64_t i) const {
   AD_CORRECTNESS_CHECK(i < size());
-  // Read the offset of the word at index `i` and the offset of the next word
-  // (which marks the end of the word at index `i`) in a single `pread`.
-  std::array<Offset, 2> offsets{};
-  readConsecutiveOffsets(i, offsets);
-  return {offsets[0], offsets[1] - offsets[0]};
+  const auto pair = offsetPairAt(static_cast<size_t>(i));
+  return {pair.offset(), pair.nextOffset() - pair.offset()};
 }
 
 // _____________________________________________________________________________
 void VocabularyOnDisk::readConsecutiveOffsets(
     uint64_t first, ql::span<Offset> offsetsOut) const {
+  if (offsetsAreMemoryMapped()) {
+    // The mapping covers the `size() + 1` offsets.
+    AD_CORRECTNESS_CHECK(first + offsetsOut.size() <= size() + 1);
+    const auto* base = static_cast<const Offset*>(offsetsMapping_.data());
+    std::copy_n(base + first, offsetsOut.size(), offsetsOut.begin());
+    return;
+  }
   size_t numBytes = offsetsOut.size() * sizeof(Offset);
   auto numBytesRead = offsetsFile_.read(
       offsetsOut.data(), numBytes, static_cast<off_t>(first * sizeof(Offset)));
@@ -342,6 +366,16 @@ void readOffsetRuns(ad_utility::BatchManagerBase& manager, int fd,
 std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     ad_utility::BatchManagerBase& manager,
     ql::span<const size_t> indices) const {
+  // Fast path: the mapping serves every pair as a pointer dereference, with
+  // no ring submission, no per-request bookkeeping, and no wait.
+  if (offsetsAreMemoryMapped()) {
+    std::vector<OffsetPair> pairs;
+    pairs.reserve(indices.size());
+    for (size_t index : indices) {
+      pairs.push_back(offsetPairAt(index));
+    }
+    return pairs;
+  }
   for (size_t index : indices) {
     AD_CONTRACT_CHECK(index < size());
   }
@@ -509,7 +543,35 @@ void VocabularyOnDisk::open(const std::string& filename) {
   uint64_t numOffsets =
       ad_utility::MmapVectorMetaData::readFromFile(offsetsFile_).size_;
   AD_CORRECTNESS_CHECK(numOffsets > 0);
+  // A corrupt trailer could claim more offsets than the file holds, or a
+  // count whose byte size overflows: `size_` would then permit indices past
+  // the mapped span. Reject such counts like other trailer corruption.
+  const auto offsetsFileSize = offsetsFile_.sizeOfFile();
+  if (offsetsFileSize < ad_utility::MmapVectorMetaData::numBytes) {
+    throw ad_utility::InvalidFileException{};
+  }
+  const auto availableOffsetCount = static_cast<uint64_t>(
+      (offsetsFileSize - ad_utility::MmapVectorMetaData::numBytes) /
+      sizeof(Offset));
+  if (numOffsets > availableOffsetCount ||
+      numOffsets > std::numeric_limits<size_t>::max() / sizeof(Offset)) {
+    throw ad_utility::InvalidFileException{};
+  }
   size_ = numOffsets - 1;
+
+  // Memory-map the offsets region: the `numOffsets` leading 8-byte entries.
+  // The `MmapVectorMetaData` trailer stays unmapped. The mapping keeps the
+  // kernel's default readahead: with `MADV_RANDOM`, every page fault on a cold
+  // cache became a synchronous single-page read, which made cold exports
+  // slower than the `pread` path it replaces. A failed mapping is not an
+  // error: the lookup paths below transparently fall back to positioned and
+  // ring I/O.
+  static_assert(sizeof(Offset) == 8);
+  offsetsMapping_.unmap();
+  if (!offsetsMapping_.map(offsetsFile_.fd(), numOffsets * sizeof(Offset))) {
+    AD_LOG_WARN << "Could not memory-map the vocabulary offsets file, "
+                   "falling back to explicit I/O for offset lookups.\n";
+  }
 
   // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
