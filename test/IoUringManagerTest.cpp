@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <climits>
 #include <cstdio>
 #include <cstring>
@@ -594,6 +595,153 @@ TEST(IoUringManagerErrors, aReadErrorIsThrownByTheWaitOfItsBatch) {
                                HasSubstr("read fewer bytes than requested"));
   // The error is reported once; the batch is gone afterwards.
   EXPECT_NO_THROW(manager.wait(badHandle));
+}
+
+// A scripted `io_uring_submit` for `IoUringPolicy` (see
+// `detail::ringSubmit`): the first `numRealFirst` calls submit, the next
+// `numFailures` calls fail with `-error`, and later calls submit again.
+struct SubmitScript {
+  int numRealFirst = 0;
+  int numFailures = 0;
+  int error = 0;
+  int numFailed = 0;
+};
+SubmitScript submitScript;
+
+int scriptedSubmit(io_uring* ring) {
+  if (submitScript.numRealFirst > 0) {
+    --submitScript.numRealFirst;
+    return io_uring_submit(ring);
+  }
+  if (submitScript.numFailures > 0) {
+    --submitScript.numFailures;
+    ++submitScript.numFailed;
+    return -submitScript.error;
+  }
+  return io_uring_submit(ring);
+}
+
+// Run `IoUringPolicy` with `scriptedSubmit` until destruction.
+class ScopedSubmitScript {
+ public:
+  explicit ScopedSubmitScript(SubmitScript script) {
+    submitScript = script;
+    ad_utility::detail::ringSubmit() = &scriptedSubmit;
+  }
+  ~ScopedSubmitScript() { ad_utility::detail::ringSubmit() = &io_uring_submit; }
+  ScopedSubmitScript(const ScopedSubmitScript&) = delete;
+  ScopedSubmitScript& operator=(const ScopedSubmitScript&) = delete;
+};
+
+// The kernel is briefly out of memory for requests: `addBatch` retries the
+// submit, and the batch completes normally.
+TEST(IoUringManagerErrors, aTransientSubmitFailureIsRetried) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");
+  ScopedSubmitScript script{{.numFailures = 3, .error = EAGAIN}};
+
+  Manager manager(64);
+  ReadBatchForTesting batch;
+  batch.add({{0, 4}, {4, 4}, {8, 4}});
+  manager.wait(batch.submitTo(manager, fd));
+  EXPECT_THAT(batch.result(), ::testing::ElementsAre("AAAA", "BBBB", "CCCC"));
+  EXPECT_EQ(submitScript.numFailed, 3);
+}
+
+// The kernel stays out of memory for requests. The batch fails in its `wait`,
+// and the reads that were not submitted never write into their buffers, also
+// not when the ring works again and a later batch submits the queued SQEs.
+TEST(IoUringManagerErrors, aPersistentSubmitFailureFailsOnlyItsBatch) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJ");
+  // The ring-full submit of reads 0-3 succeeds, every later one fails.
+  ScopedSubmitScript script{
+      {.numRealFirst = 1, .numFailures = INT_MAX, .error = EAGAIN}};
+
+  Manager manager(4);
+  ReadBatchForTesting failing;
+  for (uint64_t offset = 0; offset < 40; offset += 4) {
+    failing.add(offset, 4);
+  }
+  auto failingHandle = failing.submitTo(manager, fd);
+  AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(failingHandle),
+                               HasSubstr("io_uring_submit failed"));
+  const std::string untouched(4, '\0');
+  // Reads 0-3 were submitted and completed, reads 4-7 were queued and turned
+  // into no-ops, and reads 8 and 9 were never queued.
+  EXPECT_THAT(failing.result(),
+              ::testing::ElementsAre("AAAA", "BBBB", "CCCC", "DDDD", untouched,
+                                     untouched, untouched, untouched,
+                                     untouched, untouched));
+
+  // The ring works again: the queued no-ops are submitted with the next batch,
+  // which completes normally.
+  submitScript.numFailures = 0;
+  ReadBatchForTesting good;
+  good.add({{0, 4}, {16, 4}, {36, 4}});
+  manager.wait(good.submitTo(manager, fd));
+  EXPECT_THAT(good.result(), ::testing::ElementsAre("AAAA", "EEEE", "JJJJ"));
+  EXPECT_THAT(::ranges::views::drop(failing.result(), 4),
+              ::testing::Each(untouched));
+}
+
+// A batch whose reads could not be submitted leaves no-ops in every ring slot.
+// While the submit keeps failing, the next batch cannot queue any read, and its
+// `wait` throws.
+TEST(IoUringManagerErrors, aRingFullOfUnsubmittedNoOpsFailsTheNextBatch) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  ScopedSubmitScript script{{.numFailures = INT_MAX, .error = EAGAIN}};
+
+  Manager manager(4);
+  ReadBatchForTesting fillsTheRing;
+  fillsTheRing.add({{0, 4}, {4, 4}, {8, 4}, {12, 4}});
+  auto fillsTheRingHandle = fillsTheRing.submitTo(manager, fd);
+  ReadBatchForTesting next;
+  next.add(0, 4);
+  auto nextHandle = next.submitTo(manager, fd);
+  AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(fillsTheRingHandle),
+                               HasSubstr("io_uring_submit failed"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      manager.wait(nextHandle),
+      HasSubstr("the ring is full of requests that could not be submitted"));
+  EXPECT_THAT(next.result(), ::testing::ElementsAre(std::string(4, '\0')));
+}
+
+// Any submit error other than `EINTR` and `EAGAIN` means that the ring is
+// broken. Throwing could let callers free buffers that the kernel still writes
+// into, so the process terminates.
+TEST(IoUringManagerErrors, aBrokenRingTerminates) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  // Avoid warnings and crashes when running all tests at once.
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
+  auto [tmp, fd] = makeTempFile("AAAABBBB");
+  ScopedSubmitScript script{{.numFailures = INT_MAX, .error = EBADF}};
+
+  ReadBatchForTesting batch;
+  batch.add({{0, 4}, {4, 4}});
+  EXPECT_DEATH_IF_SUPPORTED(
+      {
+        Manager manager(64);
+        manager.wait(batch.submitTo(manager, fd));
+      },
+      "io_uring_submit failed in IoUringPolicy");
 }
 
 // Drop the manager while reads are still in flight (submitted but never
