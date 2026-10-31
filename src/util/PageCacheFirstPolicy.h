@@ -21,6 +21,7 @@
 #include "backports/span.h"
 #include "util/BatchHandle.h"
 #include "util/IoUringManagerConcepts.h"
+#include "util/RingSize.h"
 
 namespace ad_utility {
 
@@ -30,9 +31,9 @@ namespace ad_utility {
 // positions of the other reads in ascending order. The caller issues those
 // through its regular path, which also reports errors.
 // Precondition: the three spans have the same length.
-std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
-                                      ql::span<const uint64_t> offsets,
-                                      ql::span<char*> buffers);
+std::vector<size_t> readPageCacheHits(
+    int fd, ql::span<const size_t> numberOfBytesToRead,
+    ql::span<const uint64_t> offsets, ql::span<char*> buffers);
 
 // False once `readPageCacheHits` found that `RWF_NOWAIT` is not supported, or
 // if it is not available at compile time.
@@ -67,14 +68,14 @@ namespace detail {
 // The reads of a batch at `positions`, as the three arguments of
 // `ReadPolicy::addBatch`.
 struct SelectedReads {
-  std::vector<size_t> numBytes_;
+  std::vector<size_t> numberOfBytesToRead_;
   std::vector<uint64_t> offsets_;
   std::vector<char*> buffers_;
 
-  SelectedReads(ql::span<const size_t> numBytes,
+  SelectedReads(ql::span<const size_t> numberOfBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 ql::span<const size_t> positions)
-      : numBytes_{selectAt(numBytes, positions)},
+      : numberOfBytesToRead_{selectAt(numberOfBytesToRead, positions)},
         offsets_{selectAt(offsets, positions)},
         buffers_{selectAt(buffers, positions)} {}
 
@@ -100,7 +101,7 @@ class PageCacheFirstPolicy {
  public:
   // `explicit`, so that a bare ring size cannot silently convert to a
   // policy where a policy is expected.
-  explicit PageCacheFirstPolicy(unsigned ringSize) : policy_(ringSize) {}
+  explicit PageCacheFirstPolicy(RingSize ringSize) : policy_(ringSize) {}
 
   // Not copyable or movable: it owns the policy it decorates, so a copy
   // would double-own that policy, and a move is only possible once the
@@ -118,23 +119,24 @@ class PageCacheFirstPolicy {
   // Serve the reads of the batch that are in the page cache and pass the others
   // on to the decorated policy. The contract of the arguments is the one of
   // `readPageCacheHits` and of `Policy::addBatch`.
-  void addBatch(int fd, ql::span<const size_t> numBytes,
+  void addBatch(int fd, ql::span<const size_t> numberOfBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle) {
     if (!enabled_ || !pageCacheFastPathIsSupported()) {
-      policy_.addBatch(fd, numBytes, offsets, buffers, handle);
+      policy_.addBatch(fd, numberOfBytesToRead, offsets, buffers, handle);
       return;
     }
     const std::vector<size_t> notServed =
-        readPageCacheHits(fd, numBytes, offsets, buffers);
-    if (notServed.size() == numBytes.size()) {
+        readPageCacheHits(fd, numberOfBytesToRead, offsets, buffers);
+    if (notServed.size() == numberOfBytesToRead.size()) {
       // Nothing was served, so the batch is passed on unchanged.
-      policy_.addBatch(fd, numBytes, offsets, buffers, handle);
+      policy_.addBatch(fd, numberOfBytesToRead, offsets, buffers, handle);
       return;
     }
-    detail::SelectedReads missed{numBytes, offsets, buffers, notServed};
-    policy_.addBatch(fd, missed.numBytes_, missed.offsets_, missed.buffers_,
-                     handle);
+    detail::SelectedReads missed{numberOfBytesToRead, offsets, buffers,
+                                 notServed};
+    policy_.addBatch(fd, missed.numberOfBytesToRead_, missed.offsets_,
+                     missed.buffers_, handle);
   }
 
   // Block until every read of the batch `handle` has completed.

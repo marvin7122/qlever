@@ -28,6 +28,7 @@
 #include "util/BatchHandle.h"
 #include "util/HashMap.h"
 #include "util/MonotonicCounter.h"
+#include "util/RingSize.h"
 
 namespace ad_utility {
 
@@ -42,7 +43,7 @@ class IoUringPolicy {
  public:
  private:
   io_uring ring_{};
-  unsigned ringSize_;
+  RingSize ringSize_;
 
   // The outstanding reads, broken down per batch: maps a batch handle to
   // the number of its reads that are prepared (SQE filled in, not yet
@@ -55,10 +56,11 @@ class IoUringPolicy {
   //
   // This map is the single source of truth for the outstanding counts:
   // the total number of outstanding reads is derived from it (see
-  // `numOutstandingReadRequests` below) instead of being kept in a
+  // `numberOfOutstandingReadRequests` below) instead of being kept in a
   // separate counter, so the total and the per-batch counts cannot drift
   // apart.
-  ad_utility::HashMap<BatchHandle, size_t> numOutstandingReadRequestsPerBatch_;
+  ad_utility::HashMap<BatchHandle, size_t>
+      numberOfOutstandingReadRequestsPerBatch_;
 
   // The total number of outstanding reads: the sum over the per-batch
   // counts above. `addBatch` keeps it at most `ringSize_`, so that a free
@@ -66,9 +68,9 @@ class IoUringPolicy {
   // the submission queue) cannot overflow. Deriving the total is cheap:
   // at most `ringSize_` reads are outstanding, so there are at most that
   // many batches to sum over.
-  size_t numOutstandingReadRequests() const {
+  size_t numberOfOutstandingReadRequests() const {
     size_t total = 0;
-    for (const auto& entry : numOutstandingReadRequestsPerBatch_) {
+    for (const auto& entry : numberOfOutstandingReadRequestsPerBatch_) {
       total += entry.second;
     }
     return total;
@@ -85,7 +87,7 @@ class IoUringPolicy {
   // detected). See `outstandingReadsByRequestId_`.
   struct OutstandingRead {
     BatchHandle batchHandle;
-    size_t expectedNumBytes;
+    size_t expectedNumberOfReadBytes;
   };
 
   // Mints a unique request id for each individual read. The id is stored
@@ -121,7 +123,7 @@ class IoUringPolicy {
   // Apply one completion to the bookkeeping of the outstanding reads. Always
   // updates the counts, also for a failed read, and records a failed or short
   // read in `failedBatches_`.
-  void processCqe(int numBytesRead, uint64_t requestId);
+  void processCqe(int numberOfBytesRead, uint64_t requestId);
 
  public:
   // Not copyable or movable: this policy owns the io_uring ring and the
@@ -142,7 +144,7 @@ class IoUringPolicy {
   // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
   // `explicit`, so that a bare `ringSize` cannot silently convert to a
   // `IouringPolicy` (which sets up a ring) where a policy is expected.
-  explicit IoUringPolicy(unsigned ringSize);
+  explicit IoUringPolicy(RingSize ringSize);
 
   // Not defaulted: it has to shut down the io_uring ring (see the `.cpp`).
   ~IoUringPolicy();
@@ -150,11 +152,11 @@ class IoUringPolicy {
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
   // calling thread only when the submission queue is full, in order to drain
   // completion queue entries and thus free slots in the submission queue. Read
-  // `i` reads `numBytesToRead[i]` bytes from file descriptor `fd`, starting at
-  // offset `offsets[i]` (from the start of the file), into the buffer starting
-  // at `buffers[i]`. The reads are tracked under `handle`, which can be passed
-  // to `wait()` to block until this batch has completed.
-  void addBatch(int fd, ql::span<const size_t> numBytesToRead,
+  // `i` reads `numberOfBytesToRead[i]` bytes from file descriptor `fd`,
+  // starting at offset `offsets[i]` (from the start of the file), into the
+  // buffer starting at `buffers[i]`. The reads are tracked under `handle`,
+  // which can be passed to `wait()` to block until this batch has completed.
+  void addBatch(int fd, ql::span<const size_t> numberOfBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle);
 

@@ -18,6 +18,7 @@
 #include "backports/concepts.h"
 #include "backports/span.h"
 #include "util/BatchHandle.h"
+#include "util/RingSize.h"
 
 namespace ad_utility::detail {
 
@@ -33,7 +34,7 @@ CPP_requires(ReadPolicy_,
              requires(T& policy, int fd, ql::span<const size_t> numBytes,
                       ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                       BatchHandle handle)(
-                 concepts::constructible_from<T, unsigned>,
+                 concepts::constructible_from<T, RingSize>,
                  // Must provide a method `addBatch` with the following
                  // parameters.
                  policy.addBatch(fd, numBytes, offsets, buffers, handle),
@@ -43,11 +44,11 @@ CPP_requires(ReadPolicy_,
 // The pluggable I/O backend of `BatchManager`: it specifies how the reads in a
 // batch are carried out. See `IoUringPolicy` (asynchronous, via io_uring) and
 // `SyncIoPolicy` (blocking `pread` fallback) in `IoUringManager.h`. Must
-// additionally be constructible from a ringsize (`unsigned`). The batch
+// additionally be constructible from a `RingSize`. The batch
 // handle that `addBatch` and `wait` take is the wrapper type
 // `ad_utility::BatchHandle` (see `BatchHandle.h`), not a raw integer.
 template <typename T>
-CPP_concept ReadPolicyConcept = concepts::constructible_from<T, unsigned> &&
+CPP_concept ReadPolicyConcept = concepts::constructible_from<T, RingSize> &&
                                 CPP_requires_ref(ReadPolicy_, T);
 
 // True iff `Policy` has a page-cache fast path that can be switched on

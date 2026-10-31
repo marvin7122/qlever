@@ -23,12 +23,14 @@
 #include "util/IoUringPolicy.h"
 #include "util/MonotonicCounter.h"
 #include "util/PageCacheFirstPolicy.h"
+#include "util/RingSize.h"
 #include "util/SyncIoPolicy.h"
 
 namespace ad_utility {
 
 // Abstract base of `BatchManager` so a pool can hold managers of different
-// `ReadPolicy`s behind a unified interface and pick the backend at runtime.
+// `ReadPolicy`s behind a unified interface and pick the backend policy at
+// runtime.
 class BatchManagerBase {
  public:
   using BatchHandle = ::ad_utility::BatchHandle;
@@ -39,10 +41,9 @@ class BatchManagerBase {
   // Defaulted, because the base itself owns no resources to release.
   virtual ~BatchManagerBase() = default;
 
-  [[nodiscard]] virtual BatchHandle addBatch(int fd,
-                                             ql::span<const size_t> numBytes,
-                                             ql::span<const uint64_t> offsets,
-                                             ql::span<char*> buffers) = 0;
+  [[nodiscard]] virtual BatchHandle addBatch(
+      int fd, ql::span<const size_t> numberOfBytesToRead,
+      ql::span<const uint64_t> offsets, ql::span<char*> buffers) = 0;
 
   virtual void wait(BatchHandle handle) = 0;
 
@@ -67,7 +68,7 @@ class BatchManager final : public BatchManagerBase {
 
   // `explicit`, so that a bare ring size cannot silently convert to a
   // manager where a `BatchManager` is expected.
-  explicit BatchManager(unsigned ringSize = 256) : policy_(ringSize) {}
+  explicit BatchManager(RingSize ringSize = RingSize{}) : policy_(ringSize) {}
 
   // Not copyable or movable: the manager owns its policy (for
   // `IoUringPolicy` the io_uring ring and the bookkeeping of its
@@ -82,15 +83,16 @@ class BatchManager final : public BatchManagerBase {
   BatchManager(BatchManager&&) = delete;
   BatchManager& operator=(BatchManager&&) = delete;
 
-  [[nodiscard]] BatchHandle addBatch(int fd, ql::span<const size_t> numBytes,
+  [[nodiscard]] BatchHandle addBatch(int fd,
+                                     ql::span<const size_t> numberOfBytesToRead,
                                      ql::span<const uint64_t> offsets,
                                      ql::span<char*> buffers) override {
-    validateSameLength(numBytes, offsets, buffers);
+    validateSameLength(numberOfBytesToRead, offsets, buffers);
 
     BatchHandle handle{nextBatchHandle_.mintNext()};
 
     // Delegate the I/O work to the policy.
-    policy_.addBatch(fd, numBytes, offsets, buffers, handle);
+    policy_.addBatch(fd, numberOfBytesToRead, offsets, buffers, handle);
 
     return handle;
   }
@@ -107,6 +109,7 @@ class BatchManager final : public BatchManagerBase {
 
  private:
   [[no_unique_address]] ReadPolicy policy_;
+
   // Mints the batch handles. Type is `MonotonicCounter`, so the handles are
   // increasing (and hence unique) by construction.
   MonotonicCounter nextBatchHandle_;
@@ -127,8 +130,8 @@ class BatchManager final : public BatchManagerBase {
 // via `BatchManagerBase::setPageCacheFastPath`, as `VocabularyOnDisk`
 // does per lookup with the `vocabulary-page-cache-fast-path` runtime
 // parameter.
-std::unique_ptr<BatchManagerBase> makeBatchManager(bool& preferIoUring,
-                                                   unsigned ringSize = 256);
+std::unique_ptr<BatchManagerBase> makeBatchManager(
+    bool& preferIoUring, RingSize ringSize = RingSize{});
 
 }  // namespace ad_utility
 

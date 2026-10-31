@@ -236,7 +236,7 @@ TYPED_TEST(IoUringManagerTest, SingleBatch) {
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   manager.wait(batch.submitTo(manager, fd));
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
@@ -248,7 +248,7 @@ TYPED_TEST(IoUringManagerTest, SingleBatch) {
 TYPED_TEST(IoUringManagerTest, mismatchedSpanLengthsThrow) {
   auto [tmp, fd] = makeTempFile("DOESNT_MATTER");
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
 
   std::string buffer(4, '\0');
   std::vector<size_t> numBytes{4};            // length 1
@@ -264,7 +264,7 @@ TYPED_TEST(IoUringManagerTest, mismatchedSpanLengthsThrow) {
 TYPED_TEST(IoUringManagerTest, MultipleBatchesSequential) {
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDDEEEEFFFFGGGG");
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
 
   auto makeAndWait = [&](uint64_t offset, size_t numBytes,
                          std::string_view expected) {
@@ -287,7 +287,7 @@ TYPED_TEST(IoUringManagerTest, MultipleBatchesSequential) {
 TYPED_TEST(IoUringManagerTest, WaitOutOfOrder) {
   auto [tmp, fd] = makeTempFile("AAAABBBB");
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
 
   ReadBatchForTesting batchA;
   batchA.add(0, 4);
@@ -324,7 +324,7 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
   }
 
   auto [tmp, fd] = makeTempFile(scenario.content());
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   manager.wait(scenario.submitTo(manager, fd));
 
   EXPECT_THAT(scenario.results(),
@@ -346,7 +346,7 @@ TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanRing) {
       scenario.addRead(absl::StrFormat("%04zu", i));
     }
     auto [tmp, fd] = makeTempFile(scenario.content());
-    TypeParam manager(ringSize);
+    TypeParam manager{ad_utility::RingSize{ringSize}};
     // All reads are page-cache hits; send them through the decorated policy.
     manager.setPageCacheFastPath(false);
     manager.wait(scenario.submitTo(manager, fd));
@@ -379,7 +379,7 @@ TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
   }
   auto [tmp, fd] = makeTempFile(fileContent);
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   // All reads are page-cache hits; send them through the decorated policy.
   manager.setPageCacheFastPath(false);
   std::vector<typename TypeParam::BatchHandle> handles;
@@ -403,7 +403,7 @@ TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
 TYPED_TEST(IoUringManagerTest, ErrorInWaveKeepsOtherBatchesConsistent) {
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   // The reads are page-cache hits; send them through the decorated policy so
   // that `good` and `bad` share the ring.
   manager.setPageCacheFastPath(false);
@@ -441,7 +441,7 @@ TYPED_TEST(IoUringManagerTest, MultipleSmallBatchesPipelined) {
   }
   auto [tmp, fd] = makeTempFile(fileContent);
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
 
   // Submit all M batches (one read each) before waiting on any of them, so they
   // are outstanding concurrently.
@@ -470,7 +470,7 @@ TYPED_TEST(IoUringManagerTest, MultipleSmallBatchesPipelined) {
 TYPED_TEST(IoUringManagerTest, ReadPastEofThrows) {
   auto [tmp, fd] = makeTempFile("AAAABBBB");  // 8 bytes
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   ReadBatchForTesting batch;
   batch.add(0, 16);  // request more than the 8 available
 
@@ -527,7 +527,7 @@ TYPED_TEST(IoUringManagerTest, LargeReads) {
   scenario.addRead(second);  // read at offset 32 KiB
   auto [tmp, fd] = makeTempFile(scenario.content());
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   manager.wait(scenario.submitTo(manager, fd));
 
   EXPECT_THAT(scenario.results(),
@@ -541,7 +541,7 @@ TYPED_TEST(IoUringManagerTest, differingReadSizes) {
   ReadBatchForTesting batch;
   batch.add({{8, 1}, {0, 2}, {12, 3}});
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   manager.wait(batch.submitTo(manager, fd));
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("C", "AA", "DDD"));
@@ -554,7 +554,7 @@ TYPED_TEST(IoUringManagerTest, zeroLengthReadsWithNonZeroLengthReads) {
   ReadBatchForTesting batch;
   batch.add({{8, 1}, {0, 0}, {12, 3}});
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   manager.wait(batch.submitTo(manager, fd));
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("C", "", "DDD"));
@@ -575,7 +575,7 @@ TEST(IoUringManagerDrop, dropSyncManagerHasNothingOutstanding) {
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
   {
-    Manager manager(64);
+    Manager manager{ad_utility::RingSize{64}};
     batch.submitTo(manager, fd);  // reads happen synchronously here
     // `manager` is destroyed here; nothing is outstanding, so no warning.
   }
@@ -594,7 +594,7 @@ TEST(IoUringPolicyErrors, failureIsThrownByItsOwnBatch) {
   }
   using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
-  Manager manager(64);
+  Manager manager{ad_utility::RingSize{64}};
   ReadBatchForTesting bad;
   bad.add(8, 16);  // past EOF: short read
   ReadBatchForTesting good;
@@ -634,7 +634,7 @@ TEST(IoUringManagerDrop, dropRunningManager) {
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
   {
-    Manager manager(64);
+    Manager manager{ad_utility::RingSize{64}};
     batch.submitTo(manager, fd);  // submit, but never wait
     // `manager` is destroyed here; its destructor drains the outstanding reads.
   }
@@ -652,7 +652,7 @@ TYPED_TEST(IoUringManagerTest, waitOnNonExistingBatch) {
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   auto realHandle = batch.submitTo(manager, fd);
 
   manager.wait(realHandle);
@@ -673,7 +673,7 @@ TYPED_TEST(IoUringManagerTest, fakeHandle) {
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
 
-  TypeParam manager(64);
+  TypeParam manager{ad_utility::RingSize{64}};
   auto realHandle = batch.submitTo(manager, fd);
 
   // waiting on fake handle should never block.
@@ -694,6 +694,19 @@ void expectManagerWorks(ad_utility::BatchManagerBase& manager) {
   batch.add({{4, 4}, {0, 4}});
   manager.wait(batch.submitTo(manager, fd));
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("BBBB", "AAAA"));
+}
+
+// The universe of `RingSize` is the powers of two from 1 to 4096, with
+// 256 as the default; everything else is rejected at construction, so
+// that no consumer of a `RingSize` ever has to re-check it.
+TEST(RingSize, OnlyPowersOfTwoUpTo4096AreValid) {
+  EXPECT_EQ(ad_utility::RingSize{}.value(), 256u);
+  EXPECT_EQ(ad_utility::RingSize{1}.value(), 1u);
+  EXPECT_EQ(ad_utility::RingSize{64}.value(), 64u);
+  EXPECT_EQ(ad_utility::RingSize{4096}.value(), 4096u);
+  EXPECT_THROW(ad_utility::RingSize{0}, ad_utility::Exception);
+  EXPECT_THROW(ad_utility::RingSize{3}, ad_utility::Exception);
+  EXPECT_THROW(ad_utility::RingSize{8192}, ad_utility::Exception);
 }
 
 // True if `manager` is a `BatchManager` for `Policy`, decorated with
@@ -975,7 +988,7 @@ struct RecordingPolicy {
     receivedOffsets.clear();
   }
 
-  explicit RecordingPolicy([[maybe_unused]] unsigned ringSize) {}
+  explicit RecordingPolicy([[maybe_unused]] ad_utility::RingSize ringSize) {}
   void addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 [[maybe_unused]] ad_utility::BatchHandle handle) {
@@ -1009,7 +1022,7 @@ TEST(PageCacheFirstPolicy, onlyTheMissesAreForwarded) {
   RecordingPolicy::reset();
   numPageCacheReads = 0;
   ScopedPageCacheRead inject{&firstRunCached};
-  RecordedManager manager(64);
+  RecordedManager manager{ad_utility::RingSize{64}};
   ReadBatchForTesting batch;
   batch.add({{0, 4}, {4, 4}, {12, 4}, {8, 4}});
   manager.wait(batch.submitTo(manager, fd));
@@ -1028,7 +1041,7 @@ TEST(PageCacheFirstPolicy, aBatchThatIsServedCompletelyHasNothingToWaitFor) {
   RecordingPolicy::reset();
   numPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedCachedRead};
-  RecordedManager manager(64);
+  RecordedManager manager{ad_utility::RingSize{64}};
   ReadBatchForTesting batch;
   batch.add({{0, 4}, {8, 4}});
   manager.wait(batch.submitTo(manager, fd));
@@ -1045,7 +1058,7 @@ TEST(PageCacheFirstPolicy, aBatchThatIsNotServedIsPassedOnUnchanged) {
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   RecordingPolicy::reset();
   ScopedPageCacheRead inject{&pageCacheReadTestHelpers::nothingCached};
-  RecordedManager manager(64);
+  RecordedManager manager{ad_utility::RingSize{64}};
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
   manager.wait(batch.submitTo(manager, fd));
@@ -1063,7 +1076,7 @@ TEST(PageCacheFirstPolicy, theFastPathCanBeSwitchedOffAndOn) {
   RecordingPolicy::reset();
   numPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedCachedRead};
-  RecordedManager manager(64);
+  RecordedManager manager{ad_utility::RingSize{64}};
   ad_utility::BatchManagerBase& base = manager;
   base.setPageCacheFastPath(false);
   {
@@ -1093,7 +1106,7 @@ TEST(PageCacheFirstPolicy, anUnsupportedFastPathIsLeftAlone) {
   RecordingPolicy::reset();
   numPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedNotSupported};
-  RecordedManager manager(64);
+  RecordedManager manager{ad_utility::RingSize{64}};
   for (int round = 0; round < 2; ++round) {
     ReadBatchForTesting batch;
     batch.add({{0, 4}, {8, 4}});
