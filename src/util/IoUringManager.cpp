@@ -460,8 +460,7 @@ std::unique_ptr<BatchManagerBase> makeBatchManager(bool& preferIoUring,
       AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
                   << e.what()
                   << "); falling back to synchronous pread for vocabulary "
-                     "lookups"
-                  << std::endl;
+                     "lookups\n";
     }
   }
 #else

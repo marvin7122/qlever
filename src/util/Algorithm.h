@@ -133,6 +133,7 @@ auto transform(Range&& input, F unaryOp) {
       std::back_inserter(out), unaryOp);
   return out;
 }
+
 // Throw an exception unless all the given ranges have the same length.
 // Intended for validating parallel spans or ranges that are meant to be
 // consumed element by element (see `zipVectors` below).
@@ -141,7 +142,7 @@ void validateSameLength(const Range0& first, const Ranges&... rest) {
   const auto n = ql::ranges::size(first);
   auto valid = ((ql::ranges::size(rest) == n) && ...);
   if (!valid) {
-    AD_THROW("spans must have same length");
+    AD_THROW("The ranges must all have the same length.");
   }
 }
 
