@@ -105,10 +105,17 @@ class IoUringPolicy {
   static constexpr unsigned REAP_WAVE = 8;
 
   // Block the application thread until at least `minComplete` CQEs are ready,
-  // then reap every ready CQE. `minComplete` must be > 0 and at most the number
-  // of submitted reads that are not yet reaped: a read that is only prepared
-  // (SQE filled in, not yet submitted) never completes, so both callers submit
-  // before they drain.
+  // then reap every ready CQE.
+  //
+  // Precondition: `minComplete` is > 0 and at most the number of reads that
+  // have been submitted and not yet reaped. A read whose SQE is only
+  // prepared (filled in, not yet submitted) never produces a completion, so
+  // it must not be counted in `minComplete`.
+  //
+  // The two callers guarantee this in different ways: `addBatch` calls
+  // `io_uring_submit` before draining when the ring is full, and `wait` only
+  // ever waits for batches whose `addBatch` has already submitted all of
+  // their reads before returning.
   void drainAtLeast(unsigned minComplete);
 
   // Apply one completion to the bookkeeping of the outstanding reads. Always
@@ -155,6 +162,13 @@ class IoUringPolicy {
   // completed. (The `handle` was submitted along the read requests using
   // `addBatch`.) Throw if a read of this batch failed or read less bytes than
   // expected. Throw only after all of the batch's reads have been reaped.
+  //
+  // The throw is deferred until then, even if a failure is already known:
+  // once `wait` has thrown, the caller treats the batch as finished and may
+  // reuse or release its buffers. A read that is not yet reaped may still
+  // be in flight, so the kernel could still write into such a buffer.
+  // Reaping every read of the batch first rules that out, and it also
+  // leaves no completion of this batch behind in the bookkeeping.
   void wait(BatchHandle handle);
 };
 
