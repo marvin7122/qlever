@@ -217,8 +217,6 @@ class IoUringPolicy {
   void checkQueue(const Batch& batch) const;
 };
 
-using BatchIoManager = BatchManager<IoUringPolicy>;
-
 #endif  // QLEVER_HAS_IO_URING
 
 }  // namespace ad_utility
