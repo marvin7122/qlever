@@ -40,9 +40,6 @@ class MonotonicCounter {
     return value_++;
   }
 
-  // The value that the next call to `mintNext` will return.
-  [[nodiscard]] uint64_t currentValue() const { return value_; }
-
  private:
   uint64_t value_;
 };
