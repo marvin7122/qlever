@@ -5,6 +5,8 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_COMPRESSIONWRAPPERS_H
 #define QLEVER_SRC_INDEX_VOCABULARY_COMPRESSIONWRAPPERS_H
 
+#include <array>
+
 #include "backports/algorithm.h"
 #include "backports/concepts.h"
 #include "index/vocabulary/PrefixCompressor.h"
@@ -79,6 +81,13 @@ struct DecoderMultiplexer {
     DISABLE_CLANG_UNUSED_RESULT_WARNING
     return decoders_.at(decoderIndex).decompress(compressed);
     ENABLE_CLANG_WARNINGS
+  }
+  // Like `decompress`, through the two reused `scratch` buffers (see
+  // `FsstRepeatedDecoder::decompressInto`). Only for decoders that have it.
+  std::string_view decompressInto(std::string_view compressed,
+                                  size_t decoderIndex,
+                                  std::array<std::string, 2>& scratch) const {
+    return decoders_.at(decoderIndex).decompressInto(compressed, scratch);
   }
   size_t numDecoders() const { return decoders_.size(); }
   const Decoders& getDecoders() const { return decoders_; }

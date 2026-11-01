@@ -329,6 +329,12 @@ struct RuntimeParameters {
   // upper bound. A separate flag, because a size cannot also hold "auto".
   Bool vocabularyBufferPoolAuto_{false, "vocabulary-buffer-pool-auto"};
 
+  // If set to true, a batch lookup of a compressed vocabulary decompresses
+  // its words through two reused scratch buffers into one arena per batch,
+  // instead of allocating and zero-filling a string per word and step.
+  Bool vocabularyBatchDecompressArena_{false,
+                                       "vocabulary-batch-decompress-arena"};
+
   // The free memory that the elastic budget leaves for everything else. 0
   // (the default) means max(256 MiB, 5 % of the RAM or of the cgroup's
   // memory limit).

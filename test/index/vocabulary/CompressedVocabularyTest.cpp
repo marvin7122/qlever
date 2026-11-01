@@ -6,6 +6,7 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
+#include "../../util/RuntimeParametersTestHelpers.h"
 #include "VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "index/vocabulary/CompressedVocabulary.h"
@@ -165,9 +166,15 @@ TYPED_TEST(CompressedVocabularyF, LookupBatch) {
         absl::StrCat("s", i / 10, i % 10, "-", std::string(i % 7, 'x')));
   }
   const auto vocab = this->createCompressedVocabulary()(words);
+  // With and without `vocabulary-batch-decompress-arena` (which only changes
+  // the FSST wrappers).
   const auto checkLookupBatch = [&](ql::span<const size_t> indices) {
-    assertLookupResultMatchesVocabularyAtIndices(
-        vocab, vocab.lookupBatch(indices), indices);
+    for (bool arena : {false, true}) {
+      auto cleanup = setRuntimeParameterForTest<
+          &RuntimeParameters::vocabularyBatchDecompressArena_>(arena);
+      assertLookupResultMatchesVocabularyAtIndices(
+          vocab, vocab.lookupBatch(indices), indices);
+    }
   };
 
   checkLookupBatch(

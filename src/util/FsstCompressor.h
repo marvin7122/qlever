@@ -8,6 +8,7 @@
 #include <absl/cleanup/cleanup.h>
 #include <fsst.h>
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -70,6 +71,17 @@ class FsstDecoder {
     output.resize(size);
     return output;
   }
+
+  // Decompress `str` into `out`, which has room for `capacity` bytes (FSST
+  // needs at most `8 * str.size()`), and return the decompressed size.
+  size_t decompressInto(std::string_view str, char* out,
+                        size_t capacity) const {
+    auto cast = detail::castToUnsignedPtr;
+    size_t size = fsst_decompress(&decoder_, str.size(), cast(str.data()),
+                                  capacity, cast(out));
+    AD_CORRECTNESS_CHECK(size <= capacity);
+    return size;
+  }
   // Allow this type to be trivially serializable,
   CPP_template(typename T, typename U)(
       requires ql::concepts::same_as<T, FsstDecoder>)
@@ -111,6 +123,27 @@ class FsstRepeatedDecoder {
 
     ql::ranges::for_each(ql::views::reverse(decoders_), decompressSingle);
     return result;
+  }
+
+  // Like `decompress`, but through the two `scratch` buffers, which are only
+  // ever grown (so they are not allocated and zero-filled again per word),
+  // instead of a new string per step. The result points into `scratch` and is
+  // valid until `scratch` is used again.
+  std::string_view decompressInto(std::string_view str,
+                                  std::array<std::string, 2>& scratch) const {
+    std::string_view nextInput = str;
+    size_t next = 0;
+    for (const FsstDecoder& decoder : ql::views::reverse(decoders_)) {
+      std::string& buffer = scratch[next];
+      next ^= 1;
+      if (buffer.size() < 8 * nextInput.size()) {
+        buffer.resize(8 * nextInput.size());
+      }
+      nextInput = std::string_view{
+          buffer.data(),
+          decoder.decompressInto(nextInput, buffer.data(), buffer.size())};
+    }
+    return nextInput;
   }
   // Allow this type to be trivially serializable,
   CPP_template_2(typename T, typename U)(

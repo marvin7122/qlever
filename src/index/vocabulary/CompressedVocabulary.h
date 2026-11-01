@@ -5,7 +5,12 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_COMPRESSEDVOCABULARY_H
 
+#include <array>
+#include <cstring>
+
 #include "backports/algorithm.h"
+#include "backports/memory_resource.h"
+#include "global/RuntimeParameters.h"
 #include "index/ConstantsIndexBuilding.h"
 #include "index/vocabulary/CompressionWrappers.h"
 #include "index/vocabulary/PrefixCompressor.h"
@@ -30,6 +35,17 @@ CPP_requires(IterableVocabulary_,
 template <typename Vocabulary, typename Iterator>
 CPP_concept IterableVocabulary =
     CPP_requires_ref(IterableVocabulary_, Vocabulary, Iterator);
+
+// A decoder that can decompress through two reused scratch buffers (see
+// `FsstRepeatedDecoder::decompressInto`).
+template <typename Decoder>
+CPP_requires(DecompressesInto_,
+             requires(const Decoder& decoder, std::string_view str,
+                      std::array<std::string, 2>& scratch)(
+                 decoder.decompressInto(str, scratch)));
+
+template <typename Decoder>
+CPP_concept DecompressesInto = CPP_requires_ref(DecompressesInto_, Decoder);
 
 }  // namespace detail
 
@@ -166,6 +182,13 @@ class CompressedVocabulary {
       AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size(),
                            "the underlying vocabulary returned a different "
                            "number of words than requested");
+      if constexpr (detail::DecompressesInto<
+                        typename CompressionWrapper::Decoder>) {
+        if (getRuntimeParameter<
+                &RuntimeParameters::vocabularyBatchDecompressArena_>()) {
+          return decompressIntoArena(*compressedWords, indices);
+        }
+      }
       auto words = ::ranges::to<std::vector<std::string>>(
           ::ranges::views::zip(*compressedWords, indices) |
           ql::views::transform([this](const auto& compressedWordAndIndex) {
@@ -727,6 +750,38 @@ class CompressedVocabulary {
   // Get the correct decoder for the given vocabulary index `idx`. For a
   // vocabulary with holes (see `VocabularyInMemoryBinSearch`) the index has to
   // be translated to a position first (see `getDecoderIdxFromPosition`).
+  // Decompress the `compressedWords` of `indices` through two reused scratch
+  // buffers and copy each word into one monotonic arena owned by the result,
+  // instead of allocating (and zero-filling) a string per decompression step.
+  VocabBatchLookupResult decompressIntoArena(
+      ql::span<const std::string_view> compressedWords,
+      ql::span<const size_t> indices) const {
+    size_t numCompressedBytes = 0;
+    for (std::string_view word : compressedWords) {
+      numCompressedBytes += word.size();
+    }
+    auto data = std::make_shared<PmrVocabBatchLookupData>();
+    // FSST typically expands by a factor of 2 to 4; the arena grows if not.
+    data->buffer() = std::make_unique<ql::pmr::monotonic_buffer_resource>(
+        4 * numCompressedBytes + 64);
+    auto& arena = *data->buffer();
+    auto& views = data->views();
+    views.reserve(indices.size());
+    std::array<std::string, 2> scratch;
+    for (size_t i = 0; i < indices.size(); ++i) {
+      const std::string_view word = compressionWrapper_.decompressInto(
+          compressedWords[i], getDecoderIdx(indices[i]), scratch);
+      if (word.empty()) {
+        views.emplace_back();
+        continue;
+      }
+      auto* target = static_cast<char*>(arena.allocate(word.size(), 1));
+      std::memcpy(target, word.data(), word.size());
+      views.emplace_back(target, word.size());
+    }
+    return PmrVocabBatchLookupData::asResult(std::move(data));
+  }
+
   size_t getDecoderIdx(size_t idx) const {
     if constexpr (underlyingHasHoles) {
       // NOTE: If `idx` is one of the holes, then there is no word to
