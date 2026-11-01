@@ -21,12 +21,13 @@ The backlog of the export throughput research (log: marvin7122/qlever#324). Each
 | E5 | Offsets through `mmap` (#229) | −17 to −27 %, scattered cold neutral | confirmed, not kept (evicted pages block on page faults) |
 | E6b | E1 + E4 | −14.6 to −27.0 % | confirmed, baseline |
 | E8a | Buffer pool 16 GB (#297) on E4 | Cold −20 to −31 %, warm −59 to −61 % | confirmed |
+| E9 | Read the next batch ahead (*d* = 1) on the pool | Sequential cold −9.6 %, warm −2 to −3 %, scattered cold noise | prediction (−20 %) falsified; see E9b |
 
 ## Running or built
 
 | Id | Idea | Data | Prediction | Branch / status |
 |---|---|---|---|---|
-| E9 | Read the next CONSTRUCT batch ahead on the global executor | Cold − warm = 8.0 s of 20.8 s (sequential); reads and formatting never overlap | Cold −20 % | `research/pool-prefetch`, Ural #5615 |
+| E9b | Read-ahead depth *d* = 1 vs 4 vs 16 | E9 (*d* = 1) hid little: a cold batch takes 3.3 ms, a warm one 1.2 ms | Cold −15 % / −25 % against *d* = 1 | `research/pool-prefetch`, Ural #5618 |
 | E10 | Prefetch the pool's page states and bytes *d* reads ahead | `tryCopy` 10.6 %, about 56 ns per 16-byte copy | Warm −5 % | `research/pool-copy-prefetch`, Ural #5616 |
 | E11 | Batch decompression through reused buffers into one arena (the idea of #3522/#3526) | Decompression 17.3 / 25.7 %; two strings and two 8× zero-fills per word | Warm −8 / −10 % | `research/arena-decompress`, Ural #5617; port #3522 if confirmed |
 | E12 | Switch off the CONSTRUCT `IdCache` | `evaluateVariableByColumn` 12.7 % self; LRU upkeep for IDs that almost never repeat | Warm −8 % | `research/no-id-cache`, building |
