@@ -11,12 +11,10 @@
 #include "util/IoUringManager.h"
 
 #include <absl/strings/str_cat.h>
-#include <sys/uio.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cerrno>
 #include <climits>
 #include <cstring>
@@ -46,136 +44,6 @@ void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
   if (static_cast<size_t>(numBytesRead) != numBytes) {
     AD_THROW("read fewer bytes than requested in readFullyOrThrow");
   }
-}
-
-// `preadv2` with `RWF_NOWAIT` exists on Linux only. Emscripten's headers
-// define `RWF_NOWAIT`, but its libc has no `preadv2`; there, and wherever
-// `RWF_NOWAIT` is missing, the fast path is compiled out.
-#if defined(__linux__) && defined(RWF_NOWAIT) && !defined(__EMSCRIPTEN__)
-#define QL_PAGE_CACHE_FAST_PATH
-#endif
-
-namespace {
-#ifdef QL_PAGE_CACHE_FAST_PATH
-// Cleared once a `preadv2(RWF_NOWAIT)` fails with `EOPNOTSUPP` or `ENOSYS`.
-// The flag is a best-effort hint without associated data; the default
-// sequential consistency (Sonar cpp:S8417) keeps the publication of the
-// disabled state obvious.
-std::atomic<bool> pageCacheFastPathSupported{true};
-#endif
-}  // namespace
-
-namespace detail {
-//______________________________________________________________________________
-int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
-                            int64_t offset) {
-#ifdef QL_PAGE_CACHE_FAST_PATH
-  return preadv2(fd, iov, iovcnt, static_cast<off_t>(offset), RWF_NOWAIT);
-#else
-  (void)fd;
-  (void)iov;
-  (void)iovcnt;
-  (void)offset;
-  errno = EOPNOTSUPP;
-  return -1;
-#endif
-}
-
-//______________________________________________________________________________
-PageCacheRead& pageCacheRead() {
-  static PageCacheRead function = &systemPageCacheRead;
-  return function;
-}
-
-//______________________________________________________________________________
-void resetPageCacheFastPathSupport() {
-#ifdef QL_PAGE_CACHE_FAST_PATH
-  pageCacheFastPathSupported.store(true);
-#endif
-}
-}  // namespace detail
-
-//______________________________________________________________________________
-bool pageCacheFastPathIsSupported() {
-#ifdef QL_PAGE_CACHE_FAST_PATH
-  return pageCacheFastPathSupported.load();
-#else
-  return false;
-#endif
-}
-
-#ifdef QL_PAGE_CACHE_FAST_PATH
-namespace {
-// The elements of the range of reads in `readPageCacheHits`: the position of a
-// read in its batch, its number of bytes, its file offset and its buffer.
-constexpr auto position = [](const auto& read) { return std::get<0>(read); };
-constexpr auto toIovec = [](const auto& read) {
-  return ::iovec{std::get<3>(read), std::get<1>(read)};
-};
-// True if the file range of `next` starts where the one of `previous` ends.
-constexpr auto areAdjacent = [](const auto& previous, const auto& next) {
-  return std::get<2>(previous) + std::get<1>(previous) == std::get<2>(next);
-};
-
-// Log once that the kernel or file system rejects `RWF_NOWAIT` (`EOPNOTSUPP`)
-// or that `preadv2` does not exist (`ENOSYS`, Linux < 4.6 or a seccomp filter),
-// and switch the fast path off for the rest of the process.
-void disableIfNotSupported(int64_t numBytesRead) {
-  if (numBytesRead < 0 && (errno == EOPNOTSUPP || errno == ENOSYS) &&
-      pageCacheFastPathSupported.exchange(false)) {
-    AD_LOG_WARN << "preadv2 with RWF_NOWAIT is not supported for the "
-                   "vocabulary files; reading them without the "
-                   "page-cache fast path"
-                << std::endl;
-  }
-}
-
-// Read a `run` of adjacent reads with one `preadv2(RWF_NOWAIT)` call and return
-// how many of its reads, from the front, were read completely. `EAGAIN`, a
-// short read and any other error leave the remaining reads unserved.
-template <typename Run>
-size_t serveRun(int fd, Run run) {
-  const auto iovecs = ::ranges::to<std::vector<::iovec>>(
-      run | ::ranges::views::transform(toIovec));
-  const int64_t numBytesRead = detail::pageCacheRead()(
-      fd, iovecs.data(), static_cast<int>(iovecs.size()),
-      static_cast<int64_t>(std::get<2>(*::ranges::begin(run))));
-  disableIfNotSupported(numBytesRead);
-  // The end of each read within the run; a read is served if its end was read.
-  auto readEnds = iovecs | ::ranges::views::transform(&::iovec::iov_len) |
-                  ::ranges::views::partial_sum;
-  return static_cast<size_t>(::ranges::count_if(readEnds, [&](size_t end) {
-    return numBytesRead >= 0 && end <= static_cast<size_t>(numBytesRead);
-  }));
-}
-}  // namespace
-#endif
-
-//______________________________________________________________________________
-std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
-                                      ql::span<const uint64_t> offsets,
-                                      ql::span<char*> buffers) {
-  AD_CONTRACT_CHECK(offsets.size() == numBytes.size() &&
-                    buffers.size() == numBytes.size());
-  auto positions = ::ranges::views::iota(size_t{0}, numBytes.size());
-#ifdef QL_PAGE_CACHE_FAST_PATH
-  auto reads = ::ranges::views::zip(positions, numBytes, offsets, buffers);
-  std::vector<size_t> notServed;
-  for (auto adjacentReads : reads | ::ranges::views::chunk_by(areAdjacent)) {
-    // One `preadv2` call takes at most `IOV_MAX` buffers.
-    for (auto run :
-         adjacentReads | ::ranges::views::chunk(static_cast<size_t>(IOV_MAX))) {
-      const size_t numServed =
-          pageCacheFastPathSupported.load() ? serveRun(fd, run) : 0;
-      ::ranges::push_back(notServed, run | ::ranges::views::drop(numServed) |
-                                         ::ranges::views::transform(position));
-    }
-  }
-  return notServed;
-#else
-  (void)fd;
-  return ::ranges::to<std::vector<size_t>>(positions);
-#endif
 }
 
 //______________________________________________________________________________
@@ -304,6 +172,14 @@ void IoUringPolicy::wait(BatchHandle handle) {
     drainAtLeast(
         static_cast<unsigned>(std::min<size_t>(REAP_WAVE, it->second)));
   }
+  // Throw only now that every read of the batch is reaped, so the kernel no
+  // longer writes into its buffers.
+  if (auto failed = failedBatches_.find(handle);
+      failed != failedBatches_.end()) {
+    const char* errorMessage = failed->second;
+    failedBatches_.erase(failed);
+    AD_THROW(errorMessage);
+  }
 }
 
 //______________________________________________________________________________
@@ -312,7 +188,8 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
   AD_CORRECTNESS_CHECK(minComplete <= numOutstandingReadRequests_);
 
   // Block until at least `minComplete` completion queue entries (CQEs) are
-  // ready. This costs at most one `io_uring_enter` for the whole wave.
+  // ready. This typically costs one `io_uring_enter` for the whole wave (and
+  // one more after each `EINTR`).
   io_uring_cqe* cqe = nullptr;
   int ret = 0;
   do {
@@ -326,9 +203,8 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
   // Reap every ready CQE in chunks. `io_uring_peek_batch_cqe` does not block;
   // `io_uring_cq_advance` releases a whole chunk with one CQ-head update
   // instead of one `io_uring_cqe_seen` per CQE. Every CQE of the wave is
-  // applied to the bookkeeping before any error is thrown, so the outstanding
-  // counts stay consistent and no CQE is processed twice.
-  const char* firstErrorMessage = nullptr;
+  // applied to the bookkeeping, so the outstanding counts stay consistent and
+  // no CQE is processed twice.
   std::array<io_uring_cqe*, 64> cqes{};
   while (true) {
     const unsigned n = io_uring_peek_batch_cqe(
@@ -336,23 +212,17 @@ void IoUringPolicy::drainAtLeast(unsigned minComplete) {
     if (n == 0) {
       break;
     }
-    for (unsigned i = 0; i < n; ++i) {
+    for (const io_uring_cqe* cqe :
+         ql::span<io_uring_cqe* const>(cqes.data(), n)) {
       // Recover the id via the 64-bit `user_data` field, see `addBatch`.
-      const char* errorMessage =
-          processCqe(cqes[i]->res, io_uring_cqe_get_data64(cqes[i]));
-      if (firstErrorMessage == nullptr) {
-        firstErrorMessage = errorMessage;
-      }
+      processCqe(cqe->res, io_uring_cqe_get_data64(cqe));
     }
     io_uring_cq_advance(&ring_, n);
-  }
-  if (firstErrorMessage != nullptr) {
-    AD_THROW(firstErrorMessage);
   }
 }
 
 //______________________________________________________________________________
-const char* IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
+void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
   --numOutstandingReadRequests_;
 
   // Every reaped CQE corresponds to exactly one outstanding read whose id we
@@ -373,16 +243,20 @@ const char* IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
     numOutstandingReadRequestsPerBatch_.erase(it);
   }
 
-  // `cqe->res` < 0 is `-errno`.
+  // `cqe->res` < 0 is `-errno`. A result smaller than requested (a partial
+  // read, or 0 at end of file) means we read fewer bytes than expected, which
+  // we treat as an error.
+  const char* errorMessage = nullptr;
   if (numBytesRead < 0) {
-    return "I/O error in IoUringPolicy read operation";
+    errorMessage = "I/O error in IoUringPolicy read operation";
+  } else if (static_cast<size_t>(numBytesRead) !=
+             outstandingRead.expectedNumBytes) {
+    errorMessage = "read fewer bytes than requested in IoUringPolicy";
   }
-  // A result smaller than requested (a partial read, or 0 at end of file) means
-  // we read fewer bytes than expected, which we treat as an error.
-  if (static_cast<size_t>(numBytesRead) != outstandingRead.expectedNumBytes) {
-    return "read fewer bytes than requested in IoUringPolicy";
+  if (errorMessage != nullptr) {
+    // Keep the first failure of the batch; `wait()` of that batch throws it.
+    failedBatches_.try_emplace(outstandingRead.batchHandle, errorMessage);
   }
-  return nullptr;
 }
 
 #endif  // QLEVER_HAS_IO_URING
