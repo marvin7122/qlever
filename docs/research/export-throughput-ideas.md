@@ -138,3 +138,20 @@ Constraint: no preparation at server startup; the server sees many concurrent qu
 | E76 | Process-wide cache of formatted terms with TinyLFU admission | The `IdCache` is per export; cross-query recurrence unknown (needs a query log) | Worth it if the top 1 % of IDs cover a large share of lookups |
 | E77 | Prompt cancellation of prefetches, reads and pool loads on disconnect | E9's prefetcher and pool loads run to completion | Wasted work after a disconnect under 50 ms |
 | E78 | Bounded production per slow connection (byte budget, then pause) | Slow clients hold batch results and pool memory | Constant memory per connection; no loss for fast clients |
+
+### Follow-ups to E9 and more operating-environment ideas
+
+E9's read-ahead costs 26–36 % more CPU per query (sequential warm 5.82 → 7.92 s, scattered warm 1.40 → 1.79 s, sequential cold 14.34 → 18.06 s) for a 2–10 % wall-time gain, because the prefetched lookups decompress and copy everything and are then discarded.
+
+| Id | Idea | Data / reasoning | Prediction |
+|---|---|---|---|
+| E79 | Use the prefetched lookup result instead of discarding it | E9 looks up every batch twice; the lookup is 32 % inclusive | Warm 5.2 → about 3.6 s without extra CPU |
+| E80 | Read ahead by loading pages only (no decompression, no copies) | Fallback if E79 is too invasive | E9's wall time with about 30 % less CPU |
+| E81 | Adaptive read-ahead depth (grow while batches wait on I/O, 0 on hits) | Warm: read-ahead only costs CPU; cold: *d* = 1 hides too little | Cold as the best *d* of E9b, warm without overhead |
+| E82 | Split-phase lookups on the export thread instead of executor tasks | E9 uses the global executor, shared with other queries; the ring supports many reads in flight | E9b's cold gain at zero extra threads |
+| E83 | Read ahead across block boundaries | E9 never prefetches the first batch of a block; count blocks per export | Depends on block count |
+| E84 | CLOCK reference bits in a separate array | `fetch_or` on state words that all readers read: cache-line bouncing under concurrency | 4 concurrent warm exports +20 % throughput |
+| E85 | One pool budget for the whole server | #297: a fixed budget applies per vocabulary instance | Memory bounded as configured |
+| E86 | Admission control for exports when working sets exceed the pool | #292: a 4 GiB pool lost to `mmap` under six concurrent working sets | Higher total throughput under overload |
+| E87 | Flush the first bytes early (64 KB or 10 ms) | Time to first byte 0.35 s cold, 0.04 s warm (E8a profile) | Lower time to first byte, same throughput |
+| E88 | Pool counters per query and in the metrics | E69–E71 and E86 need per-query pool usage | Measurement infrastructure |
