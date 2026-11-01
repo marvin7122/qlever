@@ -49,6 +49,11 @@ class ConstructTripleGenerator {
  public:
   // the number of `IdTable` rows that one batch consists of.
   static constexpr size_t BATCH_SIZE = 1024;
+
+  // With `export-construct-format-chunks`, `generateFormattedTriples` yields
+  // strings of at least this many bytes (except the last one), each holding
+  // many triples.
+  static constexpr size_t FORMATTED_CHUNK_BYTES = 1 << 16;
   // the number of entries in the `IdCache` for each variable in the construct
   // clause template.
   static constexpr size_t CACHE_ENTRIES_PER_VARIABLE = 2048;

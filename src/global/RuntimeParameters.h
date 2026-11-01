@@ -329,6 +329,12 @@ struct RuntimeParameters {
   // upper bound. A separate flag, because a size cannot also hold "auto".
   Bool vocabularyBufferPoolAuto_{false, "vocabulary-buffer-pool-auto"};
 
+  // If set to true, a CONSTRUCT export formats its triples into chunks of
+  // many triples (see `ConstructTripleGenerator::FORMATTED_CHUNK_BYTES`)
+  // instead of one string per triple; Turtle and N-Triples also skip the
+  // intermediate strings per term. The output is the same.
+  Bool exportConstructFormatChunks_{false, "export-construct-format-chunks"};
+
   // The free memory that the elastic budget leaves for everything else. 0
   // (the default) means max(256 MiB, 5 % of the RAM or of the cgroup's
   // memory limit).

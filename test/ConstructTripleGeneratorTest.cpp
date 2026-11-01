@@ -6,13 +6,16 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/strings/str_join.h>
 #include <gmock/gmock.h>
 
 #include "./util/IdTableHelpers.h"
+#include "./util/RuntimeParametersTestHelpers.h"
 #include "./util/TripleComponentTestHelpers.h"
 #include "engine/ConstructTripleGenerator.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/Result.h"
+#include "global/RuntimeParameters.h"
 #include "util/CancellationHandle.h"
 
 namespace {
@@ -480,6 +483,57 @@ INSTANTIATE_TEST_SUITE_P(
         FormattedTriplesParam{ad_utility::MediaType::turtle, "<s> <p> <o> .\n"},
         FormattedTriplesParam{ad_utility::MediaType::csv, "<s>,<p>,<o>\n"},
         FormattedTriplesParam{ad_utility::MediaType::tsv, "<s>\t<p>\t<o>\n"}));
+
+// With `export-construct-format-chunks`, the formatted triples come in chunks
+// of many triples, and their concatenation is the same as without: for
+// Turtle and N-Triples, over several batches and chunks, with IRIs and
+// literals from the vocabulary, a template literal that needs escaping,
+// integers and doubles (typed in N-Triples), UNDEF and blank nodes.
+TEST_F(ConstructTripleGeneratorTest, formatChunksDoNotChangeOutput) {
+  constexpr size_t N = 2 * ConstructTripleGenerator::BATCH_SIZE + 3;
+  const Id idHello = ad_utility::testing::makeGetId(index_)("\"hello\"");
+  const std::array objects{idO_, idHello, Id::makeFromInt(42),
+                           Id::makeFromDouble(1.5), U};
+  std::vector<std::vector<IntOrId>> rows;
+  for (size_t i = 0; i < N; ++i) {
+    rows.push_back({i % 7 == 0 ? idQ_ : idS_, objects[i % objects.size()]});
+  }
+  auto result = makeResult(makeIdTableFromVector(rows));
+  Triples templateTriples{{GraphTerm{Variable{"?s"}}, GraphTerm{iriV("<p>")},
+                           GraphTerm{Variable{"?o"}}},
+                          {GraphTerm{Variable{"?s"}}, GraphTerm{iriV("<p>")},
+                           GraphTerm{Literal{"\"line1\nline2 \"q\" \\ end\""}}},
+                          {GraphTerm{BlankNode{false, "b"}},
+                           GraphTerm{iriV("<q>")}, GraphTerm{Variable{"?s"}}},
+                          {GraphTerm{Variable{"?s"}}, GraphTerm{iriV("<q>")},
+                           GraphTerm{Literal{int64_t{42}}}}};
+  VariableToColumnMap varMap;
+  varMap[Variable{"?s"}] = makeAlwaysDefinedColumn(0);
+  varMap[Variable{"?o"}] = makePossiblyUndefinedColumn(1);
+
+  for (auto mediaType :
+       {ad_utility::MediaType::turtle, ad_utility::MediaType::ntriples}) {
+    auto format = [&](bool chunks) {
+      auto cleanup = setRuntimeParameterForTest<
+          &RuntimeParameters::exportConstructFormatChunks_>(chunks);
+      return collectFormatted(
+          ConstructTripleGenerator::generateFormattedTriples(
+              templateTriples, varMap,
+              singleTableRange(makeTableWithRange(*result, 0, N)), 0, mediaType,
+              makeConfig()));
+    };
+    const auto perTriple = format(false);
+    const auto chunks = format(true);
+    EXPECT_EQ(absl::StrJoin(chunks, ""), absl::StrJoin(perTriple, ""));
+    // More than one chunk, each but the last at least the chunk size.
+    ASSERT_GT(chunks.size(), 1u);
+    EXPECT_LT(chunks.size(), perTriple.size());
+    for (size_t i = 0; i + 1 < chunks.size(); ++i) {
+      EXPECT_GE(chunks[i].size(),
+                ConstructTripleGenerator::FORMATTED_CHUNK_BYTES);
+    }
+  }
+}
 
 // Only turtle, csv, and tsv are supported. Any other media type triggers a
 // contract check failure when the first triple is pulled from the range.

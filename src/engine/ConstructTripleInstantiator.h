@@ -67,6 +67,12 @@ std::string formatTerm(const EvaluatedTermData& term, bool includeDataType);
 std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
                          const ad_utility::MediaType& format);
 
+// Append `formatTriple(evaluatedTriple, format)` to `out`. For Turtle and
+// N-Triples without the intermediate strings of `formatTriple`.
+void appendFormattedTriple(std::string& out,
+                           const EvaluatedTriple& evaluatedTriple,
+                           const ad_utility::MediaType& format);
+
 // Creates a `StringTriple` object. Needed for backwards compatibility with
 // `ExportQueryExecutionTrees::constructQueryResultBindingsToQLeverJSON`
 StringTriple createStringTriple(const EvaluatedTriple& evaluatedTriple,

@@ -98,10 +98,13 @@ std::vector<EvaluatedTriple> instantiateBatch(
 }
 
 // _____________________________________________________________________________
-std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
+namespace {
+// Return true if `formatTerm(term, includeDataType)` is `term.rdfTermString_`
+// itself, i.e. the term gets no `"..."^^<datatype>` annotation.
+bool isInFinalForm(const EvaluatedTermData& term, bool includeDataType) {
   if (term.rdfTermDataType_ == nullptr) {
     // IRI, blank node, or vocab-indexed literal: already in final form.
-    return term.rdfTermString_;
+    return true;
   }
   const auto* i = static_cast<const char*>(XSD_INT_TYPE);
   const auto* d = static_cast<const char*>(XSD_DECIMAL_TYPE);
@@ -109,9 +112,15 @@ std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
 
   // Note: XSD_DOUBLE_TYPE values (for example "NaN", "INF", "-INF") always
   // include the datatype.
-  if (!includeDataType &&
-      (term.rdfTermDataType_ == i || term.rdfTermDataType_ == d ||
-       (term.rdfTermDataType_ == b && term.rdfTermString_.length() > 1))) {
+  return !includeDataType &&
+         (term.rdfTermDataType_ == i || term.rdfTermDataType_ == d ||
+          (term.rdfTermDataType_ == b && term.rdfTermString_.length() > 1));
+}
+}  // namespace
+
+// _____________________________________________________________________________
+std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
+  if (isInFinalForm(term, includeDataType)) {
     return term.rdfTermString_;
   }
   return absl::StrCat("\"", term.rdfTermString_, "\"^^<", term.rdfTermDataType_,
@@ -155,6 +164,46 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
   } else {
     AD_FAIL();  // unreachable
   }
+}
+
+// _____________________________________________________________________________
+void appendFormattedTriple(std::string& out,
+                           const EvaluatedTriple& evaluatedTriple,
+                           const ad_utility::MediaType& format) {
+  using enum ad_utility::MediaType;
+  if (format != turtle && format != ntriples) {
+    out += formatTriple(evaluatedTriple, format);
+    return;
+  }
+  const auto& [subject, predicate, object] = evaluatedTriple;
+  const bool includeDataType = (format == ntriples);
+  // Append a term as `formatTerm` formats it, without an intermediate string
+  // for terms that are already in final form.
+  auto appendTerm = [&out, includeDataType](const EvaluatedTermData& term) {
+    if (isInFinalForm(term, includeDataType)) {
+      out += term.rdfTermString_;
+    } else {
+      out += formatTerm(term, includeDataType);
+    }
+  };
+  appendTerm(*subject);
+  out += ' ';
+  appendTerm(*predicate);
+  out += ' ';
+  // As in `formatTriple`, only literals (strings starting with ") are escaped.
+  if (isInFinalForm(*object, includeDataType)) {
+    std::string_view o = object->rdfTermString_;
+    if (ql::starts_with(o, '"')) {
+      out += RdfEscaping::validRDFLiteralFromNormalized(o);
+    } else {
+      out += o;
+    }
+  } else {
+    // The `"..."^^<datatype>` form always starts with ".
+    out += RdfEscaping::validRDFLiteralFromNormalized(
+        formatTerm(*object, includeDataType));
+  }
+  out += " .\n";
 }
 
 // _____________________________________________________________________________
