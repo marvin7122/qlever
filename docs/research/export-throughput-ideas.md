@@ -49,9 +49,9 @@ i7-6700, binary 6c11313b (E4 + pool), 3 reps, no multiplexing, output bytes as e
 | E9b | Read-ahead depth *d* = 1 vs 4 vs 16 | E9 (*d* = 1) hid little: a cold batch takes 3.3 ms, a warm one 1.2 ms | Cold −15 % / −25 % against *d* = 1 | `research/pool-prefetch`, Ural #5618 |
 | E10 | Prefetch the pool's page states and bytes *d* reads ahead | `tryCopy` 10.6 %, about 56 ns per 16-byte copy | Warm −5 % | `research/pool-copy-prefetch`, Ural #5616 |
 | E11 | Batch decompression through reused buffers into one arena (the idea of #3522/#3526) | Decompression 17.3 / 25.7 %; two strings and two 8× zero-fills per word | Warm −8 / −10 % | `research/arena-decompress`, Ural #5617; port #3522 if confirmed |
-| E12 | Switch off the CONSTRUCT `IdCache` | `evaluateVariableByColumn` 12.7 % self; LRU upkeep for IDs that almost never repeat | Warm −8 % | `research/no-id-cache`, building |
+| E12 | Switch off the CONSTRUCT `IdCache` | `evaluateVariableByColumn` 12.7 % self; LRU upkeep for IDs that almost never repeat | Warm −8 % | `research/no-id-cache` cc582b218, tests pass (21 + 7), Ural #5620 |
 | E13 | Terms as views into the batch result (#200, #232, #268) | Result vector 40 % inclusive; `make_shared` + release per term | Warm −15 % | `research/terms-as-views`, building |
-| E14 | Format triples straight into the stream buffer | One `std::string` per triple, then copied: libc 4.6 % + jemalloc 3.2 % + growth 2.4 % | Warm −8 % | `research/format-into-buffer`, building |
+| E14 | Format triples straight into the stream buffer | One `std::string` per triple, then copied: libc 4.6 % + jemalloc 3.2 % + growth 2.4 % | Warm −8 % | `research/format-into-buffer` 50e7f7075 (`export-construct-format-chunks`: triples packed into ≥ 64 KiB strings, Turtle/N-Triples appended without per-term copies), tests pass (21 + 7), Ural #5621 |
 | E47 | Huge pages for the rank directory (parameter exists) | `positionOfIndex`: 14 % of dTLB, 15 % of L3 misses; no huge pages anywhere | Warm −1 to −2 % | `research/buffer-pool`, Ural #5619 |
 
 ## Backlog
