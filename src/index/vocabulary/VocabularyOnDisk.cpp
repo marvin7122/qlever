@@ -17,11 +17,13 @@
 #include <array>
 #include <atomic>
 
+#include "backports/filesystem.h"
 #include "global/Constants.h"
 #include "global/RuntimeParameters.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
+#include "util/Log.h"
 #include "util/MmapVector.h"
 #include "util/StringUtils.h"
 #include "util/Views.h"
@@ -340,10 +342,26 @@ void readOffsetRuns(ad_utility::BatchManagerBase& manager, int fd,
 
 // _____________________________________________________________________________
 std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
-    ad_utility::BatchManagerBase& manager,
-    ql::span<const size_t> indices) const {
+    ad_utility::BatchManagerBase& manager, ql::span<const size_t> indices,
+    ad_utility::BufferPool* offsetsPool) const {
   for (size_t index : indices) {
     AD_CONTRACT_CHECK(index < size());
+  }
+  if (offsetsPool != nullptr) {
+    // The pool copies each pair separately (the pairs of consecutive indices
+    // overlap in the file) and loads the missing pages in one batch.
+    static_assert(sizeof(OffsetPair) == 2 * sizeof(uint64_t));
+    std::vector<OffsetPair> offsetPairs(indices.size());
+    const std::vector<size_t> sizes(indices.size(), sizeof(OffsetPair));
+    std::vector<uint64_t> fileOffsets(indices.size());
+    std::vector<char*> targets(indices.size());
+    for (size_t i = 0; i < indices.size(); ++i) {
+      fileOffsets[i] = indices[i] * sizeof(uint64_t);
+      targets[i] = reinterpret_cast<char*>(&offsetPairs[i]);
+    }
+    const auto loader = loaderFor(manager);
+    offsetsPool->readAll(sizes, fileOffsets, targets, &loader);
+    return offsetPairs;
   }
   std::vector<uint64_t> offsets;
   const auto runs = splitIntoOffsetRuns(indices, offsets);
@@ -364,7 +382,8 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
 // _____________________________________________________________________________
 VocabBatchLookupResult VocabularyOnDisk::readStrings(
     ad_utility::BatchManagerBase& manager,
-    ql::span<const OffsetPair> offsetPairs) const {
+    ql::span<const OffsetPair> offsetPairs,
+    ad_utility::BufferPool* wordsPool) const {
   // Read the string data. String `i` starts at `offset_` with length
   // `nextOffset_ - offset_`; the strings are packed contiguously into `buffer`.
   const size_t numIndices = offsetPairs.size();
@@ -389,8 +408,124 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     bufferOffset += size;
   }
 
-  manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targets));
+  if (wordsPool != nullptr) {
+    const auto loader = loaderFor(manager);
+    wordsPool->readAll(sizes, fileOffsets, targets, &loader);
+  } else {
+    manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targets));
+  }
   return VocabBatchLookupData::asResult(std::move(data));
+}
+
+// _____________________________________________________________________________
+VocabularyOnDisk::BufferPools* VocabularyOnDisk::bufferPools(
+    BufferPoolSettings settings) const {
+  if (bufferPools_ == nullptr || bufferPools_->failed_) {
+    return nullptr;
+  }
+  auto& pools = *bufferPools_;
+  const bool elastic = settings.elastic_;
+  size_t totalBudget = settings.totalBudget_;
+  if (!settings.enabled()) {
+    std::lock_guard lock{pools.mutex_};
+    pools.elasticRegistration_.reset();
+    pools.elastic_ = false;
+    pools.budget_ = 0;
+    if (pools.words_ != nullptr) {
+      // Keep the pools alive for lookups that are still using them.
+      pools.words_->setBudget(0);
+      pools.offsets_->setBudget(0);
+      pools.words_->evictTowardsBudget(pools.words_->numPages());
+      pools.offsets_->evictTowardsBudget(pools.offsets_->numPages());
+    }
+    return nullptr;
+  }
+  if (elastic) {
+    // The controller sets the budgets; keep its bounds current (cheap).
+    auto& controller = ad_utility::BufferPoolBudgetController::global();
+    controller.setExplicitCeiling(totalBudget);
+    controller.setReserve(settings.reserve_);
+    if (pools.elastic_.load()) {
+      return &pools;
+    }
+  } else if (!pools.elastic_.load() && pools.budget_.load() == totalBudget) {
+    return &pools;
+  }
+  std::lock_guard lock{pools.mutex_};
+  if (pools.failed_) {
+    return nullptr;
+  }
+  if (elastic) {
+    // Start at the floor; the controller grows the budget while memory is
+    // free.
+    totalBudget = ad_utility::BufferPoolBudgetConfig{}.floorBytes;
+  }
+  const auto wordsSize =
+      static_cast<size_t>(ql::filesystem::file_size(pools.filename_));
+  const auto offsetsSize = static_cast<size_t>(
+      ql::filesystem::file_size(pools.filename_ + std::string{offsetSuffix_}));
+  // Split the budget in proportion to the file sizes (each lookup reads from
+  // both files, and the words file is the larger one).
+  const size_t wordsBudget = ad_utility::bufferPoolBudgetShare(
+      totalBudget, wordsSize, wordsSize + offsetsSize);
+  const size_t offsetsBudget = totalBudget - wordsBudget;
+  if (pools.words_ == nullptr) {
+    // A constructed pool is always usable; creation failures (unreadable
+    // file, no address space, unsupported platform) throw, and reading
+    // continues without pools.
+    std::unique_ptr<ad_utility::BufferPool> words;
+    std::unique_ptr<ad_utility::BufferPool> offsets;
+    try {
+      words = std::make_unique<ad_utility::BufferPool>(pools.filename_,
+                                                       wordsSize, wordsBudget);
+      offsets = std::make_unique<ad_utility::BufferPool>(
+          pools.filename_ + std::string{offsetSuffix_}, offsetsSize,
+          offsetsBudget);
+    } catch (const std::exception& e) {
+      AD_LOG_WARN << "Could not create the vocabulary buffer pools for "
+                  << pools.filename_ << " (" << e.what()
+                  << "); reading without them" << std::endl;
+      pools.failed_ = true;
+      return nullptr;
+    }
+    AD_LOG_INFO << "Vocabulary buffer pools for " << pools.filename_ << ": "
+                << wordsBudget << " + " << offsetsBudget << " bytes"
+                << (elastic ? " (elastic budget, starting at the floor)" : "")
+                << ", " << (words->usesDirectIo() ? "O_DIRECT" : "page cache")
+                << std::endl;
+    pools.words_ = std::move(words);
+    pools.offsets_ = std::move(offsets);
+  } else if (!elastic) {
+    // Switching from the elastic to a fixed budget: stop the controller from
+    // setting the budgets first.
+    pools.elasticRegistration_.reset();
+    pools.elastic_ = false;
+    pools.words_->setBudget(wordsBudget);
+    pools.offsets_->setBudget(offsetsBudget);
+  }
+  if (elastic) {
+    if (pools.elasticRegistration_ == nullptr) {
+      pools.elasticRegistration_ =
+          ad_utility::BufferPoolBudgetController::global().add(
+              {pools.words_.get(), pools.offsets_.get()});
+    }
+    pools.elastic_ = true;
+    pools.budget_ = 0;
+  } else {
+    pools.budget_ = totalBudget;
+  }
+  return &pools;
+}
+
+// _____________________________________________________________________________
+ad_utility::BufferPool::Loader VocabularyOnDisk::loaderFor(
+    ad_utility::BatchManagerBase& manager) {
+  return [&manager](int fd, ql::span<const size_t> numBytes,
+                    ql::span<const uint64_t> offsets, ql::span<char*> targets) {
+    // The targets are page-aligned and the sizes whole pages, as `O_DIRECT`
+    // requires; the manager reads them as one batch (io_uring if available).
+    manager.wait(manager.addBatch(fd, numBytes, offsets, targets));
+  };
 }
 
 // _____________________________________________________________________________
@@ -413,6 +548,20 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
 
   // The page-cache fast path belongs to the manager; the runtime parameter can
   // change between two lookups.
+  BufferPools* pools = bufferPools(BufferPoolSettings{
+      getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolSize_>()
+          .getBytes(),
+      getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolAuto_>(),
+      getRuntimeParameter<&RuntimeParameters::vocabularyBufferPoolReserve_>()
+          .getBytes()});
+  if (pools != nullptr) {
+    // The pools load their missing pages with `O_DIRECT`, which the page
+    // cache cannot serve, so the fast path would only add a failing syscall.
+    manager->setPageCacheFastPath(false);
+    auto offsetPairs =
+        readOffsetPairs(*manager, indices, pools->offsets_.get());
+    return readStrings(*manager, offsetPairs, pools->words_.get());
+  }
   manager->setPageCacheFastPath(
       getRuntimeParameter<&RuntimeParameters::vocabularyPageCacheFastPath_>());
   auto offsetPairs = readOffsetPairs(*manager, indices);
@@ -503,6 +652,10 @@ void VocabularyOnDisk::open(const std::string& filename) {
   id_ = nextId++;
   file_.open(filename, "r");
   offsetsFile_.open(filename + offsetSuffix_, "r");
+  // The buffer pools are created on the first lookup that uses them (see
+  // `bufferPools`); they open their own `O_DIRECT` descriptors.
+  bufferPools_ = std::make_unique<BufferPools>();
+  bufferPools_->filename_ = filename;
 
   // Read the offset count from the `MmapVectorMetaData` trailer, which is
   // the canonical layout used by both old and new vocabulary files.

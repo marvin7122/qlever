@@ -201,6 +201,9 @@ TEST(RuntimeParameters, allParametersAreRegistered) {
   check(params.vocabularyInternalRankLookup_);
   check(params.vocabularyInternalRankPrefetchDistance_);
   check(params.vocabularyInternalRankHugePages_);
+  check(params.vocabularyBufferPoolSize_);
+  check(params.vocabularyBufferPoolAuto_);
+  check(params.vocabularyBufferPoolReserve_);
   check(params.logLevel_);
   check(params.constructDeduplication_);
   EXPECT_EQ(totalSize,

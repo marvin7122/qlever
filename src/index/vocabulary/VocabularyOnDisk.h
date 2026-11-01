@@ -11,7 +11,9 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -19,6 +21,8 @@
 #include "index/vocabulary/VocabularyBinarySearchMixin.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Algorithm.h"
+#include "util/BufferPool.h"
+#include "util/BufferPoolBudget.h"
 #include "util/File.h"
 #include "util/Generator.h"
 #include "util/IoUringManager.h"
@@ -56,6 +60,44 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>
       ioManagers_;
+
+  // The buffer-pool runtime parameters of one lookup, resolved in one place
+  // from `vocabulary-buffer-pool-size`, `-auto` and `-reserve`, so the mode
+  // logic (off / fixed / elastic) lives in `bufferPools` only.
+  struct BufferPoolSettings {
+    size_t totalBudget_ = 0;
+    bool elastic_ = false;
+    size_t reserve_ = 0;
+    bool enabled() const { return totalBudget_ > 0 || elastic_; }
+  };
+
+  // Buffer pools for `file_` and `offsetsFile_` (see
+  // `vocabulary-buffer-pool-size`), created on first use and shared by all
+  // lookups. The total budget is split between the two files in proportion to
+  // their sizes. Only batch lookups (`lookupBatch`) read through the pools:
+  // they are the export hot path, where one batched load serves many words.
+  // Single-word lookups (`operator[]`, binary search, `scanAll`) keep the
+  // direct paths; for one word there is no batch to amortize a page load
+  // over. With a fixed budget the size is per vocabulary instance; the
+  // elastic budget is shared process-wide by its controller.
+  struct BufferPools {
+    std::string filename_;
+    std::mutex mutex_;
+    // The total budget the pools were last set to (0 = not created yet).
+    std::atomic<size_t> budget_{0};
+    // Set if creating the pools failed (e.g. no address space): the lookups
+    // then take the other paths.
+    std::atomic<bool> failed_{false};
+    std::unique_ptr<ad_utility::BufferPool> words_;
+    std::unique_ptr<ad_utility::BufferPool> offsets_;
+    // With `vocabulary-buffer-pool-auto`: the registration with the elastic
+    // budget controller. Declared after the pools, so it is destroyed (and
+    // the controller stops using the pools) before them.
+    std::atomic<bool> elastic_{false};
+    std::unique_ptr<ad_utility::BufferPoolBudgetController::Registration>
+        elasticRegistration_;
+  };
+  mutable std::unique_ptr<BufferPools> bufferPools_;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
@@ -241,15 +283,34 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // stores one `uint64_t` per index, and the pair of index `i` is entries `i`
   // and `i + 1`, so a run of `k` consecutive indices is read as one range of
   // `k + 1` entries.
-  std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
-                                          ql::span<const size_t> indices) const;
+  // With `offsetsPool` (not null), the pairs are read through that buffer
+  // pool instead (its missing pages through `manager`).
+  std::vector<OffsetPair> readOffsetPairs(
+      ad_utility::BatchManagerBase& manager, ql::span<const size_t> indices,
+      ad_utility::BufferPool* offsetsPool = nullptr) const;
 
   // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1, read the
   // string data from `file_` into one contiguous buffer in a single batched
   // read via `manager`, and return it as a `VocabBatchLookupResult`.
+  // With `wordsPool` (not null), the words are read through that buffer pool
+  // instead (its missing pages through `manager`).
   VocabBatchLookupResult readStrings(
       ad_utility::BatchManagerBase& manager,
-      ql::span<const OffsetPair> offsetPairs) const;
+      ql::span<const OffsetPair> offsetPairs,
+      ad_utility::BufferPool* wordsPool = nullptr) const;
+
+  // The buffer pools (created on first use), or null if they are off or
+  // cannot be created. Without `settings.elastic_`, the pools have the fixed
+  // total budget `settings.totalBudget_` (off if zero; budgets updated when
+  // it changes). With it, the pools are registered with the process-wide
+  // `BufferPoolBudgetController`, which sets their budgets;
+  // `settings.totalBudget_`, if positive, is its upper bound, and
+  // `settings.reserve_` the free memory it leaves.
+  BufferPools* bufferPools(BufferPoolSettings settings) const;
+
+  // A `BufferPool::Loader` that reads the missing pages through `manager`.
+  static ad_utility::BufferPool::Loader loaderFor(
+      ad_utility::BatchManagerBase& manager);
 };
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARYONDISK_H

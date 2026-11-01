@@ -78,6 +78,9 @@ RuntimeParameters::RuntimeParameters() {
   add(vocabularyInternalRankLookup_);
   add(vocabularyInternalRankPrefetchDistance_);
   add(vocabularyInternalRankHugePages_);
+  add(vocabularyBufferPoolSize_);
+  add(vocabularyBufferPoolAuto_);
+  add(vocabularyBufferPoolReserve_);
 
   // Propagate runtime log level changes immediately to the global atomic in
   // Log.h. The action fires once immediately on registration, so the atomic is

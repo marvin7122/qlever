@@ -395,6 +395,8 @@ addLinkAndDiscoverTest(BitUtilsTest)
 
 addLinkAndDiscoverTest(HyperLogLogTest)
 addLinkAndDiscoverTestNoLibs(BitVectorWithRankTest qlever_util)
+addLinkAndDiscoverTestNoLibs(BufferPoolTest qlever_util)
+addLinkAndDiscoverTestNoLibs(BufferPoolBudgetTest qlever_util)
 
 addLinkAndDiscoverTest(NBitIntegerTest)
 

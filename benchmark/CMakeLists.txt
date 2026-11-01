@@ -42,4 +42,8 @@ if (NOT _NO_BENCHMARK)
 
     addAndLinkBenchmark(TieVsArrayBenchmark engine testUtil)
 
+    # Buffer pool vs `pread`: hits, eviction churn, 1 and 8 threads.
+    add_executable(BufferPoolBenchmark BufferPoolBenchmark.cpp)
+    qlever_target_link_libraries(BufferPoolBenchmark qlever_util)
+
 endif()
