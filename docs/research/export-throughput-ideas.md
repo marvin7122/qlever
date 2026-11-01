@@ -10,6 +10,25 @@ The backlog of the export throughput research (log: marvin7122/qlever#324). Each
 - **Warm profile of E8a** (sequential, 5.2 s, one export thread): CONSTRUCT and Turtle formatting 46.9 %, decompression 17.3 %, lookup bookkeeping 14.0 %, memory allocation 11.5 %; `BufferPool::tryCopy` 10.6 % (9.3 % in `memcpy`); `evaluateVariableByColumn` 12.7 % self; `_Sp_counted_base::_M_release` 7.3 %; the result vector of `idsToStringAndType` 40.0 % inclusive.
 - **Cold profile of E8a.** Waiting in `io_uring_submit`: 44.2 % sequential, 76.2 % scattered; about 55,000 `io_uring_enter` calls in the sequential export.
 
+## Hardware counters (perfbox, 2026-11-01)
+
+i7-6700, binary 6c11313b (E4 + pool), 3 reps, no multiplexing, output bytes as expected. Raw data: perfbox `/root/hwcounters-2026-11-01/`.
+
+| | Seq. off warm | Seq. pool warm | Seq. pool cold | Scat. off warm | Scat. pool warm | Scat. pool cold |
+|---|---|---|---|---|---|---|
+| Query time | 18.91 s | 5.83 s | 15.79 s | 3.09 s | 1.04 s | 6.50 s |
+| IPC | 0.97 | 1.82 | 1.38 | 1.09 | 1.74 | 1.32 |
+| LLC load misses per word | 10.2 | 9.4 | 26.0 | – | – | – |
+| dTLB load misses per word | 5.39 | 4.44 | 6.38 | – | – | – |
+| Cycles in dTLB page walks | 1.0 % | 7.0 % | 5.1 % | 1.0 % | 4.9 % | 1.7 % |
+| Cycles stalled on L3 misses | 8.3 % | 12.5 % | 13.2 % | 8.2 % | 9.8 % | 6.6 % |
+| Branch misses per word | 28.6 | 23.1 | 40.2 | – | – | – |
+
+- **Miss sites, sequential warm with the pool:** small `memcpy` from `tryCopy` 54 % of dTLB misses; the page-state load in `tryCopy` 29 % of L3 misses; `positionOfIndex` 14 % dTLB / 15 % L3; `fsst_decompress` 12 % dTLB / 18.5 % L3.
+- **Huge pages:** THP mode `madvise` (also on Ural); `AnonHugePages` 0 kB at an RSS of 27.9 GB.
+- **Top cycles:** `evaluateVariableByColumn` 11.2 %, `fsst_decompress` 6.4 %, jemalloc 5.3 %, `instantiateBatch` 4.7 %, `_M_release` 4.5 %, `__introsort_loop` 3.2 %.
+- **Consequences:** E10 targets the largest L3-miss site; E47 promoted (no code); E18 only for the offsets pool (2 MB pages in the scattered words pool would load 2 MB per 4 KiB miss and break the budget accounting); E45 supported; E62 dropped (the cost is the memory access, not the call); E35 confirmed at about 3 %.
+
 ## Done
 
 | Id | Change | Result | Status |
@@ -33,7 +52,7 @@ The backlog of the export throughput research (log: marvin7122/qlever#324). Each
 | E12 | Switch off the CONSTRUCT `IdCache` | `evaluateVariableByColumn` 12.7 % self; LRU upkeep for IDs that almost never repeat | Warm −8 % | `research/no-id-cache`, building |
 | E13 | Terms as views into the batch result (#200, #232, #268) | Result vector 40 % inclusive; `make_shared` + release per term | Warm −15 % | `research/terms-as-views`, building |
 | E14 | Format triples straight into the stream buffer | One `std::string` per triple, then copied: libc 4.6 % + jemalloc 3.2 % + growth 2.4 % | Warm −8 % | `research/format-into-buffer`, building |
-| HW | Hardware counters (IPC, L1/L3, dTLB/iTLB, walk cycles, stalls) with call sites | Ural and Wolga forbid `perf`; perfbox allows it | Decides E18, E36, E45, E46, E47, E50, E53, E56 | perfbox, running |
+| E47 | Huge pages for the rank directory (parameter exists) | `positionOfIndex`: 14 % of dTLB, 15 % of L3 misses; no huge pages anywhere | Warm −1 to −2 % | `research/buffer-pool`, Ural #5619 |
 
 ## Backlog
 
@@ -65,7 +84,7 @@ The backlog of the export throughput research (log: marvin7122/qlever#324). Each
 | E36 | Views into pool memory with pinned pages instead of copies | `tryCopy` 10.6 % | Warm −5 % |
 | E37 | E36 + E11: decompress straight from pool memory | Two copies per word become one | Warm −3 % on top |
 | E47 | Huge pages for the rank directory (parameter exists, never measured) | In-memory words 1.1–2.9 % | Warm −1 % |
-| E62 | Fixed-size copies on the pool's hot path | `memcpy` 9.3 % for 16 and about 12 bytes | Warm −2 to −4 % |
+| E62 | Fixed-size copies on the pool's hot path | Dropped: the counters put the cost in the memory access (dTLB/L3 misses), not in the call | — |
 | E63 | Validate once per page instead of per read | Two state loads per read; sorted reads share pages | Warm −2 % |
 | E67 | Avoid TLB shootdowns under memory pressure (batched evictions) | #292: 6,446 `memory.high` events at +4 GiB | Under a limit −5 % |
 
