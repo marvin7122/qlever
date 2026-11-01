@@ -11,6 +11,8 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
+#include <gtest/gtest_prod.h>
+
 #include <memory>
 #include <string>
 #include <string_view>
@@ -23,6 +25,7 @@
 #include "util/Generator.h"
 #include "util/IoUringManager.h"
 #include "util/Iterators.h"
+#include "util/ReadOnlyMmap.h"
 #include "util/Serializer/Serializer.h"
 #include "util/ThreadSafeQueue.h"
 #include "util/UninitializedAllocator.h"
@@ -43,6 +46,15 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // that records the number of offsets. The number of words is therefore the
   // number of stored offsets minus one.
   ad_utility::File offsetsFile_;
+
+  // Read-only mapping of the offsets region of `offsetsFile_` (the trailer
+  // stays unmapped). Established by `open`; when the mapping fails, it stays
+  // unmapped and all reads fall back to positioned I/O. The mapping is owned
+  // here so every lookup path below shares one lifetime with the files.
+  ad_utility::ReadOnlyMmap offsetsMapping_;
+  // White-box test for the unmapped fallback (releases the mapping to
+  // simulate a failed `map`).
+  FRIEND_TEST(VocabularyOnDisk, LookupBatchWorksWhenOffsetsNotMemoryMapped);
 
   // The number of words stored in the vocabulary.
   size_t size_ = 0;
@@ -140,6 +152,13 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // Get the number of words in the vocabulary.
   size_t size() const { return size_; }
 
+  // Whether the `.offsets` file is currently served from the memory mapping.
+  // A read-only diagnostic: all lookup paths check the mapping themselves
+  // and need no caller-side branching.
+  [[nodiscard]] bool offsetsAreMemoryMapped() const {
+    return offsetsMapping_.isMapped();
+  }
+
   // Default constructor for an empty vocabulary.
   VocabularyOnDisk() = default;
 
@@ -234,10 +253,23 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   struct OffsetPair {
     uint64_t offset_;
     uint64_t nextOffset_;
+
+    [[nodiscard]] uint64_t offset() const noexcept { return offset_; }
+    [[nodiscard]] uint64_t nextOffset() const noexcept { return nextOffset_; }
+    [[nodiscard]] size_t wordSize() const {
+      AD_CORRECTNESS_CHECK(nextOffset_ >= offset_);
+      return nextOffset_ - offset_;
+    }
   };
 
+  // The `OffsetPair` for word `index`: a pointer dereference into
+  // `offsetsMapping_` when the mapping is active, a single positioned read
+  // otherwise.
+  OffsetPair offsetPairAt(size_t index) const;
+
   // Phase 1 of `lookupBatch`: for each requested index, return its `OffsetPair`
-  // from the `.offsets` file, read in a single batch via `manager`. The file
+  // from the memory mapping of the `.offsets` file when it is active, otherwise
+  // read in a single batch via `manager`. The file
   // stores one `uint64_t` per index, and the pair of index `i` is entries `i`
   // and `i + 1`, so a run of `k` consecutive indices is read as one range of
   // `k + 1` entries.
