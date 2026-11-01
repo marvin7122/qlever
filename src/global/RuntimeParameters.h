@@ -300,6 +300,13 @@ struct RuntimeParameters {
   SizeT vocabularyInternalRankPrefetchDistance_{
       8, "vocabulary-internal-rank-prefetch-distance"};
 
+  // The number of batches of a CONSTRUCT export whose vocabulary words are
+  // read ahead on the global executor while the current batch is evaluated,
+  // so that their pages are in the vocabulary's buffer pool (or the page
+  // cache) when the batch needs them. 0 (the default) turns this off.
+  SizeT exportVocabularyPrefetchBatches_{0,
+                                         "export-vocabulary-prefetch-batches"};
+
   // If set to true, the rank directory above is allocated 2 MiB-aligned and
   // marked for transparent huge pages (`madvise(MADV_HUGEPAGE)`), so that a
   // lookup costs one cache miss instead of one cache miss plus one TLB miss.

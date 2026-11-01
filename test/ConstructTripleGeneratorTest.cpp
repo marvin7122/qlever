@@ -9,10 +9,12 @@
 #include <gmock/gmock.h>
 
 #include "./util/IdTableHelpers.h"
+#include "./util/RuntimeParametersTestHelpers.h"
 #include "./util/TripleComponentTestHelpers.h"
 #include "engine/ConstructTripleGenerator.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/Result.h"
+#include "global/RuntimeParameters.h"
 #include "util/CancellationHandle.h"
 
 namespace {
@@ -299,6 +301,56 @@ TEST_F(ConstructTripleGeneratorTest, acrossBatchBoundary) {
   for (const auto& triple : collected) {
     EXPECT_THAT(triple, matchTriple("<s>", "<p>", "<o>"));
   }
+}
+
+// With `export-vocabulary-prefetch-batches`, the words of the next batches
+// are read ahead; the triples are the same as without, over several batches
+// and a last partial one.
+TEST_F(ConstructTripleGeneratorTest, vocabularyPrefetchDoesNotChangeTriples) {
+  constexpr size_t N = 3 * ConstructTripleGenerator::BATCH_SIZE + 5;
+  std::vector<std::vector<IntOrId>> rows;
+  for (size_t i = 0; i < N; ++i) {
+    rows.push_back({i % 3 == 0 ? idS_ : idO_, i % 2 == 0 ? idP_ : idQ_});
+  }
+  auto result = makeResult(makeIdTableFromVector(rows));
+  auto templateTriples =
+      oneTriple(Variable{"?sub"}, Variable{"?pred"}, iriV("<o>"));
+  VariableToColumnMap varMap;
+  varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
+  varMap[Variable{"?pred"}] = makeAlwaysDefinedColumn(1);
+  auto runWith = [&](size_t distance) {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::exportVocabularyPrefetchBatches_>(distance);
+    auto triples =
+        run(templateTriples, varMap, makeTableWithRange(*result, 0, N));
+    return ::ranges::to_vector(
+        triples | ql::views::transform([](const EvaluatedTriple& triple) {
+          auto [subject, predicate, object] = createStringTriple(triple);
+          return std::array{subject, predicate, object};
+        }));
+  };
+  const auto expected = runWith(0);
+  ASSERT_EQ(expected.size(), N);
+  EXPECT_EQ(runWith(1), expected);
+  EXPECT_EQ(runWith(3), expected);
+}
+
+// An export that is abandoned after its first triple, with prefetches still
+// running, returns; the prefetcher waits for them on destruction.
+TEST_F(ConstructTripleGeneratorTest, vocabularyPrefetchOfAbandonedExport) {
+  constexpr size_t N = 4 * ConstructTripleGenerator::BATCH_SIZE;
+  std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
+  auto result = makeResult(makeIdTableFromVector(rows));
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::exportVocabularyPrefetchBatches_>(size_t{3});
+  VariableToColumnMap varMap;
+  varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
+  auto triples = ConstructTripleGenerator::evaluateTables(
+      oneTriple(Variable{"?sub"}, iriV("<p>"), iriV("<o>")), varMap,
+      singleTableRange(makeTableWithRange(*result, 0, N)), 0, makeConfig());
+  auto it = triples.begin();
+  ASSERT_NE(it, triples.end());
+  EXPECT_THAT(*it, matchTriple("<s>", "<p>", "<o>"));
 }
 
 // After consuming all `ConstructTripleGenerator::BATCH_SIZE` triples in
