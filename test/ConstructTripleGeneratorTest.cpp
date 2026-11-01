@@ -106,6 +106,14 @@ class ConstructTripleGeneratorTest : public ::testing::Test {
   }
 
   // Run `ConstructTripleGenerator::evaluateTables` over a single
+  // `TableWithRange` without consuming the result.
+  ad_utility::InputRangeTypeErased<EvaluatedTriple> evaluate(
+      Triples triples, VariableToColumnMap varMap, TableWithRange table) {
+    return ConstructTripleGenerator::evaluateTables(
+        triples, varMap, singleTableRange(std::move(table)), 0, makeConfig());
+  }
+
+  // Run `ConstructTripleGenerator::evaluateTables` over a single
   // `TableWithRange` and collect `EvaluatedTriple`s.
   std::vector<EvaluatedTriple> run(
       Triples triples, VariableToColumnMap varMap, TableWithRange table,
@@ -345,9 +353,8 @@ TEST_F(ConstructTripleGeneratorTest, vocabularyPrefetchOfAbandonedExport) {
       &RuntimeParameters::exportVocabularyPrefetchBatches_>(size_t{3});
   VariableToColumnMap varMap;
   varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
-  auto triples = ConstructTripleGenerator::evaluateTables(
-      oneTriple(Variable{"?sub"}, iriV("<p>"), iriV("<o>")), varMap,
-      singleTableRange(makeTableWithRange(*result, 0, N)), 0, makeConfig());
+  auto triples = evaluate(oneTriple(Variable{"?sub"}, iriV("<p>"), iriV("<o>")),
+                          varMap, makeTableWithRange(*result, 0, N));
   auto it = triples.begin();
   ASSERT_NE(it, triples.end());
   EXPECT_THAT(*it, matchTriple("<s>", "<p>", "<o>"));
