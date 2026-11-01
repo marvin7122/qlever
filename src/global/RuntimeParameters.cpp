@@ -80,6 +80,7 @@ RuntimeParameters::RuntimeParameters() {
   add(vocabularyInternalRankHugePages_);
   add(vocabularyBufferPoolSize_);
   add(vocabularyBufferPoolAuto_);
+  add(vocabularyBufferPoolPrefetchDistance_);
   add(vocabularyBufferPoolReserve_);
 
   // Propagate runtime log level changes immediately to the global atomic in

@@ -329,6 +329,12 @@ struct RuntimeParameters {
   // upper bound. A separate flag, because a size cannot also hold "auto".
   Bool vocabularyBufferPoolAuto_{false, "vocabulary-buffer-pool-auto"};
 
+  // While a batch lookup copies read `i` from a buffer pool, the page states
+  // and the bytes of read `i + distance` are prefetched into the CPU cache,
+  // so that the cache misses of consecutive reads overlap. 0 turns this off.
+  SizeT vocabularyBufferPoolPrefetchDistance_{
+      0, "vocabulary-buffer-pool-prefetch-distance"};
+
   // The free memory that the elastic budget leaves for everything else. 0
   // (the default) means max(256 MiB, 5 % of the RAM or of the cgroup's
   // memory limit).

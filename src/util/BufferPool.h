@@ -215,6 +215,10 @@ class BufferPool {
     if (numBytes == 0) {
       return;
     }
+    // The state words are read first (by `tryCopy`), and in a large pool
+    // they miss the cache as often as the bytes do.
+    __builtin_prefetch(&states_[firstPageOf(offset)], 0, 3);
+    __builtin_prefetch(&states_[lastPageOf(offset, numBytes)], 0, 3);
     __builtin_prefetch(region_ + offset, 0, 3);
     __builtin_prefetch(region_ + offset + numBytes - 1, 0, 3);
   }

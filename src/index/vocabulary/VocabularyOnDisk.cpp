@@ -360,7 +360,10 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
       targets[i] = reinterpret_cast<char*>(&offsetPairs[i]);
     }
     const auto loader = loaderFor(manager);
-    offsetsPool->readAll(sizes, fileOffsets, targets, &loader);
+    offsetsPool->readAll(
+        sizes, fileOffsets, targets, &loader,
+        getRuntimeParameter<
+            &RuntimeParameters::vocabularyBufferPoolPrefetchDistance_>());
     return offsetPairs;
   }
   std::vector<uint64_t> offsets;
@@ -410,7 +413,10 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
 
   if (wordsPool != nullptr) {
     const auto loader = loaderFor(manager);
-    wordsPool->readAll(sizes, fileOffsets, targets, &loader);
+    wordsPool->readAll(
+        sizes, fileOffsets, targets, &loader,
+        getRuntimeParameter<
+            &RuntimeParameters::vocabularyBufferPoolPrefetchDistance_>());
   } else {
     manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targets));
   }

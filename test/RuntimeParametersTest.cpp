@@ -203,6 +203,7 @@ TEST(RuntimeParameters, allParametersAreRegistered) {
   check(params.vocabularyInternalRankHugePages_);
   check(params.vocabularyBufferPoolSize_);
   check(params.vocabularyBufferPoolAuto_);
+  check(params.vocabularyBufferPoolPrefetchDistance_);
   check(params.vocabularyBufferPoolReserve_);
   check(params.logLevel_);
   check(params.constructDeduplication_);
