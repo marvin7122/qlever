@@ -9,10 +9,12 @@
 #include <gmock/gmock.h>
 
 #include "./util/IdTableHelpers.h"
+#include "./util/RuntimeParametersTestHelpers.h"
 #include "./util/TripleComponentTestHelpers.h"
 #include "engine/ConstructTripleGenerator.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/Result.h"
+#include "global/RuntimeParameters.h"
 #include "util/CancellationHandle.h"
 
 namespace {
@@ -382,6 +384,30 @@ TEST_F(ConstructTripleGeneratorTest, idCacheIsSharedAcrossBatches) {
   const EvaluatedTerm& fromBatch0 = collected.front().subject_;
   const EvaluatedTerm& fromBatch1 = collected.back().subject_;
   EXPECT_EQ(fromBatch0.get(), fromBatch1.get());
+}
+
+// With `export-construct-id-cache` off, the triples are the same, and the term
+// of an `Id` is evaluated once per batch instead of once per export.
+TEST_F(ConstructTripleGeneratorTest, idCacheCanBeTurnedOff) {
+  constexpr size_t N = ConstructTripleGenerator::BATCH_SIZE + 1;
+  std::vector<std::vector<IntOrId>> rows(N, std::vector<IntOrId>{idS_});
+  auto result = makeResult(makeIdTableFromVector(rows));
+  auto templateTriples = oneTriple(Variable{"?sub"}, iriV("<p>"), iriV("<o>"));
+  VariableToColumnMap varMap;
+  varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::exportConstructIdCache_>(
+          false);
+
+  auto collected =
+      run(templateTriples, varMap, makeTableWithRange(*result, 0, N));
+  ASSERT_EQ(collected.size(), N);
+  for (const auto& triple : collected) {
+    EXPECT_THAT(triple, matchTriple("<s>", "<p>", "<o>"));
+  }
+  // Within batch 0 the rows share one term; batch 1 evaluated its own.
+  EXPECT_EQ(collected[0].subject_.get(), collected[1].subject_.get());
+  EXPECT_NE(collected.front().subject_.get(), collected.back().subject_.get());
 }
 
 // =============================================================================

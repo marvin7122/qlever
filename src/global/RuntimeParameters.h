@@ -329,6 +329,11 @@ struct RuntimeParameters {
   // upper bound. A separate flag, because a size cannot also hold "auto".
   Bool vocabularyBufferPoolAuto_{false, "vocabulary-buffer-pool-auto"};
 
+  // If set to false, a CONSTRUCT export does not use its LRU cache of
+  // evaluated `Id`s (see `ConstructTripleGenerator::makeIdCache`), which only
+  // pays off when `Id`s repeat across batches.
+  Bool exportConstructIdCache_{true, "export-construct-id-cache"};
+
   // The free memory that the elastic budget leaves for everything else. 0
   // (the default) means max(256 MiB, 5 % of the RAM or of the cgroup's
   // memory limit).
