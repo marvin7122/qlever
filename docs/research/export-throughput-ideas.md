@@ -120,3 +120,20 @@ The backlog of the export throughput research (log: marvin7122/qlever#324). Each
 | E53 | BOLT on top of PGO | Front-end stalls (to be confirmed by iTLB/L1i counters) | Warm −5 % |
 | E55 | Check that the benchmark client is not the limit | Client hashes 505 MB in Python | Measurement |
 | E68 | Measurement hygiene: record CPU frequency, pin both arms to one core, report noise | Gains of 2–5 % now in play | Measurement |
+
+### Operating environment: concurrent, unknown queries
+
+Constraint: no preparation at server startup; the server sees many concurrent queries of unknown shape.
+
+| Id | Idea | Data / reasoning | Prediction |
+|---|---|---|---|
+| E69 | Replay a mixed workload (interactive queries + large exports, concurrent clients); throughput and p50/p99 per query class | All numbers so far: one export on an idle machine | Measurement; baseline for E70–E78 |
+| E70 | Scan-resistant pool admission (probation segment, 2Q/LRU-K style) | A one-pass export can push the hot pages of interactive queries out of a CLOCK pool | Interactive latency after a large export unchanged |
+| E71 | Split the pool budget by hit rate per byte, measured online, instead of by file size | E9 server log: 9.76 GB words + 6.24 GB offsets (proportional to file size); one offsets page serves 512 lookups | Same budget, cold-ish mixed workload −10 % |
+| E72 | I/O priority: interactive reads before export reads (`ioprio` per request or a separate ring) | An export keeps up to 256 reads in flight | Interactive p99 under a concurrent export −50 % |
+| E73 | Parallelism from current load: exports use idle cores only | Applies to E15/E27 | Alone full speedup; under load interactive p99 unchanged |
+| E74 | Memory arbitration between the pool and query execution (`memoryForQueries_`) | The elastic budget (#295) reacts to free system memory, not to QLever's query allocator | No query fails for memory while the pool is above its floor |
+| E75 | Shared scans for identical concurrent exports | Large dumps are requested repeatedly; needs query-log data | N identical exports cost about one |
+| E76 | Process-wide cache of formatted terms with TinyLFU admission | The `IdCache` is per export; cross-query recurrence unknown (needs a query log) | Worth it if the top 1 % of IDs cover a large share of lookups |
+| E77 | Prompt cancellation of prefetches, reads and pool loads on disconnect | E9's prefetcher and pool loads run to completion | Wasted work after a disconnect under 50 ms |
+| E78 | Bounded production per slow connection (byte budget, then pause) | Slow clients hold batch results and pool memory | Constant memory per connection; no loss for fast clients |
