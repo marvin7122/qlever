@@ -8,9 +8,39 @@
 
 #include "engine/ConstructBatchEvaluator.h"
 
+#include <type_traits>
+#include <variant>
+
+#include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 
 namespace qlever::constructExport {
+namespace {
+
+// Convert one borrowed-or-owned batch-lookup result to an `EvaluatedTerm`. A
+// borrowed vocabulary term takes over the shared owner, so a word read from
+// the on-disk vocabulary remains shared instead of being copied. An owned term
+// is materialized inline as before, without extra ownership bookkeeping.
+std::optional<EvaluatedTerm> borrowedOrOwnedToEvaluatedTerm(
+    std::optional<ql::exportIds::BorrowedOrOwnedStringAndType>&&
+        optStringAndType) {
+  if (!optStringAndType.has_value()) {
+    return std::nullopt;
+  }
+  return std::visit(
+      [](auto&& arg) -> EvaluatedTerm {
+        using T = std::decay_t<decltype(arg)>;
+        if constexpr (std::is_same_v<T, std::pair<std::string, const char*>>) {
+          return std::make_shared<const EvaluatedTermData>(std::move(arg.first),
+                                                           arg.second);
+        } else {
+          return std::make_shared<const EvaluatedTermData>(
+              arg.value_, arg.type_, std::move(arg.owner_));
+        }
+      },
+      std::move(optStringAndType.value()));
+}
+}  // namespace
 
 // _____________________________________________________________________________
 BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
@@ -97,21 +127,39 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
   // (heap-use-after-free in `LocalVocabEntry::compareThreeWay`). Resolving
   // them per block is fine performance-wise: `LocalVocabEntry`s live in RAM,
   // so there is no disk I/O to amortize across batches.
-  auto missResolved =
-      ql::exportIds::idsToStringAndType(index, missIds, localVocab);
-  for (auto&& [id, resolved, rows] :
-       ::ranges::views::zip(missIds, missResolved, missRows)) {
-    auto evaluate = [&resolved](const Id&) {
-      return ConstructBatchEvaluator::stringAndTypeToEvaluatedTerm(
-          std::move(resolved));
-    };
-    const std::optional<EvaluatedTerm> evaluated =
-        id.getDatatype() == Datatype::LocalVocabIndex
-            ? evaluate(id)
-            : idCache.getOrCompute(id, evaluate);
-    for (const size_t row : rows) {
-      result[row] = evaluated;
+  //
+  // `toTerm` converts one element of `missResolved` to an `EvaluatedTerm`.
+  auto evaluateMisses = [&](auto missResolved, auto toTerm) {
+    for (auto&& [id, resolved, rows] :
+         ::ranges::views::zip(missIds, missResolved, missRows)) {
+      auto evaluate = [&resolved, &toTerm](const Id&) {
+        return toTerm(std::move(resolved));
+      };
+      const std::optional<EvaluatedTerm> evaluated =
+          id.getDatatype() == Datatype::LocalVocabIndex
+              ? evaluate(id)
+              : idCache.getOrCompute(id, evaluate);
+      for (const size_t row : rows) {
+        result[row] = evaluated;
+      }
     }
+  };
+  if (getRuntimeParameter<&RuntimeParameters::exportConstructTermsAsViews_>()) {
+    // Vocabulary terms borrow their bytes from the shared batch-lookup
+    // storage, which each (also each cached) `EvaluatedTerm` keeps alive via
+    // its owner.
+    evaluateMisses(
+        ql::exportIds::idsToBorrowedStringAndType(index, missIds, localVocab),
+        [](auto&& resolved) {
+          return borrowedOrOwnedToEvaluatedTerm(std::move(resolved));
+        });
+  } else {
+    evaluateMisses(
+        ql::exportIds::idsToStringAndType(index, missIds, localVocab),
+        [](auto&& resolved) {
+          return ConstructBatchEvaluator::stringAndTypeToEvaluatedTerm(
+              std::move(resolved));
+        });
   }
   return result;
 }

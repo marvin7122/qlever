@@ -63,9 +63,12 @@ std::vector<EvaluatedTriple> instantiateBatch(
 std::string formatTerm(const EvaluatedTermData& term, bool includeDataType);
 
 // Formats a triple (subject, predicate, object) according to the output
-// format `format`.
+// format `format`. With `fromViews` (see `export-construct-terms-as-views`),
+// Turtle and N-Triples are written from views of the terms instead of a copy
+// of each term; the output is the same.
 std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
-                         const ad_utility::MediaType& format);
+                         const ad_utility::MediaType& format,
+                         bool fromViews = false);
 
 // Creates a `StringTriple` object. Needed for backwards compatibility with
 // `ExportQueryExecutionTrees::constructQueryResultBindingsToQLeverJSON`

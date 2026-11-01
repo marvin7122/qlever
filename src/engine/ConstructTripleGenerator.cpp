@@ -13,6 +13,7 @@
 #include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleInstantiator.h"
+#include "global/RuntimeParameters.h"
 
 namespace qlever::constructExport {
 
@@ -155,8 +156,11 @@ ConstructTripleGenerator::generateFormattedTriples(
       evaluateTables(templateTriples, variableColumns, std::move(rowIndices),
                      rowOffset, config);
 
-  auto transformer = [mediaType](const EvaluatedTriple& triple) {
-    return formatTriple(triple, mediaType);
+  // Read once per export: a runtime parameter is read under a lock.
+  const bool fromViews =
+      getRuntimeParameter<&RuntimeParameters::exportConstructTermsAsViews_>();
+  auto transformer = [mediaType, fromViews](const EvaluatedTriple& triple) {
+    return formatTriple(triple, mediaType, fromViews);
   };
   return InputRangeTypeErased(std::move(evaluatedTriples) |
                               ql::views::transform(transformer));

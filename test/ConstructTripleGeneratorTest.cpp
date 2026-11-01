@@ -9,10 +9,12 @@
 #include <gmock/gmock.h>
 
 #include "./util/IdTableHelpers.h"
+#include "./util/RuntimeParametersTestHelpers.h"
 #include "./util/TripleComponentTestHelpers.h"
 #include "engine/ConstructTripleGenerator.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/Result.h"
+#include "global/RuntimeParameters.h"
 #include "util/CancellationHandle.h"
 
 namespace {
@@ -508,6 +510,54 @@ TEST_F(ConstructTripleGeneratorTest,
     } else {
       EXPECT_ANY_THROW(range.get());
     }
+  }
+}
+
+// With `export-construct-terms-as-views`, the formatted triples are the same
+// as without, over several batches (so that cached terms that view the
+// storage of an earlier batch are used after that batch), for vocabulary
+// IRIs and literals, and for `LocalVocab` literals, one of which has to be
+// escaped.
+TEST_F(ConstructTripleGeneratorTest, termsAsViewsDoNotChangeTheOutput) {
+  constexpr size_t N = 2 * ConstructTripleGenerator::BATCH_SIZE + 7;
+  LocalVocab localVocab;
+  const auto& context = qec_->getLocalVocabContext();
+  const Id idLocal =
+      Id::makeFromLocalVocabIndex(localVocab.getIndexAndAddIfNotContained(
+          LocalVocabEntry::literalWithoutQuotes("local", context)));
+  const Id idLocalEscaped =
+      Id::makeFromLocalVocabIndex(localVocab.getIndexAndAddIfNotContained(
+          LocalVocabEntry::literalWithoutQuotes("line\nbreak", context)));
+  const Id idHello = ad_utility::testing::makeGetId(index_)("\"hello\"");
+  const std::array objects{idO_, idHello, idLocal, idLocalEscaped, idQ_};
+  std::vector<std::vector<IntOrId>> rows;
+  for (size_t i = 0; i < N; ++i) {
+    rows.push_back({i % 2 == 0 ? idS_ : idO_, objects[i % objects.size()]});
+  }
+  auto result = std::make_shared<const Result>(makeIdTableFromVector(rows),
+                                               std::vector<ColumnIndex>{},
+                                               std::move(localVocab));
+  auto templateTriples =
+      oneTriple(Variable{"?sub"}, iriV("<p>"), Variable{"?obj"});
+  VariableToColumnMap varMap;
+  varMap[Variable{"?sub"}] = makeAlwaysDefinedColumn(0);
+  varMap[Variable{"?obj"}] = makeAlwaysDefinedColumn(1);
+
+  for (auto mediaType :
+       {ad_utility::MediaType::turtle, ad_utility::MediaType::ntriples}) {
+    auto format = [&](bool termsAsViews) {
+      auto cleanup = setRuntimeParameterForTest<
+          &RuntimeParameters::exportConstructTermsAsViews_>(termsAsViews);
+      return collectFormatted(
+          ConstructTripleGenerator::generateFormattedTriples(
+              templateTriples, varMap,
+              singleTableRange(makeTableWithRange(*result, 0, N)), 0, mediaType,
+              makeConfig()));
+    };
+    const auto expected = format(false);
+    ASSERT_EQ(expected.size(), N);
+    EXPECT_THAT(expected, ::testing::Contains("<o> <p> \"line\\nbreak\" .\n"));
+    EXPECT_EQ(format(true), expected);
   }
 }
 

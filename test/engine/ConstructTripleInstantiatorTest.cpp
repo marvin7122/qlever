@@ -10,6 +10,8 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
+#include <string_view>
+
 #include "../util/GTestHelpers.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/ConstructTypes.h"
@@ -37,7 +39,7 @@ EvaluatedTerm makeTerm(std::string str, const char* type = nullptr) {
 static constexpr auto matchesEvaluatedTerm = [](const auto& str,
                                                 const char* type) {
   return ::testing::Pointee(::testing::AllOf(
-      AD_FIELD(EvaluatedTermData, rdfTermString_, std::string(str)),
+      AD_FIELD(EvaluatedTermData, rdfTermString_, std::string_view{str}),
       AD_FIELD(EvaluatedTermData, rdfTermDataType_, ::testing::Eq(type))));
 };
 
@@ -481,6 +483,41 @@ TEST(FormatTriple, UnsupportedMediaType) {
   auto triple = EvaluatedTriple{makeTerm("<http://s>"), makeTerm("<http://p>"),
                                 makeTerm("<http://o>")};
   EXPECT_ANY_THROW(formatTriple(triple, ad_utility::MediaType::qleverJson));
+}
+
+// _____________________________________________________________________________
+// With `fromViews` (see `export-construct-terms-as-views`), Turtle and
+// N-Triples are the same as without, for owned and borrowed terms.
+TEST(FormatTriple, FromViewsIsTheSameForTurtleAndNTriples) {
+  // Borrowed terms view this storage, which their owner keeps alive.
+  auto storage = std::make_shared<const std::array<std::string, 3>>(
+      std::array<std::string, 3>{"<http://borrowed>", "\"line\nbreak\"@en",
+                                 "\"needs \\\\ escaping\""});
+  auto borrowed = [&storage](size_t i) {
+    return std::make_shared<const EvaluatedTermData>(
+        std::string_view{storage->at(i)}, nullptr, storage);
+  };
+  const std::vector<EvaluatedTerm> terms{makeTerm("<http://s>"),
+                                         makeTerm("_:b0"),
+                                         makeTerm("\"hello\""),
+                                         makeTerm("\"tab\there\""),
+                                         makeTerm("42", XSD_INT_TYPE),
+                                         makeTerm("1.5", XSD_DECIMAL_TYPE),
+                                         makeTerm("true", XSD_BOOLEAN_TYPE),
+                                         makeTerm("NaN", XSD_DOUBLE_TYPE),
+                                         borrowed(0),
+                                         borrowed(1),
+                                         borrowed(2)};
+  for (auto format :
+       {ad_utility::MediaType::turtle, ad_utility::MediaType::ntriples}) {
+    for (const auto& subject : terms) {
+      for (const auto& object : terms) {
+        const EvaluatedTriple triple{subject, makeTerm("<http://p>"), object};
+        EXPECT_EQ(formatTriple(triple, format, true),
+                  formatTriple(triple, format));
+      }
+    }
+  }
 }
 
 // ============================================================================

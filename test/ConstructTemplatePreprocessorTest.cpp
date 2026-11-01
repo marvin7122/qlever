@@ -7,6 +7,8 @@
 
 #include <gmock/gmock.h>
 
+#include <string_view>
+
 #include "./util/GTestHelpers.h"
 #include "./util/IndexTestHelpers.h"
 #include "./util/TripleComponentTestHelpers.h"
@@ -50,7 +52,7 @@ constexpr auto matchesPrecomputedConstant = [](const auto& value) {
   return ::testing::VariantWith<PrecomputedConstant>(
       AD_FIELD(PrecomputedConstant, evaluatedTerm_,
                ::testing::Pointee(AD_FIELD(EvaluatedTermData, rdfTermString_,
-                                           std::string(value)))));
+                                           std::string_view{value}))));
 };
 
 // _____________________________________________________________________________

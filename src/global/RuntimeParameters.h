@@ -329,6 +329,12 @@ struct RuntimeParameters {
   // upper bound. A separate flag, because a size cannot also hold "auto".
   Bool vocabularyBufferPoolAuto_{false, "vocabulary-buffer-pool-auto"};
 
+  // If set to true, the terms of a CONSTRUCT export that come from the on-disk
+  // vocabulary view their bytes in the batch-lookup result (which the terms
+  // keep alive) instead of copying them, and Turtle and N-Triples triples are
+  // formatted from these views. The output is the same.
+  Bool exportConstructTermsAsViews_{false, "export-construct-terms-as-views"};
+
   // The free memory that the elastic budget leaves for everything else. 0
   // (the default) means max(256 MiB, 5 % of the RAM or of the cgroup's
   // memory limit).

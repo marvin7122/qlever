@@ -98,10 +98,12 @@ std::vector<EvaluatedTriple> instantiateBatch(
 }
 
 // _____________________________________________________________________________
-std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
+namespace {
+// True iff `formatTerm` returns `term.rdfTermString_` unchanged.
+bool isFormattedAsIs(const EvaluatedTermData& term, bool includeDataType) {
   if (term.rdfTermDataType_ == nullptr) {
     // IRI, blank node, or vocab-indexed literal: already in final form.
-    return term.rdfTermString_;
+    return true;
   }
   const auto* i = static_cast<const char*>(XSD_INT_TYPE);
   const auto* d = static_cast<const char*>(XSD_DECIMAL_TYPE);
@@ -109,10 +111,27 @@ std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
 
   // Note: XSD_DOUBLE_TYPE values (for example "NaN", "INF", "-INF") always
   // include the datatype.
-  if (!includeDataType &&
-      (term.rdfTermDataType_ == i || term.rdfTermDataType_ == d ||
-       (term.rdfTermDataType_ == b && term.rdfTermString_.length() > 1))) {
+  return !includeDataType &&
+         (term.rdfTermDataType_ == i || term.rdfTermDataType_ == d ||
+          (term.rdfTermDataType_ == b && term.rdfTermString_.length() > 1));
+}
+
+// The formatted `term` as a view: of `term.rdfTermString_` if it is formatted
+// as is, else of `scratch`, which then holds the formatted term.
+std::string_view formatTermAsView(const EvaluatedTermData& term,
+                                  bool includeDataType, std::string& scratch) {
+  if (isFormattedAsIs(term, includeDataType)) {
     return term.rdfTermString_;
+  }
+  scratch = formatTerm(term, includeDataType);
+  return scratch;
+}
+}  // namespace
+
+// _____________________________________________________________________________
+std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
+  if (isFormattedAsIs(term, includeDataType)) {
+    return std::string{term.rdfTermString_};
   }
   return absl::StrCat("\"", term.rdfTermString_, "\"^^<", term.rdfTermDataType_,
                       ">");
@@ -120,7 +139,7 @@ std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
 
 // _____________________________________________________________________________
 std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
-                         const ad_utility::MediaType& format) {
+                         const ad_utility::MediaType& format, bool fromViews) {
   // TODO<ms2144>: take a look where we can eliminate string constructions here.
   using enum ad_utility::MediaType;
   static constexpr std::array supportedFormats{turtle, csv, tsv, ntriples};
@@ -129,6 +148,25 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
   const auto& [subject, predicate, object] = evaluatedTriple;
 
   const bool includeDataType = (format == ntriples);
+
+  if (fromViews && (format == turtle || format == ntriples)) {
+    // The same output as below, without a copy of each term.
+    std::string subjectScratch;
+    std::string predicateScratch;
+    std::string objectScratch;
+    const std::string_view s =
+        formatTermAsView(*subject, includeDataType, subjectScratch);
+    const std::string_view p =
+        formatTermAsView(*predicate, includeDataType, predicateScratch);
+    const std::string_view o =
+        formatTermAsView(*object, includeDataType, objectScratch);
+    if (ql::starts_with(o, '"')) {
+      return absl::StrCat(s, " ", p, " ",
+                          RdfEscaping::validRDFLiteralFromNormalized(o),
+                          " .\n");
+    }
+    return absl::StrCat(s, " ", p, " ", o, " .\n");
+  }
 
   std::string s = formatTerm(*subject, includeDataType);
   std::string p = formatTerm(*predicate, includeDataType);
