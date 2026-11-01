@@ -19,6 +19,7 @@
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "global/RuntimeParameters.h"
+#include "index/IndexImpl.h"
 #include "util/GlobalExecutor.h"
 #include "util/Log.h"
 
