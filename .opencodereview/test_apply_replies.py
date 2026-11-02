@@ -101,12 +101,18 @@ class SignalTest(unittest.TestCase):
 class PlanTest(unittest.TestCase):
     def test_fixture_323(self):
         threads = load_fixture()
-        tasks = a.plan_tasks(threads, OWNER, "replies", BOT)
+        skipped = []
+        tasks = a.plan_tasks(threads, OWNER, "replies", BOT, skipped=skipped)
         self.assertEqual([(t.action, t.rule) for t in tasks], [
-            (a.Action.IMPLEMENT, "unknown"), (a.Action.IMPLEMENT, "QC3"), (a.Action.REWRITE, "QC3"),
-            (a.Action.IMPLEMENT, "IDM028"), (a.Action.IMPLEMENT, "IDM059")])
-        # Resolved threads and threads without an owner signal are left alone.
-        self.assertTrue(all(not t.thread["isResolved"] for t in tasks))
+            (a.Action.IMPLEMENT, "unknown"), (a.Action.IMPLEMENT, "QC60"), (a.Action.IMPLEMENT, "QC3"),
+            (a.Action.IMPLEMENT, "QC3"), (a.Action.REWRITE, "QC3"), (a.Action.IMPLEMENT, "IDM028"),
+            (a.Action.IMPLEMENT, "IDM059")])
+        # A resolved thread with an owner signal is acted on (resolving is not a signal): the 👍 threads
+        # QC60 (outdated) and QC3 at line 102, which the run 41510928135 skipped silently.
+        self.assertEqual([(t.rule, t.thread["line"]) for t in tasks if t.thread["isResolved"]],
+                         [("QC60", None), ("QC3", 102)])
+        # Owner reactions on other bots' threads are listed as skipped, with the reason.
+        self.assertEqual([why for _, why in skipped], ["not an OpenCodeReview finding thread"] * 2)
         self.assertEqual(a.plan_tasks(threads, OWNER, "decisions", BOT), [])
         self.assertEqual(a.plan_tasks(threads, OWNER, "approve-all", BOT), [])
         # Someone else's signals do not count.
@@ -485,9 +491,154 @@ class SuggestionTest(unittest.TestCase):
     def test_summary_counts_one_click(self):
         run = a.Run.__new__(a.Run)
         run.mode, run.results, run.one_click, run.spend = "replies", [], [2, 3], a.Spend(2.0)
+        run.handled_earlier = []
         self.assertIn("One-click: 2 of 3 proposals.", run.summary())
         run.one_click = [0, 0]
         self.assertNotIn("One-click", run.summary())
+
+
+def signals_fixture():
+    """The threads of #323 with owner signals (recorded read-only after run
+    41510928135), plus the parents of the flow's suggestion threads."""
+    with open(os.path.join(HERE, "fixtures", "threads-323-signals.json"), encoding="utf-8") as f:
+        return json.load(f)
+
+
+HEAD_323 = {"test/IoUringManagerTest.cpp": "IoUringManagerTest.cpp", "src/util/IoUringManager.cpp": "IoUringManager.cpp"}
+
+
+def head_323(path):
+    with open(os.path.join(HERE, "fixtures", "head-323", HEAD_323[path]), encoding="utf-8") as f:
+        return f.read()
+
+
+class SignalsOf323Test(unittest.TestCase):
+    """The owner signals run 41510928135 missed on #323."""
+
+    def plan(self, mode="replies"):
+        skipped = []
+        tasks = a.plan_tasks(signals_fixture(), OWNER, mode, BOT, "marvin7122/qlever", 323, skipped=skipped)
+        return {t.thread["comments"][0]["id"]: t for t in tasks}, {t["comments"][0]["id"]: why for t, why in skipped}
+
+    def test_resolved_thread_with_thumbs_up(self):
+        # r4444039306 (QC3, PageCacheFirstPolicy.h:102): resolved, 👍 at 16:01 - acted on now.
+        tasks, skipped = self.plan()
+        task = tasks[4444039306]
+        self.assertEqual((task.action, task.rule, task.thread["line"], task.thread["isResolved"]),
+                         (a.Action.IMPLEMENT, "QC3", 102, True))
+        self.assertNotIn(4444039306, skipped)
+
+    def test_replies_in_suggestion_threads_go_to_the_finding(self):
+        # r4446838755 and r4446839683 are this flow's suggestion comments; the
+        # owner's replies in their threads count for findings 4444039334 and 4444053995.
+        threads = {t["comments"][0]["id"]: t for t in signals_fixture()}
+        self.assertEqual(a.suggestion_parent(threads[4446838755]), 4444039334)
+        self.assertEqual(a.suggestion_parent(threads[4446839683]), 4444053995)
+        tasks, skipped = self.plan()
+        self.assertIn("tests only file", tasks[4444039334].signal.text)
+        self.assertEqual(tasks[4444039334].action, a.Action.IMPLEMENT)
+        self.assertEqual(tasks[4444053995].action, a.Action.IMPLEMENT)
+        self.assertTrue(tasks[4444053995].signal.text)
+        self.assertNotIn(4446838755, skipped, "a suggestion thread is not reported on its own")
+        self.assertNotIn(4446838755, tasks)
+
+    def test_every_signal_is_listed(self):
+        tasks, skipped = self.plan()
+        signalled = {t["comments"][0]["id"] for t in a.with_suggestion_replies(signals_fixture())
+                     if a.suggestion_parent(t) is None and (a.owner_signal(t, OWNER) or a.unknown_command(t, OWNER))}
+        self.assertEqual(signalled, set(tasks) | set(skipped), "no thread with an owner signal is left out")
+        self.assertEqual(skipped[4432842062], "not an OpenCodeReview finding thread")
+        self.assertEqual(skipped[4444039242], "already handled (applied)")
+
+    def test_skip_reasons(self):
+        approve = thread(replies=[("/approve", "2026-11-02T12:00:00Z", OWNER)])
+        unknown = thread(replies=[("/apply please", "2026-11-02T12:00:00Z", OWNER)])
+        skipped = []
+        self.assertEqual(a.plan_tasks([approve, unknown], OWNER, "replies", BOT, skipped=skipped), [])
+        self.assertEqual([why for _, why in skipped], ["`/approve` without a pending proposal", "unknown keyword `/apply`"])
+
+    def test_outdated_threads_already_applied(self):
+        # r4444034076 (QC60) and r4444039212 (QC3) became outdated by the owner's
+        # button commits of the findings' own suggestions.
+        threads = {t["comments"][0]["id"]: t for t in signals_fixture()}
+        for cid in (4444034076, 4444039212):
+            t = threads[cid]
+            self.assertIsNone(t["line"])
+            content = head_323(t["path"])
+            self.assertTrue(a.own_suggestion_applied(t, content))
+            self.assertIsNone(a.relocate_lines(a.anchored_original(t), content, t["comments"][0]["originalLine"]))
+        self.assertEqual(a.anchored_original(threads[4444039212]),
+                         "  AD_CONTRACT_CHECK(offsets.size() == numberOfBytesToRead.size() &&\n"
+                         "                    buffers.size() == numberOfBytesToRead.size());\n")
+
+    def test_relocate(self):
+        block = "  int a = 1;\n  int b = 2;\n"
+        content = "".join(f"// line {n}\n" for n in range(1, 41)) + block + "x\n" + block
+        # `near` is the original anchor's last line.
+        self.assertEqual(a.relocate_lines(block, content, 42), (41, 42), "exact, nearest to the original line")
+        self.assertEqual(a.relocate_lines(block, content, 44), (44, 45))
+        self.assertEqual(a.relocate_lines(block, content, 90), (44, 45))
+        reformatted = "".join(f"// line {n}\n" for n in range(1, 41)) + "  int a  =  1;\n  int b = 2;\n"
+        self.assertEqual(a.relocate_lines(block, reformatted, 38), (41, 42), "nearby, whitespace ignored")
+        self.assertIsNone(a.relocate_lines(block, reformatted, 200), "too far away")
+        self.assertIsNone(a.relocate_lines(block, "nothing here\n", 1))
+
+    def run_outdated(self, t, files):
+        """Run.outdated on a thread, with the files of a fake checkout and the replies recorded."""
+        import tempfile
+        posted = []
+        run = a.Run.__new__(a.Run)
+        run.repo, run.number, run.results = "marvin7122/qlever", 323, []
+        saved = a.reply, a.resolve
+        a.reply = lambda repo, number, thread, text, state: posted.append((text, state))
+        a.resolve = lambda thread: posted.append(("resolved", {}))
+        with tempfile.TemporaryDirectory() as d:
+            for path, content in files.items():
+                os.makedirs(os.path.dirname(os.path.join(d, path)), exist_ok=True)
+                with open(os.path.join(d, path), "w", encoding="utf-8") as f:
+                    f.write(content)
+            run.repo_dir = d
+            task = a.Task(t, a.Action.IMPLEMENT, a.Signal(a.Action.IMPLEMENT, "", "👍", "t"), a.finding_rule(t))
+            try:
+                skip = run.outdated(task)
+            finally:
+                a.reply, a.resolve = saved
+        return skip, task, run.results, posted
+
+    def test_run_outdated_paths(self):
+        t = {x["comments"][0]["id"]: x for x in signals_fixture()}[4444039212]
+        # The finding's own suggestion is on the branch: already applied (the thread is resolved already).
+        skip, _, results, posted = self.run_outdated(t, {t["path"]: head_323(t["path"])})
+        self.assertTrue(skip)
+        self.assertEqual(results[0][0], "already applied")
+        self.assertEqual(posted, [("Already on the branch: this finding's own suggestion was committed. Resolving.",
+                                   {"state": "applied", "via": "finding suggestion"})])
+        # Not applied, and the anchored lines moved 30 lines down: relocated, acted on there.
+        moved = "".join(f"// {n}\n" for n in range(1, 395)) + a.anchored_original(t) + "}\n"
+        skip, task, results, posted = self.run_outdated(t, {t["path"]: moved})
+        self.assertFalse(skip)
+        self.assertEqual((task.thread["startLine"], task.thread["line"], task.thread["relocated"]), (395, 396, True))
+        self.assertEqual((results, posted), ([], []))
+        # Neither: skipped, said in the thread and in the summary.
+        skip, _, results, posted = self.run_outdated(t, {t["path"]: "int unrelated;\n"})
+        self.assertTrue(skip)
+        self.assertEqual(results[0][0], "skipped: outdated, could not relocate")
+        self.assertIn("could not be found", posted[0][0])
+        # A relocated thread gets no suggestion in its own reply (its anchor is gone).
+        own, others = a.place_suggestions({**t, "line": 396, "startLine": 395, "relocated": True}, moved,
+                                          [a.Suggestion(t["path"], 395, 396, "x", "y")])
+        self.assertIsNone(own)
+        self.assertEqual(len(others), 1)
+
+    def test_summary_lists_skips(self):
+        run = a.Run.__new__(a.Run)
+        run.mode, run.one_click, run.spend = "replies", [0, 0], a.Spend(2.0)
+        run.results = [("implement", "u1", "QC3", "x"), ("skipped: not an OpenCodeReview finding thread", "u2", "sourcery", "")]
+        run.handled_earlier = [("skipped: already handled (applied)", "u3", "QC1", "")]
+        text = run.summary()
+        self.assertIn("- skipped: not an OpenCodeReview finding thread: [sourcery](u2)", text)
+        self.assertIn("Owner signals already handled by an earlier run (1)", text)
+        self.assertIn("- skipped: already handled (applied): [QC1](u3)", text)
 
 
 class JsonAnswerTest(unittest.TestCase):
