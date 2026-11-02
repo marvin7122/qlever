@@ -54,7 +54,11 @@ struct SelectedReads {
                 ql::span<const size_t> positions)
       : numberOfBytesToRead_{selectAt(numberOfBytesToRead, positions)},
         offsets_{selectAt(offsets, positions)},
-        buffers_{selectAt(buffers, positions)} {}
+        buffers_{selectAt(buffers, positions)} {
+    AD_CONTRACT_CHECK(ql::ranges::is_sorted(positions));
+    AD_CONTRACT_CHECK(positions.empty() ||
+                      positions.back() < numberOfBytesToRead.size());
+  }
 
  private:
   template <typename T>
