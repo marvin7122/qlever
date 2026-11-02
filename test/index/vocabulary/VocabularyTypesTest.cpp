@@ -88,6 +88,23 @@ TEST(VocabBatchLookupData, AsResultEmpty) {
   EXPECT_TRUE(result->empty());
 }
 
+// Test that `fromWords` returns a result with one view per word, in order,
+// that the views point at the moved-in strings (no copy of the characters of
+// a heap-allocated string; short strings are stored inline and are copied
+// when moved), and that the result stays valid after the input vector has been
+// moved from.
+TEST(StringVectorVocabBatchLookupData, FromWords) {
+  std::vector<std::string> words{"a", std::string(100, 'b'), ""};
+  const char* longWordData = words[1].data();
+  const auto result =
+      StringVectorVocabBatchLookupData::fromWords(std::move(words));
+  ASSERT_EQ(result->size(), 3u);
+  EXPECT_EQ((*result)[0], "a");
+  EXPECT_EQ((*result)[1], std::string(100, 'b'));
+  EXPECT_EQ((*result)[1].data(), longWordData);
+  EXPECT_EQ((*result)[2], "");
+}
+
 // Tests for `PmrVocabBatchLookupData`: the `monotonic_buffer_resource` backing
 // used when words are produced incrementally with sizes not known up front
 // (e.g. decompressing one word at a time in `CompressedVocabulary`). Each word
