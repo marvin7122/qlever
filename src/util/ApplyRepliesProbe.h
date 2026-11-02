@@ -12,12 +12,15 @@
 #include <cstddef>
 #include <vector>
 
+#include "util/Exception.h"
+
 // Throwaway probe for the end-to-end test of the apply-replies flow. Do not
 // merge.
 namespace ad_utility {
 
 // Return the sum of the first `n` values.
 inline int sumOfFirst(const std::vector<int>& values, size_t n) {
+  AD_CONTRACT_CHECK(n <= values.size());
   int sum = 0;
   for (size_t i = 0; i < n; ++i) {
     sum += values[i];
