@@ -207,6 +207,8 @@ jobs:
       chunks: ${{ steps.select.outputs.chunks }}
       selection_cost_usd: ${{ steps.select.outputs.selection_cost_usd }}
       leg_budget_usd: ${{ steps.select.outputs.leg_budget_usd }}
+      rule_sha: ${{ steps.links.outputs.rule_sha }}
+      no_card: ${{ steps.links.outputs.no_card }}
     steps:
       # The base branch's rule file and selector, never the PR head's.
       - name: Fetch rules and selector (sparse, base ref)
@@ -215,9 +217,48 @@ jobs:
           sparse-checkout: |
             .opencodereview/select_rules.py
             .opencodereview/stage1_deterministic.py
+            .opencodereview/rule_links.py
             .opencodereview/rule.json
+            .opencodereview/rule_cards.json
           sparse-checkout-cone-mode: false
           fetch-depth: 1
+      # The cards live in the private repositories marvin7122/cpp-idioms and
+      # marvin7122/ocr-runners, which the workflow token cannot read: use the
+      # OCR fan-out app if it is installed there, else the secret
+      # OCR_CARDS_READ_TOKEN (fine-grained, contents: read on both).
+      - name: Mint a token for the card repositories
+        id: cards-token
+        if: ${{ vars.OCR_FANOUT_APP_ID != '' }}
+        continue-on-error: true
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.OCR_FANOUT_APP_ID }}
+          private-key: ${{ secrets.OCR_FANOUT_APP_PRIVATE_KEY }}
+          owner: marvin7122
+          repositories: cpp-idioms,ocr-runners
+      # Before any model call: every rule's permalink anchor, its card (200)
+      # and the rule-set commit must check out. A broken link stops the
+      # review; a rule without a card is left out of it.
+      - name: Verify the rule links
+        id: links
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CARDS_TOKEN: ${{ steps.cards-token.outputs.token || secrets.OCR_CARDS_READ_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          export RULE_SHA="$(git rev-parse HEAD)"
+          echo "rule_sha=$RULE_SHA" >> "$GITHUB_OUTPUT"
+          mkdir -p '${{ runner.temp }}/selected'
+          python3 .opencodereview/rule_links.py .opencodereview/rule.json .opencodereview/rule_cards.json \
+            '${{ runner.temp }}/selected/verified-links.json' '${{ runner.temp }}/links.md'
+      - name: Report the broken rule links and stop
+        if: steps.links.outputs.ok != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment '${{ github.event.issue.number }}' -R '${{ github.repository }}' \
+            --body-file '${{ runner.temp }}/links.md'
+          exit 1
       - name: Select the rules that apply to this PR
         id: select
         env:
@@ -229,9 +270,10 @@ jobs:
           OCR_LLM_MODEL: ${{ vars.OCR_LLM_MODEL }}
           OCR_RULES_PER_LEG: '14'
           OCR_STOP_REPORT: ${{ runner.temp }}/stage2.md
+          OCR_EXCLUDE_RULE_IDS: ${{ steps.links.outputs.no_card }}
         run: |
           python3 .opencodereview/select_rules.py \
-            .opencodereview/rule.json '${{ runner.temp }}/selected-rules.json'
+            .opencodereview/rule.json '${{ runner.temp }}/selected/selected-rules.json'
       - name: Report why the review stopped (LLM account)
         if: steps.select.outputs.stopped == 'true'
         env:
@@ -243,7 +285,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ocr-selected-rules
-          path: ${{ runner.temp }}/selected-rules.json
+          # selected-rules.json and verified-links.json
+          path: ${{ runner.temp }}/selected
           retention-days: 7
 
   review-fanout-project-rules:
@@ -336,7 +379,7 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
             ~/.npm
-          key: ocr-build-linux-x64-07b474bf28c5c58d53e66e792ce7243ffbf1b526-40f1582b2485089dde7abd97c1529aa768e1baff
+          key: ocr-build-linux-x64-87c7b9b65e6cf4a43c2288d4b59ae999ebadd9fe-40f1582b2485089dde7abd97c1529aa768e1baff
       # Comment-triggered runs belong to the default branch, so GitHub does not
       # list them among the PR's checks. A check run of the OCR app on the PR's
       # head commit makes the review visible there (falls back to a commit
@@ -410,8 +453,6 @@ jobs:
         id: chunk
         if: steps.freshness.outputs.stale != 'true'
         run: |
-          # The rule-set version recorded in every finding (feedback loop).
-          echo "ruleset=$(sha256sum .opencodereview/rule.json | cut -c1-12)" >> "$GITHUB_OUTPUT"
           python3 .opencodereview/split_rules.py \
             '${{ runner.temp }}/selected/selected-rules.json' "$OCR_CHUNKS" '${{ matrix.chunk }}' \
             '${{ runner.temp }}/rule-chunk-${{ matrix.chunk }}.json'
@@ -474,7 +515,7 @@ jobs:
         # Skip queued runs whose head moved while waiting (see the freshness
         # step); for comment-triggered runs the step never marks stale.
         if: steps.freshness.outputs.stale != 'true'
-        uses: marvin7122/open-code-review@07b474bf28c5c58d53e66e792ce7243ffbf1b526 # feat/review-cost-cuts: --no-plan, max_tokens, tool output caps, filter extra_body, rule cards, hard run budget, feedback marker, finding rule ids, truncation is no failure
+        uses: marvin7122/open-code-review@87c7b9b65e6cf4a43c2288d4b59ae999ebadd9fe # feat/review-cost-cuts: --no-plan, max_tokens, tool output caps, filter extra_body, rule cards, hard run budget, feedback marker, rule_id enum and verified links, truncation is no failure
         with:
           # Deliberately the job-scoped GITHUB_TOKEN, not an App installation
           # token: installation tokens expire after 1 hour, but large-diff
@@ -508,16 +549,19 @@ jobs:
           price_cache_hit_per_m: ${{ env.OCR_PRICE_CACHE_HIT_PER_M }}
           price_output_per_m: ${{ env.OCR_PRICE_OUTPUT_PER_M }}
           usage_file: ${{ runner.temp }}/usage/usage.json
-          # Every finding gets one of these ids before posting (else
-          # "unknown", counted in the spend comment).
+          # Each finding names one of these ids in rule_id (an enum in the
+          # tool schema) and is posted only with verified links; rejected
+          # findings are counted in the spend comment.
           leg_rule_ids: ${{ steps.ruleids.outputs.ids }}
+          verified_rule_links: ${{ runner.temp }}/selected/verified-links.json
           rule_stats_file: ${{ runner.temp }}/usage/rule-stats.json
           # Feedback loop: the reaction legend under each finding, and a hidden
           # marker with rule, leg, model and rule-set version, read by the
           # daily collection in marvin7122/ocr-runners (feedback/).
           feedback_legend: 'true'
           feedback_leg: ${{ matrix.chunk }}
-          ruleset_version: ${{ steps.chunk.outputs.ruleset }}
+          # The commit whose rule.json the permalinks point to.
+          ruleset_version: ${{ needs.select-rules.outputs.rule_sha }}
           base_ref: ${{ steps.pr-context.outputs.base_ref }}
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
           ocr_install_from: source
@@ -559,7 +603,7 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
             ~/.npm
-          key: ocr-build-linux-x64-07b474bf28c5c58d53e66e792ce7243ffbf1b526-40f1582b2485089dde7abd97c1529aa768e1baff
+          key: ocr-build-linux-x64-87c7b9b65e6cf4a43c2288d4b59ae999ebadd9fe-40f1582b2485089dde7abd97c1529aa768e1baff
       - name: Mint fresh App token for stamping
         id: app-token-stamp
         if: ${{ vars.OCR_FANOUT_APP_ID != '' && steps.freshness.outputs.stale != 'true' }}
@@ -695,6 +739,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SELECTION_COST_USD: ${{ needs.select-rules.outputs.selection_cost_usd }}
           LEG_BUDGET_USD: ${{ needs.select-rules.outputs.leg_budget_usd }}
+          NO_CARD_RULES: ${{ needs.select-rules.outputs.no_card }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           python3 .opencodereview/review_spend.py '${{ runner.temp }}/usage' \

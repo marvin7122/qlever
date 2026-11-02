@@ -213,10 +213,17 @@ def main():
         texts_by_file[f["filename"]] = texts
     kept = []
     scripted = 0
+    # Rules whose links could not be given (no knowledge card, see
+    # rule_links.py) are left out of this review.
+    excluded = set(os.environ.get("OCR_EXCLUDE_RULE_IDS", "").split())
+    left_out = 0
     for index, rule in enumerate(rules):
         # Stage 1 checks these rules deterministically; no model sees them.
         if summaries[index].split(" ", 1)[0] in SCRIPTED_RULE_IDS:
             scripted += 1
+            continue
+        if summaries[index].split(" ", 1)[0] in excluded:
+            left_out += 1
             continue
         applicable = [name for name in texts_by_file if path_matches(name, rule["path"])]
         if not applicable:
@@ -224,6 +231,7 @@ def main():
         texts = [t for name in applicable for t in texts_by_file[name]]
         if None in texts or triggers_hit(rule, [t for t in texts if t]):
             kept.append(index)
+    log(f"left out {left_out} rules without a knowledge card")
     log(f"pass 1: {scripted} rules left to the stage 1 script; triggers and paths kept {len(kept)} of the other {len(rules) - scripted}")
 
     # Pass 2: relevance, one model call; any failure keeps pass 1's rules.
