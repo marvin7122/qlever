@@ -9,10 +9,19 @@
 
 #include "engine/ConstructTripleGenerator.h"
 
+#include <boost/asio/post.hpp>
+#include <boost/asio/use_future.hpp>
+#include <deque>
+#include <future>
+
 #include "engine/ConstructBatchEvaluator.h"
 #include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleInstantiator.h"
+#include "global/RuntimeParameters.h"
+#include "index/IndexImpl.h"
+#include "util/GlobalExecutor.h"
+#include "util/Log.h"
 
 namespace qlever::constructExport {
 
@@ -46,6 +55,103 @@ struct BatchEvalContext {
   std::reference_wrapper<IdCache> cache_;
   std::reference_wrapper<const CancellationHandle> cancellationHandle_;
   std::shared_ptr<ConstructDeduplicator> deduplicator_;
+};
+
+// Reads the vocabulary words of the next batches of one table on the global
+// executor while the current batch is evaluated, so that their pages are
+// already in the vocabulary's buffer pool (or the page cache) when the batch
+// is evaluated (see `export-vocabulary-prefetch-batches`). The lookups are
+// only for their side effect; their results are discarded, and the batch
+// itself still looks up its words as before.
+class VocabularyPrefetcher {
+ public:
+  // Prefetch for the batches of `ConstructTripleGenerator::BATCH_SIZE` rows
+  // of `table` in `[tableBegin, tableEnd)`, reading the `columns`, up to
+  // `distance` batches ahead of the evaluated one.
+  VocabularyPrefetcher(const Index& index, TableConstRefWithVocab table,
+                       std::vector<ColumnIndex> columns, uint64_t tableBegin,
+                       uint64_t tableEnd, size_t distance)
+      : index_{index},
+        table_{table},
+        columns_{std::move(columns)},
+        tableEnd_{tableEnd},
+        distance_{distance},
+        nextToLaunch_{tableBegin + ConstructTripleGenerator::BATCH_SIZE} {}
+
+  // Wait for the prefetches that are still running: they would otherwise
+  // outlive the export.
+  ~VocabularyPrefetcher() {
+    for (auto& [batchBegin, prefetch] : inFlight_) {
+      prefetch.wait();
+    }
+  }
+
+  VocabularyPrefetcher(const VocabularyPrefetcher&) = delete;
+  VocabularyPrefetcher& operator=(const VocabularyPrefetcher&) = delete;
+
+  // Call before the batch starting at row `batchBegin` is evaluated: wait for
+  // its own prefetch (the batch would otherwise read the same pages a second
+  // time), then start the prefetches of the next `distance` batches.
+  void beforeBatch(uint64_t batchBegin) {
+    while (!inFlight_.empty() && inFlight_.front().first <= batchBegin) {
+      inFlight_.front().second.wait();
+      inFlight_.pop_front();
+    }
+    const uint64_t lastToLaunch =
+        batchBegin + distance_ * ConstructTripleGenerator::BATCH_SIZE;
+    for (; nextToLaunch_ <= lastToLaunch && nextToLaunch_ < tableEnd_;
+         nextToLaunch_ += ConstructTripleGenerator::BATCH_SIZE) {
+      launch(nextToLaunch_);
+    }
+  }
+
+ private:
+  // Start the prefetch of the batch starting at row `batchBegin`. The indices
+  // are collected here, so the task only uses the index, which outlives the
+  // export, and not the result table.
+  void launch(uint64_t batchBegin) {
+    const uint64_t batchEnd =
+        std::min(batchBegin + ConstructTripleGenerator::BATCH_SIZE, tableEnd_);
+    std::vector<size_t> indices;
+    for (ColumnIndex column : columns_) {
+      for (Id id : table_.idTable().getColumn(column).subspan(
+               batchBegin, batchEnd - batchBegin)) {
+        if (id.getDatatype() == Datatype::VocabIndex) {
+          indices.push_back(id.getVocabIndex().get());
+        }
+      }
+    }
+    ql::ranges::sort(indices);
+    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    if (indices.empty()) {
+      return;
+    }
+    inFlight_.emplace_back(
+        batchBegin,
+        boost::asio::post(
+            ad_utility::globalExecutor(),
+            boost::asio::use_future(
+                [&index = index_.get(), indices = std::move(indices)]() {
+                  // A failed prefetch only costs its speedup: the batch
+                  // reads (and reports a failure of) its words itself.
+                  try {
+                    index.getImpl().getVocab().lookupBatch(indices);
+                  } catch (const std::exception& e) {
+                    AD_LOG_DEBUG << "Vocabulary prefetch failed: " << e.what()
+                                 << std::endl;
+                  }
+                })));
+  }
+
+  std::reference_wrapper<const Index> index_;
+  TableConstRefWithVocab table_;
+  std::vector<ColumnIndex> columns_;
+  uint64_t tableEnd_;
+  size_t distance_;
+  // The first row of the next batch to prefetch.
+  uint64_t nextToLaunch_;
+  // The running prefetches, by the first row of their batch (ascending).
+  std::deque<std::pair<uint64_t, std::future<void>>> inFlight_;
 };
 
 // Evaluate the rows covered by `batch.view_`. Cancellation is checked once at
@@ -93,10 +199,24 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
   // lambda retain a reference into the by-value `table` parameter.
   auto rowView = table.view_;
   const TableConstRefWithVocab tableWithVocab = table.tableWithVocab_;
+  // Shared by the copies of the transform below (null = no prefetching).
+  std::shared_ptr<VocabularyPrefetcher> prefetcher;
+  if (const size_t distance = getRuntimeParameter<
+          &RuntimeParameters::exportVocabularyPrefetchBatches_>();
+      distance > 0 && !ql::ranges::empty(rowView)) {
+    prefetcher = std::make_shared<VocabularyPrefetcher>(
+        context.index_.get(), tableWithVocab,
+        context.preprocessedTemplate_.get().uniqueVariableColumns_,
+        *ql::ranges::begin(rowView),
+        *ql::ranges::begin(rowView) + ql::ranges::size(rowView), distance);
+  }
   return ranges::views::chunk(std::move(rowView),
                               ConstructTripleGenerator::BATCH_SIZE) |
          ql::views::transform([tableWithVocab, context = std::move(context),
-                               tableRowOffset](auto chunkView) {
+                               tableRowOffset, prefetcher](auto chunkView) {
+           if (prefetcher != nullptr) {
+             prefetcher->beforeBatch(*ql::ranges::begin(chunkView));
+           }
            return computeBatch(tableWithVocab, chunkView, context,
                                tableRowOffset);
          }) |

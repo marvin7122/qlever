@@ -77,6 +77,7 @@ RuntimeParameters::RuntimeParameters() {
   add(vocabularyPageCacheFastPath_);
   add(vocabularyInternalRankLookup_);
   add(vocabularyInternalRankPrefetchDistance_);
+  add(exportVocabularyPrefetchBatches_);
   add(vocabularyInternalRankHugePages_);
   add(vocabularyBufferPoolSize_);
   add(vocabularyBufferPoolAuto_);

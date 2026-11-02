@@ -200,6 +200,7 @@ TEST(RuntimeParameters, allParametersAreRegistered) {
   check(params.vocabularyPageCacheFastPath_);
   check(params.vocabularyInternalRankLookup_);
   check(params.vocabularyInternalRankPrefetchDistance_);
+  check(params.exportVocabularyPrefetchBatches_);
   check(params.vocabularyInternalRankHugePages_);
   check(params.vocabularyBufferPoolSize_);
   check(params.vocabularyBufferPoolAuto_);
