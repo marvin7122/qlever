@@ -34,7 +34,7 @@ std::string_view commonPrefix(std::string_view a, const std::string_view b) {
   // shorter one.
   const auto [firstDifferenceInA, firstDifferenceInB] =
       std::mismatch(a.begin(), a.end(), b.begin(), b.end());
-  return a.substr(0,static_cast<size_t>( firstDifferenceInA-a.begin() ));
+  return a.substr(0, static_cast<size_t>(firstDifferenceInA - a.begin()));
 }
 
 // ____________________________________________________________________________
