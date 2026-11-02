@@ -280,7 +280,7 @@ TYPED_TEST(IoUringManagerTest, mismatchedSpanLengthsThrow) {
   AD_EXPECT_THROW_WITH_MESSAGE(
       std::ignore =
           manager.addBatch(fd, numberOfBytesToRead, fileOffsets, buffers),
-      HasSubstr("ranges must have the same length"));
+      HasSubstr("The ranges must have the same length"));
 }
 
 // MultipleBatchesSequential: 3 batches submitted and waited in order.
