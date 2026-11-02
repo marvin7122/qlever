@@ -32,6 +32,14 @@ def main():
         leg = int(re.search(r"ocr-usage-(\d+)", path).group(1))
         with open(path, encoding="utf-8") as f:
             legs[leg] = json.load(f)
+    # Findings per leg and those without a rule id (rule-stats.json, written
+    # by the poster).
+    findings = unknown = 0
+    for path in glob.glob(os.path.join(usage_dir, "ocr-usage-*", "rule-stats.json")):
+        with open(path, encoding="utf-8") as f:
+            stats = json.load(f)
+        findings += stats.get("findings", 0)
+        unknown += stats.get("unknown", 0)
 
     selection = number("SELECTION_COST_USD")
     budget = number("OCR_REVIEW_BUDGET_USD")
@@ -71,6 +79,7 @@ def main():
         lines.append("No cap cut any leg.")
     if missing:
         lines.append(f"No usage from {legs_text(missing)} (failed before the first model call, or killed).")
+    lines.append(f"Findings: {findings}; without a rule id (posted as `rule: unknown`): {unknown}.")
     if os.environ.get("RUN_URL"):
         lines.append(f"\n[Actions run]({os.environ['RUN_URL']}); every leg logs `[ocr] usage:` after each model call.")
     with open(report_path, "w", encoding="utf-8") as f:
