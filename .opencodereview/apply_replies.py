@@ -476,7 +476,7 @@ def chat(messages, spend):
     url, model, token = backend()
     body = {"model": model, "messages": messages, "response_format": {"type": "json_object"},
             "max_tokens": 8192, "temperature": 0}
-    if os.environ.get("OCR_APPLY_THINKING", "disabled") == "disabled":
+    if (os.environ.get("OCR_APPLY_THINKING") or "disabled") == "disabled":
         body["thinking"] = {"type": "disabled"}
     request = urllib.request.Request(url, data=json.dumps(body).encode(), headers={
         "Content-Type": "application/json", "Authorization": f"Bearer {token}"})
@@ -612,7 +612,8 @@ HARNESSES = {"search-replace": (search_replace_harness, search_replace_rewrite)}
 
 
 def harness():
-    name = os.environ.get("OCR_APPLY_AGENT", "search-replace")
+    # An unset repository variable reaches the script as an empty string.
+    name = os.environ.get("OCR_APPLY_AGENT") or "search-replace"
     if name not in HARNESSES:
         raise SystemExit(f"OCR_APPLY_AGENT={name!r} is not one of {sorted(HARNESSES)}")
     return HARNESSES[name]
