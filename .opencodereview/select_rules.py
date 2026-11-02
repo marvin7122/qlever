@@ -28,6 +28,9 @@ import subprocess
 import sys
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from stage1_deterministic import SCRIPTED_RULE_IDS  # noqa: E402
+
 # Diff characters sent to the selection call; the rest is listed by name only.
 MAX_DIFF_CHARS = 60_000
 # Characters of each rule's own text shown to the selection call.
@@ -128,7 +131,7 @@ def select_with_model(labels, summaries, files, diff_text):
     with urllib.request.urlopen(request, timeout=300) as response:
         answer = json.load(response)
     usage = answer.get("usage", {})
-    log(f"selection call usage: {json.dumps(usage)}")
+    log(f"selection call model: {answer.get('model')}, usage: {json.dumps(usage)}")
     content = answer["choices"][0]["message"]["content"]
     selected = json.loads(content)["rule_ids"]
     if not isinstance(selected, list):
@@ -164,14 +167,19 @@ def main():
                 texts.append(None)
         texts_by_file[f["filename"]] = texts
     kept = []
+    scripted = 0
     for index, rule in enumerate(rules):
+        # Stage 1 checks these rules deterministically; no model sees them.
+        if summaries[index].split(" ", 1)[0] in SCRIPTED_RULE_IDS:
+            scripted += 1
+            continue
         applicable = [name for name in texts_by_file if path_matches(name, rule["path"])]
         if not applicable:
             continue
         texts = [t for name in applicable for t in texts_by_file[name]]
         if None in texts or triggers_hit(rule, [t for t in texts if t]):
             kept.append(index)
-    log(f"pass 1 (triggers and paths): kept {len(kept)} of {len(rules)} rules")
+    log(f"pass 1: {scripted} rules left to the stage 1 script; triggers and paths kept {len(kept)} of the other {len(rules) - scripted}")
 
     # Pass 2: relevance, one model call; any failure keeps pass 1's rules.
     # Rules are labelled by position (`R<index>`): not every rule has an id,
