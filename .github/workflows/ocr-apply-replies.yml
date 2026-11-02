@@ -1,0 +1,124 @@
+name: OpenCodeReview apply replies
+
+# Acts on the PR owner's reactions and replies to OpenCodeReview findings
+# (see .opencodereview/apply_replies.py), only when the owner signals it:
+#   /apply-replies  (PR comment)    every finding thread with a new owner signal
+#   /approve-all    (PR comment)    every pending proposal
+#   /approve, /reject (reply in a finding thread)  that thread's proposal
+# Mechanical fixes are committed to the PR branch; behavior changes are
+# proposed on a side branch and applied only on /approve. Pushes go only to
+# the PR's own branch in this repository (OCR_APPLY_ALLOWED_REPO).
+#
+# Backend: the review fan-out's model (vars OCR_LLM_URL / OCR_LLM_MODEL,
+# secret OCR_LLM_AUTH_TOKEN), overridable by OCR_APPLY_LLM_URL /
+# OCR_APPLY_LLM_MODEL (vars) and OCR_APPLY_LLM_AUTH_TOKEN (secret); the edit
+# harness by the var OCR_APPLY_AGENT (default search-replace). Budget per run:
+# var OCR_APPLY_BUDGET_USD (default 2.00), at the fan-out's prices.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # One run per PR at a time; a second signal waits instead of racing.
+  group: ocr-apply-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  OCR_PRICE_INPUT_PER_M: '0.14'
+  OCR_PRICE_CACHE_HIT_PER_M: ${{ vars.OCR_PRICE_CACHE_HIT_PER_M || '0.0028' }}
+  OCR_PRICE_OUTPUT_PER_M: '0.28'
+  OCR_APPLY_BUDGET_USD: ${{ vars.OCR_APPLY_BUDGET_USD || '2.00' }}
+
+jobs:
+  apply:
+    if: >-
+      github.event.comment.user.login == github.repository_owner &&
+      ((github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+        (startsWith(github.event.comment.body, '/apply-replies') ||
+         startsWith(github.event.comment.body, '/approve-all'))) ||
+       (github.event_name == 'pull_request_review_comment' &&
+        (startsWith(github.event.comment.body, '/approve') ||
+         startsWith(github.event.comment.body, '/reject'))))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Resolve the PR and the mode
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          EVENT: ${{ github.event_name }}
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          pr=$(gh api "repos/${{ github.repository }}/pulls/$NUMBER")
+          echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+          echo "head_ref=$(jq -r .head.ref <<<"$pr")" >> "$GITHUB_OUTPUT"
+          echo "head_repo=$(jq -r .head.repo.full_name <<<"$pr")" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = pull_request_review_comment ]; then mode=decisions
+          elif [[ "$BODY" == /approve-all* ]]; then mode=approve-all
+          else mode=replies; fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+      # Pushes with the workflow token do not start the PR's CI; pushes with
+      # the fan-out app's token do, if the app has "Contents: write" on this
+      # repository. Set the variable OCR_APPLY_PUSH_TOKEN=app to push with it.
+      - name: Create the app token
+        id: app-token
+        if: ${{ vars.OCR_FANOUT_APP_ID != '' && vars.OCR_APPLY_PUSH_TOKEN == 'app' }}
+        continue-on-error: true
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.OCR_FANOUT_APP_ID }}
+          private-key: ${{ secrets.OCR_FANOUT_APP_PRIVATE_KEY }}
+      # The scripts come from the default branch, never from the PR.
+      - name: Fetch the scripts (default branch)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: ocr
+          sparse-checkout: .opencodereview
+          fetch-depth: 1
+      - name: Check out the PR branch
+        if: steps.pr.outputs.head_repo == github.repository
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ steps.pr.outputs.head_repo }}
+          ref: ${{ steps.pr.outputs.head_ref }}
+          path: pr
+          fetch-depth: 50
+          token: ${{ steps.app-token.outputs.token || github.token }}
+      - name: Install clang-format 18 (as in format-check.yml)
+        run: sudo apt-get install -y -qq clang-format-18 > /dev/null
+      - name: Apply the owner's replies
+        env:
+          # Replies and resolving threads: the workflow token (pull-requests: write).
+          GH_TOKEN: ${{ github.token }}
+          OCR_APPLY_CI_STARTS: ${{ steps.app-token.outputs.token != '' }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          OCR_APPLY_OWNER: ${{ github.repository_owner }}
+          OCR_LLM_URL: ${{ vars.OCR_LLM_URL }}
+          OCR_LLM_MODEL: ${{ vars.OCR_LLM_MODEL }}
+          OCR_LLM_AUTH_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          OCR_APPLY_LLM_URL: ${{ vars.OCR_APPLY_LLM_URL }}
+          OCR_APPLY_LLM_MODEL: ${{ vars.OCR_APPLY_LLM_MODEL }}
+          OCR_APPLY_LLM_AUTH_TOKEN: ${{ secrets.OCR_APPLY_LLM_AUTH_TOKEN }}
+          OCR_APPLY_AGENT: ${{ vars.OCR_APPLY_AGENT }}
+          OCR_APPLY_ALLOWED_REPO: ${{ vars.OCR_APPLY_ALLOWED_REPO || 'marvin7122/qlever' }}
+          OCR_APPLY_FINDING_AUTHORS: ${{ vars.OCR_APPLY_FINDING_AUTHORS || 'github-actions[bot],github-actions' }}
+          CLANG_FORMAT: clang-format-18
+        run: |
+          if [ ! -d pr ]; then
+            gh pr comment '${{ steps.pr.outputs.number }}' -R '${{ github.repository }}' \
+              --body "**apply-replies** refused: the PR branch is not in ${{ github.repository }}."
+            exit 1
+          fi
+          git -C pr config user.name "ocr-apply-replies[bot]"
+          git -C pr config user.email "ocr-apply-replies@users.noreply.github.com"
+          python3 ocr/.opencodereview/apply_replies.py --mode '${{ steps.pr.outputs.mode }}' --repo-dir pr
