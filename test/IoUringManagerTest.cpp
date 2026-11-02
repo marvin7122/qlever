@@ -1157,7 +1157,7 @@ TEST(ReadPageCacheHits, emptyBatchAndContract) {
   std::vector<char*> targets{buffer.data(), buffer.data() + 4};
   AD_EXPECT_THROW_WITH_MESSAGE(
       ad_utility::readPageCacheHits(fd, numberOfBytesToRead, offsets, targets),
-      HasSubstr("offsets.size() == numberOfBytesToRead.size()"));
+      HasSubstr("The ranges must have the same length."));
 }
 
 // A `ReadPolicy` that reads synchronously and records the reads it receives.
