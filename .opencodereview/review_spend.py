@@ -32,6 +32,19 @@ def main():
         leg = int(re.search(r"ocr-usage-(\d+)", path).group(1))
         with open(path, encoding="utf-8") as f:
             legs[leg] = json.load(f)
+    # Posted and rejected findings per leg (rule-stats.json, written by the
+    # poster's rule gate).
+    rejected = {}
+    findings = no_rule = unverified = 0
+    for path in glob.glob(os.path.join(usage_dir, "ocr-usage-*", "rule-stats.json")):
+        leg = int(re.search(r"ocr-usage-(\d+)", path).group(1))
+        with open(path, encoding="utf-8") as f:
+            stats = json.load(f)
+        findings += stats.get("findings", 0)
+        no_rule += stats.get("rejected_no_rule", 0)
+        unverified += stats.get("rejected_unverified_link", 0)
+        if stats.get("rejected_no_rule", 0) or stats.get("rejected_unverified_link", 0):
+            rejected[leg] = (stats.get("rejected_no_rule", 0), stats.get("rejected_unverified_link", 0))
 
     selection = number("SELECTION_COST_USD")
     budget = number("OCR_REVIEW_BUDGET_USD")
@@ -71,6 +84,11 @@ def main():
         lines.append("No cap cut any leg.")
     if missing:
         lines.append(f"No usage from {legs_text(missing)} (failed before the first model call, or killed).")
+    lines.append(f"Findings posted: {findings}; rejected: no valid rule {no_rule}, unverified link {unverified}"
+                 + (" (" + "; ".join(f"leg {leg}: {a} / {b}" for leg, (a, b) in sorted(rejected.items())) + ")"
+                    if rejected else "") + ". Rejected findings are in the legs' logs.")
+    if os.environ.get("NO_CARD_RULES", "").strip():
+        lines.append(f"Left out of this review (no knowledge card): {', '.join(os.environ['NO_CARD_RULES'].split())}.")
     if os.environ.get("RUN_URL"):
         lines.append(f"\n[Actions run]({os.environ['RUN_URL']}); every leg logs `[ocr] usage:` after each model call.")
     with open(report_path, "w", encoding="utf-8") as f:
