@@ -20,6 +20,9 @@ on:
     types: [created]
   pull_request_review_comment:
     types: [created]
+  # THROWAWAY TEST ONLY: the label starts a `replies` run with scripts from the PR head.
+  pull_request:
+    types: [labeled]
 
 permissions:
   contents: write
@@ -39,6 +42,7 @@ env:
 jobs:
   apply:
     if: >-
+      (github.event_name == 'pull_request' && github.event.label.name == 'apply-replies-test') ||
       github.event.comment.user.login == github.repository_owner &&
       ((github.event_name == 'issue_comment' && github.event.issue.pull_request &&
         (startsWith(github.event.comment.body, '/apply-replies') ||
@@ -80,7 +84,7 @@ jobs:
       - name: Fetch the scripts (default branch)
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.event.pull_request.head.ref || github.event.repository.default_branch }}
           path: ocr
           sparse-checkout: .opencodereview
           fetch-depth: 1
@@ -113,7 +117,7 @@ jobs:
           OCR_APPLY_LLM_AUTH_TOKEN: ${{ secrets.OCR_APPLY_LLM_AUTH_TOKEN }}
           OCR_APPLY_AGENT: ${{ vars.OCR_APPLY_AGENT }}
           OCR_APPLY_ALLOWED_REPO: ${{ vars.OCR_APPLY_ALLOWED_REPO || 'marvin7122/qlever' }}
-          OCR_APPLY_FINDING_AUTHORS: ${{ vars.OCR_APPLY_FINDING_AUTHORS || 'github-actions[bot],github-actions' }}
+          OCR_APPLY_FINDING_AUTHORS: marvin7122
           CLANG_FORMAT: clang-format-18
         run: |
           if [ ! -d pr ]; then
