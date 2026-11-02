@@ -361,8 +361,7 @@ void IoUringPolicy::addBatch(int fd, ql::span<const size_t> numberOfBytesToRead,
                              ql::span<const uint64_t> offsets,
                              ql::span<char*> buffers,
                              [[maybe_unused]] BatchHandle handle) {
-  AD_CONTRACT_CHECK(offsets.size() == numberOfBytesToRead.size() &&
-                    buffers.size() == numberOfBytesToRead.size());
+  validateSameLength(numberOfBytesToRead, offsets, buffers);
   if (numberOfBytesToRead.empty()) {
     return;
   }
