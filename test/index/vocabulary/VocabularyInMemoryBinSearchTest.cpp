@@ -296,6 +296,23 @@ TEST(VocabularyInMemoryBinSearch, lookupBatch) {
   EXPECT_EQ((*result)[1],
             ad_utility::vocabulary::placeholderForMissingVocabIndex(5));
   EXPECT_EQ((*result)[2], "gamma");
+
+  // The contained words are views into the vocabulary (no copy).
+  EXPECT_EQ(static_cast<const void*>((*result)[0].data()),
+            static_cast<const void*>(vocab[0].value().data()))
+      << "the word was copied instead of viewed";
+
+  // The result shares the ownership of the words, so it stays valid after the
+  // vocabulary is closed; the empty batch is rejected.
+  vocab.close();
+  ASSERT_EQ(vocab.size(), 0u);
+  EXPECT_THAT(
+      *result,
+      ::testing::ElementsAre(
+          "alpha", ad_utility::vocabulary::placeholderForMissingVocabIndex(5),
+          "gamma"));
+  AD_EXPECT_THROW_WITH_MESSAGE(vocab.lookupBatch(ql::span<const size_t>{}),
+                               ::testing::HasSubstr("!indices.empty()"));
 }
 
 // _____________________________________________________________________________
