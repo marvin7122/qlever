@@ -12,6 +12,7 @@
 #define QLEVER_SRC_UTIL_BATCHHANDLE_H
 
 #include <cstdint>
+#include <limits>
 #include <utility>
 
 namespace ad_utility {
@@ -25,9 +26,11 @@ namespace ad_utility {
 // need the number (hashing and diagnostics).
 class BatchHandle {
  public:
-  // The default handle: the value that the first minted handle wraps, so
-  // that handles can be stored in default-constructed containers.
-  BatchHandle() = default;
+  // The default handle: a sentinel value that `mintNext` can never hand out
+  // (it throws before returning `uint64_t` max), so a default-constructed
+  // handle never collides with a handle that was actually minted. This allows
+  // handles to be stored in default-constructed containers without aliasing a
+  // real batch.
 
   // `explicit`, so that a bare integer cannot silently convert to a
   // `BatchHandle` where a handle is expected.
@@ -51,7 +54,7 @@ class BatchHandle {
   }
 
  private:
-  uint64_t value_ = 0;
+  uint64_t value_ = std::numeric_limits<uint64_t>::max();
 };
 
 }  // namespace ad_utility
