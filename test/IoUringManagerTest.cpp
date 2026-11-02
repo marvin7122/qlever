@@ -772,7 +772,7 @@ TEST(IoUringPolicyModel, spansOfDifferentLengthsThrow) {
   AD_EXPECT_THROW_WITH_MESSAGE(
       policy.addBatch(/*fd=*/-1, numBytes, offsets, buffers,
                       ad_utility::BatchHandle{0}),
-      HasSubstr("offsets.size() == numberOfBytesToRead.size()"));
+      HasSubstr("The ranges must have the same length"));
 }
 
 // A submit error other than `EINTR` and `EAGAIN`, and a failed wait, mean that
