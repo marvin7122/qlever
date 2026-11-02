@@ -60,8 +60,11 @@ struct SelectedReads {
   template <typename T>
   static std::vector<std::remove_const_t<T>> selectAt(
       ql::span<T> values, ql::span<const size_t> positions) {
-    return ad_utility::transform(positions,
-                                 [values](size_t i) { return values[i]; });
+    std::vector<std::remove_const_t<T>> out(positions.size());
+    for (size_t i = 0; i < positions.size(); ++i) {
+      out[i] = values[positions[i]];
+    }
+    return out;
   }
 };
 }  // namespace detail
