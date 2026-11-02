@@ -63,7 +63,8 @@ TEST(VocabularyInMemory, AccessOperator) {
 // Test that `lookupBatch` returns views into the vocabulary (no copy), in the
 // order of the indices, also for duplicates, that it rejects the empty batch
 // and an index that is out of range, and that a result stays valid after the
-// vocabulary is closed (the result shares the ownership of the words).
+// vocabulary is closed and reopened (the result shares the ownership of the
+// words).
 TEST(VocabularyInMemory, LookupBatch) {
   auto cleanup = getFileCleanup();
   const std::vector<std::string> words{"alpha", "beta", "gamma", "delta"};
@@ -85,6 +86,25 @@ TEST(VocabularyInMemory, LookupBatch) {
   for (const auto& [index, word] : ::ranges::views::zip(indices, *result)) {
     EXPECT_EQ(word, words[index]);
   }
+  // `open()` also replaces the storage; the result keeps the old one.
+  vocab.open(gtestCurrentTestName());
+  ASSERT_EQ(vocab.size(), words.size());
+  for (const auto& [index, word] : ::ranges::views::zip(indices, *result)) {
+    EXPECT_EQ(word, words[index]);
+  }
+}
+
+// A moved-from vocabulary is empty (and usable), as before the storage was
+// shared.
+TEST(VocabularyInMemory, MovedFromIsEmpty) {
+  auto cleanup = getFileCleanup();
+  auto vocab = createVocabulary({"alpha", "beta"});
+  VocabularyInMemory target{std::move(vocab)};
+  EXPECT_EQ(target.size(), 2u);
+  // NOLINTNEXTLINE(bugprone-use-after-move)
+  EXPECT_EQ(vocab.size(), 0u);
+  // NOLINTNEXTLINE(bugprone-use-after-move)
+  EXPECT_TRUE(vocab.begin() == vocab.end());
 }
 
 TEST(VocabularyInMemory, ReadAndWriteFromFile) {

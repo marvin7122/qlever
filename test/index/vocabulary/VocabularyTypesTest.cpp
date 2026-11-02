@@ -89,8 +89,10 @@ TEST(VocabBatchLookupData, AsResultEmpty) {
 }
 
 // Test that `fromWords` returns a result with one view per word, in order,
-// that the views point at the moved-in strings (no copy), and that the result
-// stays valid after the input vector has been moved from.
+// that the views point at the moved-in strings (no copy of the characters of
+// a heap-allocated string; short strings are stored inline and are copied
+// when moved), and that the result stays valid after the input vector has been
+// moved from.
 TEST(StringVectorVocabBatchLookupData, FromWords) {
   std::vector<std::string> words{"a", std::string(100, 'b'), ""};
   const char* longWordData = words[1].data();

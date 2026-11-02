@@ -37,11 +37,16 @@ void VocabularyInMemory::writeToFile(const string& fileName) const {
 VocabBatchLookupResult VocabularyInMemory::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
+  AD_CONTRACT_CHECK(words_ != nullptr);
 
-  return SharedWordsVocabBatchLookupData::fromViews(
-      words_,
-      ::ranges::to_vector(indices | ql::views::transform([this](size_t idx) {
-                            AD_CONTRACT_CHECK(idx < size());
-                            return words()[idx];
-                          })));
+  // One handle on the storage, so that the views point into exactly the
+  // storage whose ownership the result shares.
+  std::shared_ptr<const Words> words = words_;
+  auto views =
+      ::ranges::to_vector(indices | ql::views::transform([&words](size_t idx) {
+                            AD_CONTRACT_CHECK(idx < words->size());
+                            return (*words)[idx];
+                          }));
+  return SharedWordsVocabBatchLookupData::fromViews(std::move(words),
+                                                    std::move(views));
 }

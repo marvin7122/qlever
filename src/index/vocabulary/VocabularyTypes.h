@@ -46,8 +46,9 @@ using VocabLookupOutput =
 // Base class for a vocabulary batch-lookup result, shared by the different
 // vocabulary implementations. Owns the storage of the words (`buffer()`,
 // whose concrete type `BufferType` depends on the implementation: a byte
-// buffer, a vector of strings, or a shared handle on the word storage of a
-// vocabulary that keeps its words in RAM) and one `string_view` per looked-up
+// buffer, a vector of strings, a monotonic buffer resource, a shared handle on
+// the word storage of a vocabulary that keeps its words in RAM, or handles on
+// the results of other lookups) and one `string_view` per looked-up
 // term (`views()`, each pointing into storage that `buffer()` owns). The
 // vocabulary implementation that performs the lookup fills `buffer()` and
 // `views()`, then calls `asResult()` to hand out a `VocabBatchLookupResult`
@@ -59,8 +60,8 @@ using VocabLookupOutput =
 template <typename BufferType>
 class VocabLookupDataCommonBase {
  public:
-  // Mutable access to the buffer that holds the materialized string data, for
-  // the producer to fill before calling `asResult`.
+  // Mutable access to the buffer that owns the storage the views point into,
+  // for the producer to fill before calling `asResult`.
   BufferType& buffer() { return buffer_; }
 
   // Mutable access to the views (one `string_view` per looked-up index, each
@@ -83,7 +84,8 @@ class VocabLookupDataCommonBase {
   }
 
  private:
-  // Buffer for the materialized string data (used by disk-based vocabularies).
+  // The buffer that owns the storage the views point into (see the class
+  // comment for the kinds of `BufferType`).
   BufferType buffer_;
 
   // One `string_view` per looked-up index, each pointing into storage that

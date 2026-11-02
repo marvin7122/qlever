@@ -31,11 +31,16 @@ class VocabularyInMemory
  private:
   // The actual storage. It is shared with the batch-lookup results (see
   // `lookupBatch`), which is why it is immutable: `open()` and
-  // deserialization replace it by a new one, `close()` by an empty one.
+  // deserialization replace it by a new one, `close()` by an empty one. Null
+  // only in a moved-from vocabulary.
   std::shared_ptr<const Words> words_ = std::make_shared<const Words>();
 
-  // Const access to the words.
-  const Words& words() const { return *words_; }
+  // Const access to the words. A moved-from vocabulary has no storage and is
+  // treated as empty, as it was before the storage was shared.
+  const Words& words() const {
+    static const Words empty;
+    return words_ != nullptr ? *words_ : empty;
+  }
 
  public:
   // Construct an empty vocabulary
@@ -87,7 +92,9 @@ class VocabularyInMemory
   //
   // NOTE: The result shares the ownership of the word storage, so no word is
   // copied and the result stays valid when this vocabulary is closed or
-  // reopened.
+  // reopened. For a vocabulary created by `fromZeroCopyDeserializer`, the
+  // storage only views the serializer's buffer, so the result is valid only as
+  // long as that buffer is, like the vocabulary itself.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
   //____________________________________________________________________________
@@ -172,7 +179,7 @@ class VocabularyInMemory
       serializer | words;
       arg.words_ = std::make_shared<const Words>(std::move(words));
     } else {
-      serializer | *arg.words_;
+      serializer | arg.words();
     }
   }
 };

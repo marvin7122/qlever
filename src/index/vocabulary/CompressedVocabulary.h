@@ -154,7 +154,8 @@ class CompressedVocabulary {
 
   // Return the words for `indices` (not empty) in that order, as views into
   // a buffer owned by the result. For an underlying vocabulary with holes,
-  // this currently falls back to the sequential lookup.
+  // this currently falls back to the sequential lookup, so an index that is a
+  // hole yields `placeholderForMissingVocabIndex(index)`, as `operator[]`.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
 

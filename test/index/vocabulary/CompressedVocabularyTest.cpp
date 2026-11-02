@@ -384,6 +384,7 @@ TEST(CompressedVocabularyWithHoles, lookupBatch) {
   }
 }
 
+namespace {
 // Helper for the two tests below: `lookupBatch` of a compressed vocabulary over
 // the given underlying `Vocabulary` matches `operator[]` for reordered and
 // duplicated indices and for a single index.
@@ -392,7 +393,8 @@ void testLookupBatchOverUnderlying(const std::string& filename) {
   auto cleanup = vocabulary_test::makeVocabFileCleanup<Vocabulary>(filename);
   std::vector<std::string> words;
   for (size_t i : ql::views::iota(size_t{0}, size_t{30})) {
-    words.push_back(absl::StrCat("w", i, std::string(i % 3, 'z')));
+    // Fixed-width numbers, so that the words are sorted.
+    words.push_back(absl::StrCat("w", i / 10, i % 10, std::string(i % 3, 'z')));
   }
   Vocabulary vocab;
   {
@@ -413,18 +415,19 @@ void testLookupBatchOverUnderlying(const std::string& filename) {
         vocab, vocab.lookupBatch(indices), indices);
   }
 }
+}  // namespace
 
 // Test `lookupBatch` over the in-memory vocabulary (whose batch result is views
-// into the vocabulary), one of the two instantiations of
-// `PolymorphicVocabulary`.
+// into the vocabulary), the underlying vocabulary of the in-memory compressed
+// variants of `PolymorphicVocabulary`.
 TEST(CompressedVocabularyOverInMemory, lookupBatch) {
   testLookupBatchOverUnderlying<CompressedVocabulary<
       VocabularyInMemory, FsstSquaredCompressionWrapper, 4>>(
       gtestCurrentTestName());
 }
 
-// Test `lookupBatch` over the internal-external vocabulary, the other
-// instantiation of `PolymorphicVocabulary`.
+// Test `lookupBatch` over the internal-external vocabulary, the underlying
+// vocabulary of the on-disk compressed variants of `PolymorphicVocabulary`.
 TEST(CompressedVocabularyOverInternalExternal, lookupBatch) {
   testLookupBatchOverUnderlying<CompressedVocabulary<
       VocabularyInternalExternal, FsstSquaredCompressionWrapper, 4>>(
