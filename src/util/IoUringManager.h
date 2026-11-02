@@ -35,8 +35,8 @@ class BatchManagerBase {
 
   // Marked `virtual`, so that destroying a derived manager through this base
   // (the pool owns `std::unique_ptr<BatchManagerBase>`) runs the derived
-  // destructor, e.g. shutting down the io_uring ring of `IoUringPolicy`.
-  // Defaulted, because the base itself owns no resources to release.
+  // destructor. Defaulted, because the base itself owns no resources to
+  // release.
   virtual ~BatchManagerBase() = default;
 
   [[nodiscard]] virtual BatchHandle addBatch(
