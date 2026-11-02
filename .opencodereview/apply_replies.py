@@ -973,7 +973,15 @@ class Run:
     def push_and_report_applied(self):
         if not self.applied:
             return
-        git(self.repo_dir, "push", "-q", "origin", f"HEAD:{self.head_ref}")
+        try:
+            git(self.repo_dir, "push", "-q", "origin", f"HEAD:{self.head_ref}")
+        except RuntimeError as error:
+            # Nothing reached the PR: say so in every thread, keep the threads open.
+            for item in self.applied:
+                reply(self.repo, self.number, item.task.thread,
+                      f"Not applied: pushing to `{self.head_ref}` failed ({str(error)[:200]}).", {"state": "failed"})
+                self.record("failed", item.task, "push failed")
+            return
         for item in self.applied:
             reply(self.repo, self.number, item.task.thread, item.body(item.sha), {**item.state, "commit": item.sha})
             resolve(item.task.thread)
@@ -991,6 +999,10 @@ class Run:
                  + f"; model spend ${self.spend.usd:.4f} of ${self.spend.budget:.2f} ({self.spend.calls} calls).", ""]
         for outcome, url, rule, detail in self.results:
             lines.append(f"- {outcome}: [{rule}]({url}) {detail}")
+        if any(outcome == "applied" for outcome, *_ in self.results) and os.environ.get("OCR_APPLY_CI_STARTS") != "true":
+            lines += ["", "The commits were pushed with the workflow token, which does not start the PR's CI; push "
+                      "any commit or re-run the CI to check them (or give the fan-out app \"Contents: write\" and set "
+                      "the variable `OCR_APPLY_PUSH_TOKEN=app`)."]
         return "\n".join(lines) + "\n"
 
     def main(self):

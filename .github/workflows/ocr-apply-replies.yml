@@ -72,11 +72,12 @@ jobs:
           elif [[ "$BODY" == /approve-all* ]]; then mode=approve-all
           else mode=replies; fi
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
-      # Pushes with the app token start the PR's CI; pushes with the
-      # workflow token would not.
+      # Pushes with the workflow token do not start the PR's CI; pushes with
+      # the fan-out app's token do, if the app has "Contents: write" on this
+      # repository. Set the variable OCR_APPLY_PUSH_TOKEN=app to push with it.
       - name: Create the app token
         id: app-token
-        if: ${{ vars.OCR_FANOUT_APP_ID != '' }}
+        if: ${{ vars.OCR_FANOUT_APP_ID != '' && vars.OCR_APPLY_PUSH_TOKEN == 'app' }}
         continue-on-error: true
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
@@ -103,7 +104,9 @@ jobs:
         run: sudo apt-get install -y -qq clang-format-18 > /dev/null
       - name: Apply the owner's replies
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          # Replies and resolving threads: the workflow token (pull-requests: write).
+          GH_TOKEN: ${{ github.token }}
+          OCR_APPLY_CI_STARTS: ${{ steps.app-token.outputs.token != '' }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           OCR_APPLY_OWNER: ${{ github.repository_owner }}
