@@ -29,9 +29,9 @@ namespace ad_utility {
 // `EOPNOTSUPP` or `ENOSYS` switches the fast path off for the whole process
 // (see `pageCacheFastPathIsSupported`).
 // Precondition: the three spans have the same length.
-std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
-                                      ql::span<const uint64_t> offsets,
-                                      ql::span<char*> buffers);
+[[nodiscard]] std::vector<size_t> readPageCacheHits(
+    int fd, ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
+    ql::span<char*> buffers);
 
 // Return whether `readPageCacheHits` may use `preadv2(RWF_NOWAIT)`: false if it
 // is not compiled in, or once a call has failed with `EOPNOTSUPP` or `ENOSYS`.
@@ -88,8 +88,10 @@ class PageCacheFirstPolicy {
   void setPageCacheFastPath(bool enabled) noexcept { enabled_ = enabled; }
 
   // Serve the reads of the batch that are in the page cache and pass the others
-  // on to the decorated policy. The arguments have the contract of
-  // `readPageCacheHits` and `Policy::addBatch`.
+  // on to the decorated policy. If all reads are served, the decorated policy
+  // gets an empty batch, so `Policy` must accept `addBatch` with no reads
+  // (`ReadPolicyConcept` does not require that). The arguments have the
+  // contract of `readPageCacheHits` and `Policy::addBatch`.
   void addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle) {

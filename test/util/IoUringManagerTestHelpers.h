@@ -11,29 +11,34 @@
 #ifndef QLEVER_TEST_UTIL_IOURINGMANAGERTESTHELPERS_H
 #define QLEVER_TEST_UTIL_IOURINGMANAGERTESTHELPERS_H
 
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <initializer_list>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "GTestHelpers.h"
 #include "backports/algorithm.h"
 #include "backports/span.h"
 #include "util/File.h"
-#include "GTestHelpers.h"
 
 namespace ioUringManagerTestHelpers {
 
 // Writes `content` to a temporary file and keeps it open for reading.
 // `fd()` exposes the file descriptor; the file is removed from disk on
-// destruction. Use `makeTempFile` below to get the file and its fd in one step.
+// destruction. Each instance has its own file, also within one test. Use
+// `makeTempFile` below to get the file and its fd in one step.
 class TempFile {
  public:
   explicit TempFile(std::string_view content)
-      : path_{absl::StrCat(gtestCurrentTestName(), ".tmp")} {
+      : path_{absl::StrCat(gtestCurrentTestName(), ".", numInstances_++,
+                           ".tmp")} {
     // Open for reading and writing (`"w+b"`): the tests read from this file's
     // `fd()` via `pread`/io_uring.
     readFile_ = ad_utility::File{path_, "w+b"};
@@ -58,6 +63,8 @@ class TempFile {
   int fd() const { return readFile_.fd(); }
 
  private:
+  // Makes the file names of the instances of one test distinct.
+  static inline size_t numInstances_ = 0;
   std::string path_;
   ad_utility::File readFile_;
 };
@@ -65,7 +72,7 @@ class TempFile {
 // Create a temporary file holding `content` and return it together with its
 // file descriptor. The returned `tmp` must be kept alive for as long as `fd` is
 // used.
-std::pair<TempFile, int> makeTempFile(std::string_view content) {
+inline std::pair<TempFile, int> makeTempFile(std::string_view content) {
   TempFile tmp{content};
   int fd = tmp.fd();
   return {std::move(tmp), fd};

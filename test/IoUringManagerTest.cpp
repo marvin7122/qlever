@@ -8,18 +8,10 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#include <absl/cleanup/cleanup.h>
-#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
-#include <unistd.h>
 
-#include <algorithm>
-#include <climits>
-#include <cstdio>
-#include <cstring>
 #include <initializer_list>
 #include <memory>
-#include <numeric>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -34,8 +26,7 @@
 #include "util/IoUringManager.h"
 #include "util/IoUringManagerTestHelpers.h"
 #include "util/Log.h"
-#include "util/PageCacheReadTestHelpers.h"
-#include "util/Views.h"
+#include "util/PageCacheFirstPolicy.h"
 
 namespace {
 
@@ -507,11 +498,18 @@ TEST(MakeBatchManager, backendMatchesFlagWhenIoUringPreferred) {
   expectManagerWorks(*manager);
 }
 
-// The manager from `makeBatchManager` works with the page-cache fast path
-// switched on and off.
+// The manager from `makeBatchManager` is decorated with the page-cache fast
+// path where it is supported, and works with the fast path switched on and
+// off. (`PageCacheFirstPolicy.theFastPathCanBeSwitchedOffAndOn` checks the
+// effect of the switch itself.)
 TEST(MakeBatchManager, worksWithTheFastPathOnAndOff) {
+  if (!ad_utility::pageCacheFastPathIsSupported()) {
+    GTEST_SKIP() << "preadv2(RWF_NOWAIT) is not supported here";
+  }
   bool preferIoUring = false;
   auto manager = ad_utility::makeBatchManager(preferIoUring);
+  ASSERT_NE(manager, nullptr);
+  EXPECT_TRUE(usesPolicy<ad_utility::SyncIoPolicy>(*manager));
   expectManagerWorks(*manager);
   manager->setPageCacheFastPath(false);
   expectManagerWorks(*manager);
