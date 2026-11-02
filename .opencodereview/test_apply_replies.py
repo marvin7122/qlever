@@ -351,6 +351,12 @@ class ConfigTest(unittest.TestCase):
         finally:
             del os.environ["OCR_APPLY_AGENT"]
         self.assertEqual(a.harness(), (a.search_replace_harness, a.search_replace_rewrite))
+        # An unset repository variable reaches the script as an empty string.
+        os.environ["OCR_APPLY_AGENT"] = ""
+        try:
+            self.assertEqual(a.harness(), (a.search_replace_harness, a.search_replace_rewrite))
+        finally:
+            del os.environ["OCR_APPLY_AGENT"]
 
     def test_spend(self):
         os.environ.update({"OCR_PRICE_INPUT_PER_M": "0.14", "OCR_PRICE_CACHE_HIT_PER_M": "0.0028",
