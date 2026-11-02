@@ -90,7 +90,8 @@ def test_review_spend_counts_rejections():
         for leg, (usage, stats) in enumerate([
             ({"calls": 43, "input_tokens": 500000, "cache_read_tokens": 450000, "output_tokens": 4000,
               "cost_usd": 0.0095, "truncated": True, "truncated_reason": "model-call cap 200 reached"},
-             {"findings": 3, "rejected_no_rule": 1, "rejected_unverified_link": 0}),
+             {"findings": 3, "rejected_no_rule": 1, "rejected_unverified_link": 0, "rejected_invalid_citation": 1,
+              "rejected_rule_does_not_fit": 1, "reassigned_rule": 2, "unverified": 1}),
             ({"calls": 12, "input_tokens": 100000, "cache_read_tokens": 90000, "output_tokens": 1000,
               "cost_usd": 0.0020, "truncated": False},
              {"findings": 0, "rejected_no_rule": 0, "rejected_unverified_link": 2}),
@@ -106,8 +107,33 @@ def test_review_spend_counts_rejections():
         text = open(report).read()
     assert "$0.0143 of the $1.00 review budget" in text, text
     assert "A cap cut leg 0 short" in text and "No usage from leg 2" in text
-    assert "Findings posted: 3; rejected: no valid rule 1, unverified link 2 (leg 0: 1 / 0; leg 1: 0 / 2)" in text, text
+    assert ("Findings posted: 3. rejected, no valid rule: 1; rejected, unverified link: 2; rejected, invalid citation: 1; "
+            "rejected, rule does not fit: 1; re-assigned to a fitting rule: 2; posted unverified: 1.") in text, text
+    assert ("Per leg: leg 0: rejected, no valid rule 1, rejected, invalid citation 1, rejected, rule does not fit 1, "
+            "re-assigned to a fitting rule 2, posted unverified 1; leg 1: rejected, unverified link 2.") in text, text
     assert "Left out of this review (no knowledge card): PP20, rule:includes." in text, text
+
+
+def test_rule_statements_for_the_filter():
+    rules = json.loads(RULE_TEXT)["rules"]
+    statements = leg_rule_ids.rule_statements(rules, leg_rule_ids.preamble_length([r["rule"] for r in rules]))
+    assert statements["CPP47"].startswith("Do not hold iterators/references/pointers into a `vector`"), statements["CPP47"]
+    assert not any(s.startswith("[") for s in statements.values()), "severity tags are stripped"
+    assert all(len(s) <= leg_rule_ids.STATEMENT_CHARS + 1 for s in statements.values())
+    with tempfile.TemporaryDirectory() as d:
+        chunk = os.path.join(d, "chunk.json")
+        json.dump({"rules": rules[40:44]}, open(chunk, "w"))
+        out = os.path.join(d, "statements.json")
+        ids = subprocess.run([sys.executable, os.path.join(HERE, "leg_rule_ids.py"), chunk, out],
+                             check=True, capture_output=True, text=True).stdout.split()
+        assert list(json.load(open(out))) == ids
+
+
+def test_card_titles():
+    """Card titles are headings or rule summaries, never a bare id; square
+    brackets are escaped by the poster."""
+    assert not [k for k, v in CARDS.items() if v["title"] == k]
+    assert all(v["title"] for v in CARDS.values())
 
 
 if __name__ == "__main__":
@@ -115,5 +141,7 @@ if __name__ == "__main__":
     test_every_rule_id_has_a_line_anchor()
     test_link_check_logic()
     test_review_spend_counts_rejections()
+    test_rule_statements_for_the_filter()
+    test_card_titles()
     test_links_against_github()
     print("checks passed")

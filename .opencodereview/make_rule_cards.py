@@ -3,7 +3,8 @@
 
 Usage: make_rule_cards.py RULE_JSON OCR_RUNNERS_RULE_DOCS OUT_JSON
 
-OCR_RUNNERS_RULE_DOCS is a file listing the names in ocr-runners'
+The titles are the cards' own first headings (read with gh, which must be
+able to read the card repositories). OCR_RUNNERS_RULE_DOCS is a file listing the names in ocr-runners'
 docs/rules/ (e.g. `CPP1.md`). A rule links its cpp-idioms card when one
 covers it (CARDS below, matched by hand against the card titles), otherwise
 its ocr-runners docs/rules/<ID>.md, otherwise nothing. IDM rules name their
@@ -13,6 +14,7 @@ cpp-idioms path in their text.
 import json
 import os
 import re
+import subprocess
 import sys
 
 IDIOMS = "https://github.com/marvin7122/cpp-idioms/blob/main/"
@@ -182,6 +184,25 @@ CARDS = {
 }
 
 
+def card_heading(url, cache={}):
+    """The first Markdown heading of the card at a GitHub blob URL (read
+    with gh), without the leading #, or None."""
+    if url in cache:
+        return cache[url]
+    match = re.match(r"^https://github\.com/([^/]+/[^/]+)/blob/([^/]+)/(.+)$", url)
+    heading = None
+    if match:
+        repo, ref, path = match.groups()
+        out = subprocess.run(["gh", "api", f"repos/{repo}/contents/{path}?ref={ref}",
+                              "-H", "Accept: application/vnd.github.raw"], capture_output=True, text=True)
+        if out.returncode == 0:
+            body = re.sub(r"^---\n.*?\n---\n", "", out.stdout, flags=re.S)
+            found = re.search(r"^#{1,3}\s+(.+?)\s*$", body, re.M)
+            heading = found.group(1) if found else None
+    cache[url] = heading
+    return heading
+
+
 def main():
     rule_path, runner_docs_path, out_path = sys.argv[1:4]
     runner_docs = {name[:-3] for name in open(runner_docs_path).read().split() if name.endswith(".md")}
@@ -208,7 +229,12 @@ def main():
         else:
             url = None
             without.append(rule_id)
-        cards[rule_id] = {"title": title, "url": url}
+        # The card's own heading; the rule summary when the card has none or
+        # its heading is only the rule id (the ocr-runners stubs).
+        heading = card_heading(url) if url else None
+        if not heading or heading.strip("` ") == rule_id:
+            heading = title
+        cards[rule_id] = {"title": heading, "url": url}
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(cards, f, indent=1, ensure_ascii=False)
         f.write("\n")

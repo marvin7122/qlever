@@ -18,6 +18,18 @@ import re
 import sys
 
 
+# The poster's finding counts (rule-stats.json) and their labels.
+FINDING_COUNTS = [
+    ("findings", "posted"),
+    ("rejected_no_rule", "rejected, no valid rule"),
+    ("rejected_unverified_link", "rejected, unverified link"),
+    ("rejected_invalid_citation", "rejected, invalid citation"),
+    ("rejected_rule_does_not_fit", "rejected, rule does not fit"),
+    ("reassigned_rule", "re-assigned to a fitting rule"),
+    ("unverified", "posted unverified"),
+]
+
+
 def number(name):
     try:
         return float(os.environ.get(name, ""))
@@ -32,19 +44,19 @@ def main():
         leg = int(re.search(r"ocr-usage-(\d+)", path).group(1))
         with open(path, encoding="utf-8") as f:
             legs[leg] = json.load(f)
-    # Posted and rejected findings per leg (rule-stats.json, written by the
-    # poster's rule gate).
-    rejected = {}
-    findings = no_rule = unverified = 0
+    # Posted, rejected and changed findings per leg (rule-stats.json, written
+    # by the poster).
+    totals = {key: 0 for key, _ in FINDING_COUNTS}
+    per_leg = {}
     for path in glob.glob(os.path.join(usage_dir, "ocr-usage-*", "rule-stats.json")):
         leg = int(re.search(r"ocr-usage-(\d+)", path).group(1))
         with open(path, encoding="utf-8") as f:
             stats = json.load(f)
-        findings += stats.get("findings", 0)
-        no_rule += stats.get("rejected_no_rule", 0)
-        unverified += stats.get("rejected_unverified_link", 0)
-        if stats.get("rejected_no_rule", 0) or stats.get("rejected_unverified_link", 0):
-            rejected[leg] = (stats.get("rejected_no_rule", 0), stats.get("rejected_unverified_link", 0))
+        for key, _ in FINDING_COUNTS:
+            totals[key] += stats.get(key, 0)
+        notes = [f"{label} {stats[key]}" for key, label in FINDING_COUNTS[1:] if stats.get(key)]
+        if notes:
+            per_leg[leg] = ", ".join(notes)
 
     selection = number("SELECTION_COST_USD")
     budget = number("OCR_REVIEW_BUDGET_USD")
@@ -84,9 +96,11 @@ def main():
         lines.append("No cap cut any leg.")
     if missing:
         lines.append(f"No usage from {legs_text(missing)} (failed before the first model call, or killed).")
-    lines.append(f"Findings posted: {findings}; rejected: no valid rule {no_rule}, unverified link {unverified}"
-                 + (" (" + "; ".join(f"leg {leg}: {a} / {b}" for leg, (a, b) in sorted(rejected.items())) + ")"
-                    if rejected else "") + ". Rejected findings are in the legs' logs.")
+    lines.append(f"Findings posted: {totals['findings']}. "
+                 + "; ".join(f"{label}: {totals[key]}" for key, label in FINDING_COUNTS[1:]) + ".")
+    if per_leg:
+        lines.append("Per leg: " + "; ".join(f"leg {leg}: {text}" for leg, text in sorted(per_leg.items()))
+                     + ". Rejected findings are in the legs' logs.")
     if os.environ.get("NO_CARD_RULES", "").strip():
         lines.append(f"Left out of this review (no knowledge card): {', '.join(os.environ['NO_CARD_RULES'].split())}.")
     if os.environ.get("RUN_URL"):
