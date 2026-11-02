@@ -17,8 +17,8 @@
 
 namespace ad_utility {
 
-// In `detail` because production code must call `readPageCacheHits` and
-// must not call or replace this hook; it exists only for the tests.
+// In `detail` because only `readPageCacheHits` calls the hook below, and only
+// tests replace it.
 namespace detail {
 // The one page-cache read call per run that
 // `readPageCacheHits` makes, with the same contract (the number of bytes read,
@@ -32,9 +32,12 @@ using PageCacheRead = int64_t (*)(int fd, const ::iovec* iov, int iovcnt,
 int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
                             int64_t offset) noexcept;
 // The function `readPageCacheHits` calls (initially `systemPageCacheRead`).
+// Tests replace it by assigning through the returned reference, before any
+// read runs; it must never be `nullptr`, because it is called unconditionally.
 PageCacheRead& pageCacheRead() noexcept;
-// Undo the effect of an `EOPNOTSUPP` on `pageCacheFastPathIsSupported()`, for
-// tests that injected one.
+// Undo the effect of an `EOPNOTSUPP` or `ENOSYS` on
+// `pageCacheFastPathIsSupported()`, for tests that injected one. A no-op where
+// the fast path is not compiled in.
 void resetPageCacheFastPathSupport() noexcept;
 }  // namespace detail
 

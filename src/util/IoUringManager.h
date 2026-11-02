@@ -65,8 +65,8 @@ class BatchManagerBase {
 
 // `BatchManager` owns the batch bookkeeping (minting a `BatchHandle` per batch,
 // validating the input spans) and delegates the reads from the underlying
-// Vocabulary to the `Policy`, which must satisfy the `ReadPolicy` concept
-// above.
+// Vocabulary to the `Policy`, which must satisfy `ReadPolicyConcept` (see
+// `util/IoUringManagerConcepts.h`).
 template <typename ReadPolicy>
 class BatchManager final : public BatchManagerBase {
   static_assert(
@@ -106,6 +106,9 @@ class BatchManager final : public BatchManagerBase {
   void setPageCacheFastPath([[maybe_unused]] bool enabled) noexcept override {
     if constexpr (CPP_requires_ref(detail::HasPageCacheFastPathSwitch,
                                    ReadPolicy)) {
+      static_assert(noexcept(policy_.setPageCacheFastPath(enabled)),
+                    "A policy's `setPageCacheFastPath` must be `noexcept`, "
+                    "because `BatchManagerBase::setPageCacheFastPath` is.");
       policy_.setPageCacheFastPath(enabled);
     }
   }

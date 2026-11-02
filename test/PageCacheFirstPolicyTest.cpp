@@ -18,7 +18,6 @@
 #include <utility>
 #include <vector>
 
-#include "util/Exception.h"
 #include "util/GTestHelpers.h"
 #include "util/IoUringManager.h"
 #include "util/IoUringManagerTestHelpers.h"
@@ -50,6 +49,7 @@ std::pair<std::vector<size_t>, std::vector<std::string>> notServedAndBuffers(
     buffers.emplace_back(size, '-');
   }
   std::vector<char*> targets;
+  targets.reserve(buffers.size());
   for (auto& buffer : buffers) {
     targets.push_back(buffer.data());
   }
@@ -82,7 +82,9 @@ size_t numPageCacheReads = 0;
 // Read into the buffers of `iov` with plain blocking `pread` calls (which work
 // on any file system, unlike `preadv2` with `RWF_NOWAIT`) and return the
 // number of bytes read (short at the end of the file), or -1 on a real I/O
-// error. This lets the
+// error. Like `serveRun`, which calls it for a run of adjacent reads, it
+// assumes that the `iov` cover consecutive file ranges from `offset` on. This
+// lets the
 // tests below exercise the batching of `readPageCacheHits` without depending
 // on `RWF_NOWAIT` being supported for the test files (it is rejected with
 // `EOPNOTSUPP` in the docker builds, for example on overlayfs).
@@ -415,7 +417,7 @@ TEST(PageCacheFirstPolicy, anUnsupportedFastPathIsLeftAlone) {
   numPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedNotSupported};
   RecordedManager manager(64);
-  for (int round = 0; round < 2; ++round) {
+  for ([[maybe_unused]] int round : ql::views::iota(0, 2)) {
     ReadBatchForTesting batch;
     batch.add({{0, 4}, {8, 4}});
     manager.wait(batch.submitTo(manager, fd));

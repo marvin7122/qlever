@@ -89,7 +89,7 @@ bool pageCacheFastPathIsSupported() noexcept {
 namespace {
 // The elements of the range of reads in `readPageCacheHits`: the position of a
 // read in its batch, its number of bytes, its file offset and its buffer.
-constexpr auto position = [](const auto& read) { return std::get<0>(read); };
+constexpr auto positionOf = [](const auto& read) { return std::get<0>(read); };
 constexpr auto numBytesOf = [](const auto& read) { return std::get<1>(read); };
 constexpr auto fileOffsetOf = [](const auto& read) {
   return std::get<2>(read);
@@ -166,8 +166,9 @@ std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
          adjacentReads | ::ranges::views::chunk(static_cast<size_t>(IOV_MAX))) {
       const size_t numServed =
           pageCacheFastPathIsSupported() ? serveRun(fd, run) : 0;
-      ::ranges::push_back(notServed, run | ::ranges::views::drop(numServed) |
-                                         ::ranges::views::transform(position));
+      ::ranges::push_back(notServed,
+                          run | ::ranges::views::drop(numServed) |
+                              ::ranges::views::transform(positionOf));
     }
   }
   return notServed;
