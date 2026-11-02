@@ -35,6 +35,9 @@ using PageCacheRead = int64_t (*)(int fd, const ::iovec* iov, int iovcnt,
 int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
                             int64_t offset);
 // The function `readPageCacheHits` calls (initially `systemPageCacheRead`).
+// Contract: the pointer may only be swapped while no `readPageCacheHits` call
+// is in flight (tests set it before spawning workers and restore it after
+// joining them); concurrent mutation is a bug, not a supported use.
 PageCacheRead& pageCacheRead();
 // Undo the effect of an `EOPNOTSUPP` on `pageCacheFastPathIsSupported()`, for
 // tests that injected one.
