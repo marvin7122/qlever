@@ -139,9 +139,13 @@ VocabBatchLookupResult VocabularyInMemoryBinSearch::lookupBatch(
                           }));
   auto data =
       std::make_shared<SharedWordsWithPlaceholdersVocabBatchLookupData>();
+  // One handle on the storage: the views below point into exactly the storage
+  // whose ownership the result shares.
+  AD_CONTRACT_CHECK(words_ != nullptr);
   data->buffer().words_ = words_;
-  // The placeholders are created up front so that the views into them stay
-  // valid (the vector is not resized afterwards).
+  const Words& words = *data->buffer().words_;
+  // Reserve the capacity for all placeholders up front, so that the vector is
+  // never resized and the views into its strings stay valid.
   auto& placeholders = data->buffer().placeholders_;
   placeholders.reserve(ql::ranges::count_if(
       positions, [](const auto& position) { return !position.has_value(); }));
@@ -150,7 +154,7 @@ VocabBatchLookupResult VocabularyInMemoryBinSearch::lookupBatch(
   for (const auto& [index, position] :
        ::ranges::views::zip(indices, positions)) {
     if (position.has_value()) {
-      views.push_back(wordAtPosition(position.value()));
+      views.push_back(words[position.value()]);
     } else {
       views.push_back(placeholders.emplace_back(
           ad_utility::vocabulary::placeholderForMissingVocabIndex(index)));

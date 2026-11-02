@@ -35,7 +35,9 @@ struct InternalWord {
 };
 
 // Return the words of `indices` that are in `internalVocab`, in the order of
-// `indices`.
+// `indices`. The words are views into the word storage of `internalVocab`,
+// which the returned vector does not own: hold `internalVocab.sharedWords()`
+// for as long as they are used.
 std::vector<InternalWord> findInternalWords(
     const VocabularyInMemoryBinSearch& internalVocab,
     ql::span<const size_t> indices) {
@@ -109,6 +111,9 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   AD_CONTRACT_CHECK(ql::ranges::all_of(
       indices, [this](size_t index) { return index < size(); }));
 
+  // Take the share of the internal words before creating views into them, so
+  // that the result keeps exactly that storage alive.
+  auto internalWordsStorage = internalVocab_.sharedWords();
   // In the common case no word of the batch is in the internal vocabulary
   // (only the milestone words and the explicitly cached words are in RAM).
   const auto internalWords = findInternalWords(internalVocab_, indices);
@@ -120,7 +125,7 @@ VocabBatchLookupResult VocabularyInternalExternal::lookupBatch(
   // returned batch owns a share of the internal words and that sub-batch
   // result, so all its views stay valid as long as it lives.
   auto data = std::make_shared<SubBatchVocabBatchLookupData>();
-  data->buffer().internalWords_ = internalVocab_.sharedWords();
+  data->buffer().internalWords_ = std::move(internalWordsStorage);
   ql::span<const std::string_view> externalWords;
   if (const auto indicesToRead = externalIndices(indices, internalWords);
       !indicesToRead.empty()) {

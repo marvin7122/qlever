@@ -120,13 +120,16 @@ TEST(VocabularyInternalExternal, EmptyVocabulary) {
 
 namespace {
 // _____________________________________________________________________________
-// Return `numWords` distinct words of varying length, in index order (empty
-// for `numWords == 0`).
+// Return `numWords` (at most 100) distinct words of varying length, sorted and
+// in index order (empty for `numWords == 0`).
 std::vector<std::string> makeWords(size_t numWords) {
+  AD_CONTRACT_CHECK(numWords <= 100);
   std::vector<std::string> words;
   words.reserve(numWords);
   for (size_t i : ql::views::iota(size_t{0}, numWords)) {
-    words.push_back(absl::StrCat("word-", i, "-", std::string(i % 5, 'y')));
+    // Fixed-width numbers, so that the words are sorted.
+    words.push_back(
+        absl::StrCat("word-", i / 10, i % 10, "-", std::string(i % 5, 'y')));
   }
   return words;
 }
@@ -150,11 +153,11 @@ void checkLookupBatch(const VocabularyInternalExternal& vocab,
   ASSERT_EQ(result->size(), indices.size());
 
   // The no-copy check for the internal words.
-  for (const size_t position : ql::views::iota(size_t{0}, indices.size())) {
-    const size_t index = indices[position];
+  for (const auto& [index, word] : ::ranges::views::zip(indices, *result)) {
     if (isInternal(vocab, index)) {
-      EXPECT_EQ((*result)[position].data(),
-                vocab.internalVocab()[index].value().data())
+      EXPECT_EQ(
+          static_cast<const void*>(word.data()),
+          static_cast<const void*>(vocab.internalVocab()[index].value().data()))
           << "internal word " << index << " was copied";
     }
   }
@@ -174,11 +177,9 @@ TEST(VocabularyInternalExternal, LookupBatch) {
   // cached), are also in the internal vocabulary. The batches below rely on
   // this split, so assert it for every index they use.
   const auto vocab = createVocabulary("LookupBatch")(words);
-  for (const size_t index : {0, 1, 3, 5, 7, 39}) {
-    ASSERT_TRUE(isInternal(vocab, index)) << index;
-  }
-  for (const size_t index : {2, 4, 6}) {
-    ASSERT_FALSE(isInternal(vocab, index)) << index;
+  for (const size_t index : ql::views::iota(size_t{0}, words.size())) {
+    ASSERT_EQ(isInternal(vocab, index), index == 0 || index % 2 == 1)
+        << "index " << index;
   }
 
   // All words, a reordered batch with duplicates, and single words.
@@ -236,6 +237,9 @@ TEST(VocabularyInternalExternal, LookupBatchResultOutlivesLaterLookups) {
       vocab, firstResult, first);
 
   vocab.close();
+  // The vocabulary has released its internal words, so the result must own
+  // the storage its views point into.
+  ASSERT_EQ(vocab.internalVocab().size(), 0u);
   for (const auto& [index, word] : ::ranges::views::zip(first, *firstResult)) {
     EXPECT_EQ(word, words[index]);
   }

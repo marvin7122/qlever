@@ -55,11 +55,16 @@ class VocabularyInMemoryBinSearch
   // either as an owned vector (after `open()`, or after reading from a
   // regular, non-zero-copy serializer), or as a non-owning view into
   // externally-owned memory (after `fromZeroCopyDeserializer`).
+  // `words_` is null only in a moved-from vocabulary.
   std::shared_ptr<const Words> words_ = std::make_shared<const Words>();
   IndexStorage indices_;
 
-  // Const access to the words.
-  const Words& words() const { return *words_; }
+  // Const access to the words. A moved-from vocabulary has no storage and is
+  // treated as empty, as it was before the storage was shared.
+  const Words& words() const {
+    static const Words empty;
+    return words_ != nullptr ? *words_ : empty;
+  }
 
  public:
   // Construct an empty vocabulary
@@ -156,7 +161,8 @@ class VocabularyInMemoryBinSearch
   // Return the words for `indices` (not empty) in that order: a contained
   // index yields a view into the word storage of this vocabulary, whose
   // ownership the result shares (no copy), an index that is a hole yields
-  // the placeholder of `operator[]`, owned by the result. A result stays
+  // `ad_utility::vocabulary::placeholderForMissingVocabIndex(index)`, owned by
+  // the result (`operator[]` returns `std::nullopt` for a hole). A result stays
   // valid when this vocabulary is closed.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
 
@@ -220,7 +226,7 @@ class VocabularyInMemoryBinSearch
       serializer | words;
       arg.words_ = std::make_shared<const Words>(std::move(words));
     } else {
-      serializer | *arg.words_;
+      serializer | arg.words();
     }
     serializer | arg.indices_;
   }
