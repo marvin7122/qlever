@@ -1,0 +1,98 @@
+[
+ {
+  "id": "PRRT_kwDOQU5DmM6yuemx",
+  "isResolved": false,
+  "path": "src/global/RuntimeParameters.h",
+  "line": 275,
+  "startLine": 275,
+  "comments": [
+   {
+    "id": 4444013627,
+    "url": "https://github.com/marvin7122/qlever/pull/323#discussion_r4444013627",
+    "body": "<!-- ocr-41467908467-1-2c6c4e69981d73bd -->\n<!-- ocr-meta {\"rule\":\"PP10\",\"leg\":\"6\",\"model\":\"deepseek-flash\",\"ruleset\":\"d5ca2dbc050dc3bf4aeb56ac02e00bae2cfa0f6e\"} -->\n![documentation · low](https://img.shields.io/badge/documentation-low-green)\nPP10: The comment is stale/inaccurate: `makeBatchManager`'s parameter is passed by value and it silently falls back to the synchronous backend, so the parameter is not a mere \"preference\" that \"has no further effect\" after a failed io_uring setup — the effective backend (io_uring vs. synchronous) is a user-visible observable behavior of the parameter (see src/index/vocabulary/VocabularyOnDisk.cpp:512-516, where it is read once at `open`). Please reword to state precisely that setting it to `false` forces the synchronous backend, and that a fallback may still occur if io_uring is unavailable.\n\nRule: [PP10](https://github.com/marvin7122/qlever/blob/d5ca2dbc050dc3bf4aeb56ac02e00bae2cfa0f6e/.opencodereview/rule.json#L712) · Card: [A comment states what the code cannot, is precise, and is updated or deleted with the code](https://github.com/marvin7122/cpp-idioms/blob/main/style/comments-say-why-and-stay-true.md)\n\n<details><summary><code>src/global/RuntimeParameters.h</code> L275</summary>\n\n```cpp\n  265   // with `preadv2(RWF_NOWAIT)` instead of the batch manager (`io_uring` or\n  266   // synchronous reads, see `PageCacheFirstPolicy`). Has no effect where\n  267   // `preadv2(RWF_NOWAIT)` is not supported (see\n  268   // `pageCacheFastPathIsSupported`).\n  269   Bool vocabularyPageCacheFastPath_{true, \"vocabulary-page-cache-fast-path\"};\n  270 \n  271   // Prefer the io_uring backend for the batch managers of\n  272   // `VocabularyOnDisk::lookupBatch` (see `makeBatchManager`). If io_uring\n  273   // is not compiled in or its setup fails at runtime, the synchronous\n  274   // backend is used instead (and this parameter has no further effect).\n> 275   Bool vocabularyPreferIoUring_{true, \"vocabulary-prefer-io-uring\"};\n  276 \n  277   // The maximal number of blocks per permutation that are queued for or\n  278   // currently being compressed and written (see\n  279   // `CompressedRelationWriter::makeBlockWriteQueue`). Each of them is held in\n  280   // memory until it has been written. How many of them are compressed at the\n  281   // same time is not determined by this parameter, but by the executor on\n  282   // which they are written (for the runtime index rebuild, see\n  283   // `rebuild-permutation-writer-num-threads`). The value must be at least `1`\n  284   // (enforced by a parameter constraint). Even though this influences the\n  285   // logic of regular index building, `qlever-index` doesn't expose a CLI flag\n```\n\n[src/global/RuntimeParameters.h#L275](https://github.com/marvin7122/qlever/blob/12238ffdd1ccd756870bbe68588eadad4fbf097f/src/global/RuntimeParameters.h#L275)\n</details>\n\n<details><summary><code>src/index/vocabulary/VocabularyOnDisk.cpp</code> L512-L516</summary>\n\n```cpp\n  509   AD_CORRECTNESS_CHECK(numOffsets > 0);\n  510   size_ = numOffsets - 1;\n  511 \n> 512   // Initialize pool of persistent batch managers for `lookupBatch`.\n> 513   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<\n> 514       std::unique_ptr<ad_utility::BatchManagerBase>>>(\n> 515       NUM_VOCAB_BATCH_IO_MANAGERS);\n> 516   bool preferIoUring =\n  517       getRuntimeParameter<&RuntimeParameters::vocabularyPreferIoUring_>();\n  518   auto makeManager = [&preferIoUring]() {\n  519     return ad_utility::makeBatchManager(preferIoUring);\n```\n\n[src/index/vocabulary/VocabularyOnDisk.cpp#L512-L516](https://github.com/marvin7122/qlever/blob/12238ffdd1ccd756870bbe68588eadad4fbf097f/src/index/vocabulary/VocabularyOnDisk.cpp#L512-L516)\n</details>\n\nReact: 👍 actionable · ❤️ valuable · 🚀 fixed · 👎 wrong · 👀 duplicate · 😕 confusing · 😄 too long, didn't read · 🎉 improvement potential (right idea, the comment should be better)\n\n<details><summary>Reply keywords</summary>\n\nReply to this comment, starting with one of:\n\n- `/not-actionable` — correct, but not worth acting on\n- `/improve <text>` — how this comment should be better\n- `/wrong <text>` — why it is wrong\n</details>",
+    "createdAt": "2026-11-02T15:10:30Z",
+    "author": "github-actions",
+    "reactions": [
+     {
+      "content": "CONFUSED",
+      "createdAt": "2026-11-02T18:00:00Z",
+      "user": "marvin7122"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "id": "PRRT_kwDOQU5DmM6yuem1",
+  "isResolved": false,
+  "path": "src/util/Algorithm.h",
+  "line": 139,
+  "startLine": 137,
+  "comments": [
+   {
+    "id": 4444013643,
+    "url": "https://github.com/marvin7122/qlever/pull/323#discussion_r4444013643",
+    "body": "<!-- ocr-41467908467-1-ed32508f5c520c82 -->\n<!-- ocr-meta {\"rule\":\"PP11\",\"leg\":\"6\",\"model\":\"deepseek-flash\",\"ruleset\":\"d5ca2dbc050dc3bf4aeb56ac02e00bae2cfa0f6e\"} -->\n![documentation · medium](https://img.shields.io/badge/documentation-medium-orange)\nPP11: The docstring is too terse for a public `ad_utility` API. It does not state that sizes are obtained via `ql::ranges::size` (so all arguments must be sized ranges), what happens when `rest` is empty (the fold is vacuously `true`, so a single-argument call always succeeds silently), or which exception type is thrown. Please document the semantics, the preconditions and the zero-`rest` behavior.\n\nRule: [PP11](https://github.com/marvin7122/qlever/blob/d5ca2dbc050dc3bf4aeb56ac02e00bae2cfa0f6e/.opencodereview/rule.json#L716) · Card: [Every public function, class, and non-obvious member documents its semantics, ownership, lifetime, and units](https://github.com/marvin7122/cpp-idioms/blob/main/style/public-apis-have-docstrings.md)\n\n<details><summary><code>src/util/Algorithm.h</code> L137-L139</summary>\n\n```cpp\n  127       unaryOp, *ad_utility::makeForwardingIterator<Range>(input.begin())))>;\n  128   std::vector<Output> out;\n  129   out.reserve(input.size());\n  130   ql::ranges::transform(\n  131       ad_utility::makeForwardingIterator<Range>(input.begin()),\n  132       ad_utility::makeForwardingIterator<Range>(input.end()),\n  133       std::back_inserter(out), unaryOp);\n  134   return out;\n  135 }\n  136 \n> 137 // Throw an exception unless all the given ranges have the same length.\n> 138 // Intended for validating parallel spans or ranges that are meant to be\n> 139 // consumed element by element (see `zipVectors` below).\n  140 template <typename Range0, typename... Ranges>\n  141 void validateSameLength(const Range0& first, const Ranges&... rest) {\n  142   const auto n = ql::ranges::size(first);\n  143   auto valid = ((ql::ranges::size(rest) == n) && ...);\n  144   if (!valid) {\n  145     AD_THROW(\"The ranges must have the same length.\");\n  146   }\n  147 }\n  148 \n  149 /*\n```\n\n[src/util/Algorithm.h#L137-L139](https://github.com/marvin7122/qlever/blob/12238ffdd1ccd756870bbe68588eadad4fbf097f/src/util/Algorithm.h#L137-L139)\n</details>\n\nReact: 👍 actionable · ❤️ valuable · 🚀 fixed · 👎 wrong · 👀 duplicate · 😕 confusing · 😄 too long, didn't read · 🎉 improvement potential (right idea, the comment should be better)\n\n<details><summary>Reply keywords</summary>\n\nReply to this comment, starting with one of:\n\n- `/not-actionable` — correct, but not worth acting on\n- `/improve <text>` — how this comment should be better\n- `/wrong <text>` — why it is wrong\n</details>",
+    "createdAt": "2026-11-02T15:10:30Z",
+    "author": "github-actions",
+    "reactions": [
+     {
+      "content": "LAUGH",
+      "createdAt": "2026-11-02T18:00:00Z",
+      "user": "marvin7122"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "id": "PRRT_kwDOQU5DmM6yuem9",
+  "isResolved": false,
+  "path": "src/util/Algorithm.h",
+  "line": 141,
+  "startLine": 141,
+  "comments": [
+   {
+    "id": 4444013653,
+    "url": "https://github.com/marvin7122/qlever/pull/323#discussion_r4444013653",
+    "body": "<!-- ocr-41467908467-1-b78400e93c369a85 -->\n<!-- ocr-meta {\"rule\":\"PP17\",\"leg\":\"6\",\"model\":\"deepseek-flash\",\"ruleset\":\"d5ca2dbc050dc3bf4aeb56ac02e00bae2cfa0f6e\"} -->\n![test · medium](https://img.shields.io/badge/test-medium-orange)\nPP17: This new helper has no unit test in `test/AlgorithmTest.cpp`, although all sibling helpers in that file (`zipVectors`, `removeDuplicates`, `appendVector`, ...) are covered. Add a test for the equal-length case (no throw), the mismatched-length case (throws) and the empty-`rest` case to pin down the intended behavior.\n\nRule: [PP17](https://github.com/marvin7122/qlever/blob/d5ca2dbc050dc3bf4aeb56ac02e00bae2cfa0f6e/.opencodereview/rule.json#L742) · Card: [New behaviour has a direct test, assertions use matchers, repeated setup is a fixture, and benchmarks measure what they claim](https://github.com/marvin7122/cpp-idioms/blob/main/style/tests-are-direct-and-use-matchers.md)\n\n<details><summary><code>src/util/Algorithm.h</code> L141</summary>\n\n```cpp\n  131       ad_utility::makeForwardingIterator<Range>(input.begin()),\n  132       ad_utility::makeForwardingIterator<Range>(input.end()),\n  133       std::back_inserter(out), unaryOp);\n  134   return out;\n  135 }\n  136 \n  137 // Throw an exception unless all the given ranges have the same length.\n  138 // Intended for validating parallel spans or ranges that are meant to be\n  139 // consumed element by element (see `zipVectors` below).\n  140 template <typename Range0, typename... Ranges>\n> 141 void validateSameLength(const Range0& first, const Ranges&... rest) {\n  142   const auto n = ql::ranges::size(first);\n  143   auto valid = ((ql::ranges::size(rest) == n) && ...);\n  144   if (!valid) {\n  145     AD_THROW(\"The ranges must have the same length.\");\n  146   }\n  147 }\n  148 \n  149 /*\n  150 @brief Takes two vectors, pairs up their content at the same index positions\n  151 and copies them into `std::pair`s, who are returned inside a vector.\n```\n\n[src/util/Algorithm.h#L141](https://github.com/marvin7122/qlever/blob/12238ffdd1ccd756870bbe68588eadad4fbf097f/src/util/Algorithm.h#L141)\n</details>\n\nReact: 👍 actionable · ❤️ valuable · 🚀 fixed · 👎 wrong · 👀 duplicate · 😕 confusing · 😄 too long, didn't read · 🎉 improvement potential (right idea, the comment should be better)\n\n<details><summary>Reply keywords</summary>\n\nReply to this comment, starting with one of:\n\n- `/not-actionable` — correct, but not worth acting on\n- `/improve <text>` — how this comment should be better\n- `/wrong <text>` — why it is wrong\n</details>",
+    "createdAt": "2026-11-02T15:10:30Z",
+    "author": "github-actions",
+    "reactions": []
+   },
+   {
+    "id": 1,
+    "url": "https://github.com/marvin7122/qlever/pull/323#discussion_r4444013653-reply",
+    "body": "/not-actionable",
+    "createdAt": "2026-11-02T18:00:00Z",
+    "author": "marvin7122",
+    "reactions": []
+   }
+  ]
+ },
+ {
+  "id": "PRRT_kwDOQU5DmM6yuenK",
+  "isResolved": false,
+  "path": "src/util/IoUringManager.cpp",
+  "line": 80,
+  "startLine": 78,
+  "comments": [
+   {
+    "id": 4444013670,
+    "url": "https://github.com/marvin7122/qlever/pull/323#discussion_r4444013670",
+    "body": "<!-- ocr-41467908467-1-1ae221f6a6f11f6b -->\n<!-- ocr-meta {\"rule\":\"PP10\",\"leg\":\"6\",\"model\":\"deepseek-flash\",\"ruleset\":\"d5ca2dbc050dc3bf4aeb56ac02e00bae2cfa0f6e\"} -->\n![documentation · low](https://img.shields.io/badge/documentation-low-green)\nPP10: The comment above the `detail` namespace says `makeBatchManagerFor` (the helper added at the bottom of this file) defines the test hook declared in `PageCacheFirstPolicy.h`, and that production code only goes through `readPageCacheHits`. Neither is true anymore: the hook is `PageCacheRead`/`pageCacheRead`, declared in `src/util/PageCacheReadHook.h`, and `makeBatchManager` calls `detail::makeBatchManagerFor` directly. Please correct or drop this comment.\n\nRule: [PP10](https://github.com/marvin7122/qlever/blob/d5ca2dbc050dc3bf4aeb56ac02e00bae2cfa0f6e/.opencodereview/rule.json#L712) · Card: [A comment states what the code cannot, is precise, and is updated or deleted with the code](https://github.com/marvin7122/cpp-idioms/blob/main/style/comments-say-why-and-stay-true.md)\n\n<details><summary><code>src/util/IoUringManager.cpp</code> L78-L80</summary>\n\n```cpp\n  68 namespace {\n  69 #ifdef QL_PAGE_CACHE_FAST_PATH\n  70 // Cleared once a `preadv2(RWF_NOWAIT)` fails with `EOPNOTSUPP` or `ENOSYS`.\n  71 // The flag is a best-effort hint without associated data; the default\n  72 // sequential consistency (Sonar cpp:S8417) keeps the publication of the\n  73 // disabled state obvious.\n  74 std::atomic<bool> pageCacheFastPathSupported{true};\n  75 #endif\n  76 }  // namespace\n  77 \n> 78 // In `detail` because these define the test hook declared in\n> 79 // `PageCacheFirstPolicy.h`: production code calls `readPageCacheHits`,\n> 80 // only tests replace the function pointer behind it.\n  81 namespace detail {\n  82 //______________________________________________________________________________\n  83 int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,\n  84                             int64_t offset) {\n  85 #ifdef QL_PAGE_CACHE_FAST_PATH\n  86   return preadv2(fd, iov, iovcnt, static_cast<off_t>(offset), RWF_NOWAIT);\n  87 #else\n  88   (void)fd;\n  89   (void)iov;\n  90   (void)iovcnt;\n```\n\n[src/util/IoUringManager.cpp#L78-L80](https://github.com/marvin7122/qlever/blob/12238ffdd1ccd756870bbe68588eadad4fbf097f/src/util/IoUringManager.cpp#L78-L80)\n</details>\n\nReact: 👍 actionable · ❤️ valuable · 🚀 fixed · 👎 wrong · 👀 duplicate · 😕 confusing · 😄 too long, didn't read · 🎉 improvement potential (right idea, the comment should be better)\n\n<details><summary>Reply keywords</summary>\n\nReply to this comment, starting with one of:\n\n- `/not-actionable` — correct, but not worth acting on\n- `/improve <text>` — how this comment should be better\n- `/wrong <text>` — why it is wrong\n</details>",
+    "createdAt": "2026-11-02T15:10:30Z",
+    "author": "github-actions",
+    "reactions": []
+   },
+   {
+    "id": 1,
+    "url": "https://github.com/marvin7122/qlever/pull/323#discussion_r4444013670-reply",
+    "body": "/skip the extra check is not worth it here",
+    "createdAt": "2026-11-02T18:00:00Z",
+    "author": "marvin7122",
+    "reactions": []
+   }
+  ]
+ }
+]

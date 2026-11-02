@@ -1,0 +1,28 @@
+{
+  "_comment": "Which findings `/apply-replies` may fix without the owner's sign-off. A rule id listed under `mechanical` (or matching a prefix in `mechanical_prefixes`) only asks for text that does not change behavior: comments, docstrings, test assertion messages, includes, formatting. Every other rule, and every rule listed under `signoff`, needs `/approve`. A mechanical edit must also pass the deterministic check in apply_replies.py (only comments, whitespace, includes, or string literals in test files change); if it does not, it becomes a proposal too.",
+  "mechanical": [
+    "IDM066",
+    "IDM069",
+    "PP1",
+    "PP10",
+    "PP11",
+    "QC18",
+    "QC41",
+    "QC52",
+    "rule:stale-comment"
+  ],
+  "mechanical_prefixes": [
+    "rule:comment-"
+  ],
+  "signoff": [
+    "CPP7",
+    "CPP11",
+    "CPP47",
+    "QC1",
+    "QC3",
+    "rule:lifetime",
+    "rule:missing-check",
+    "rule:logic-error",
+    "rule:concurrency"
+  ]
+}
