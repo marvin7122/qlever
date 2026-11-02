@@ -98,6 +98,7 @@ class PageCacheFirstPolicy {
   void addBatch(int fd, ql::span<const size_t> numberOfBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle) {
+    validateSameLength(numberOfBytesToRead, offsets, buffers);
     if (!enabled_ || !pageCacheFastPathIsSupported()) {
       policy_.addBatch(fd, numberOfBytesToRead, offsets, buffers, handle);
       return;
