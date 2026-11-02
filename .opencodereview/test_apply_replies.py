@@ -641,6 +641,68 @@ class SignalsOf323Test(unittest.TestCase):
         self.assertIn("- skipped: already handled (applied): [QC1](u3)", text)
 
 
+class JsonAnswerTest(unittest.TestCase):
+    # The shape of the failed #323 answer (run 41510928135): two objects of
+    # the edit schema, separated by a blank line, which json.loads rejects
+    # with "Extra data: line 3 column 1".
+    TWO = ('{"edits": [{"start": 3, "end": 3, "replacement": "x"}], "kind": "behavior", "summary": "first"}\n\n'
+           '{"edits": [], "kind": "mechanical", "summary": "second"}')
+
+    def test_two_objects(self):
+        with self.assertRaisesRegex(ValueError, "Extra data: line 3 column 1"):
+            json.loads(self.TWO)
+        self.assertEqual(a.parse_json_object(self.TWO)["summary"], "first")
+
+    def test_fenced_and_surrounded(self):
+        self.assertEqual(a.parse_json_object('```json\n{"summary": "s"}\n```'), {"summary": "s"})
+        self.assertEqual(a.parse_json_object('```\n{"summary": "s"}\n```\n'), {"summary": "s"})
+        self.assertEqual(a.parse_json_object('Here it is:\n{"summary": "s"}\nDone.'), {"summary": "s"})
+
+    def test_garbage(self):
+        for text in ("no json at all", '{"summary": ', "[1, 2]", "", None):
+            with self.assertRaises(ValueError):
+                a.parse_json_object(text)
+
+    def test_chat_retries_once_then_fails(self):
+        import io
+        answers = []
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def fake_urlopen(request, timeout):
+            content = answers.pop(0)
+            requests.append(json.loads(request.data))
+            return Response(json.dumps({"choices": [{"message": {"content": content}}],
+                                        "usage": {"prompt_tokens": 10, "completion_tokens": 5}}).encode())
+        original = a.urllib.request.urlopen
+        a.urllib.request.urlopen = fake_urlopen
+        saved_url = os.environ.get("OCR_APPLY_LLM_URL")
+        os.environ["OCR_APPLY_LLM_URL"] = "https://llm.invalid/chat/completions"
+        try:
+            requests, answers[:] = [], ["sure, here: nothing", '```json\n{"summary": "ok"}\n```']
+            spend = a.Spend(1.0)
+            self.assertEqual(a.chat([{"role": "user", "content": "q"}], spend), {"summary": "ok"})
+            self.assertEqual(spend.calls, 2)
+            self.assertIn("exactly one JSON object", requests[1]["messages"][-1]["content"])
+            requests, answers[:] = [], ["garbage", "still garbage"]
+            with self.assertRaisesRegex(RuntimeError, "not after a retry"):
+                a.chat([{"role": "user", "content": "q"}], a.Spend(1.0))
+            requests, answers[:] = [], [self.TWO]
+            self.assertEqual(a.chat([{"role": "user", "content": "q"}], a.Spend(1.0))["summary"], "first")
+            self.assertEqual(len(requests), 1, "two objects need no retry")
+        finally:
+            a.urllib.request.urlopen = original
+            if saved_url is None:
+                os.environ.pop("OCR_APPLY_LLM_URL", None)
+            else:
+                os.environ["OCR_APPLY_LLM_URL"] = saved_url
+
+
 class ConfigTest(unittest.TestCase):
     def test_backend_override(self):
         env = {"OCR_LLM_URL": "u", "OCR_LLM_MODEL": "m", "OCR_LLM_AUTH_TOKEN": "t", "OCR_APPLY_LLM_MODEL": "m2"}
