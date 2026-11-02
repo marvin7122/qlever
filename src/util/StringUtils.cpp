@@ -30,15 +30,11 @@ constexpr ctll::fixed_string langTagRegex = "[a-zA-Z]+(-[a-zA-Z0-9]+)*";
 }  // namespace detail
 // ____________________________________________________________________________
 std::string_view commonPrefix(std::string_view a, const std::string_view b) {
-  size_t maxIdx = std::min(a.size(), b.size());
-  size_t i = 0;
-  while (i < maxIdx) {
-    if (a[i] != b[i]) {
-      break;
-    }
-    ++i;
-  }
-  return a.substr(0, i);
+  // The first position where the two strings differ, or the end of the
+  // shorter one.
+  const auto [firstDifferenceInA, firstDifferenceInB] =
+      std::mismatch(a.begin(), a.end(), b.begin(), b.end());
+  return a.substr(0, static_cast<size_t>(firstDifferenceInA - a.begin()));
 }
 
 // ____________________________________________________________________________
