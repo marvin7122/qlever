@@ -148,18 +148,17 @@ TYPED_TEST(CompressedVocabularyF, AccessOperator) {
   testAccessOperatorForUnorderedVocabulary(this->createCompressedVocabulary());
 }
 
-// _______________________________________________________
 // Test that `lookupBatch` returns the same words as `operator[]`, in the order
 // of the indices, for a batch that spans several decoder blocks (the block
 // size of the fixture is 4), for a reordered batch with duplicates, and for a
 // single index, and that it rejects the empty batch.
 TYPED_TEST(CompressedVocabularyF, LookupBatch) {
   // Many more words than the block size of the fixture (4), so that the full
-  // batch spans many decoder blocks.
+  // batch spans many decoder blocks. The first word is empty.
   constexpr size_t numWords = 64;
-  std::vector<std::string> words;
+  std::vector<std::string> words{""};
   words.reserve(numWords);
-  for (size_t i : ql::views::iota(size_t{0}, numWords)) {
+  for (size_t i : ql::views::iota(size_t{1}, numWords)) {
     // Fixed-width numbers, so that the words are sorted.
     words.push_back(
         absl::StrCat("s", i / 10, i % 10, "-", std::string(i % 7, 'x')));
@@ -361,7 +360,6 @@ std::vector<std::pair<uint64_t, std::string>> expectedIndicesAndWords() {
 
 }  // namespace
 
-// _____________________________________________________________________________
 // Test that for a vocabulary with holes `lookupBatch` matches `operator[]`:
 // contained indices (reordered, with a duplicate) yield their words, holes
 // (before the first word, between two words, and one past the last word,
@@ -386,10 +384,9 @@ TEST(CompressedVocabularyWithHoles, lookupBatch) {
   }
 }
 
-// Test `lookupBatch` for the compressed vocabulary over the two underlying
-// vocabularies that `PolymorphicVocabulary` uses in production: the in-memory
-// vocabulary (whose batch result is views into the vocabulary) and the
-// internal-external vocabulary.
+// Helper for the two tests below: `lookupBatch` of a compressed vocabulary over
+// the given underlying `Vocabulary` matches `operator[]` for reordered and
+// duplicated indices and for a single index.
 template <typename Vocabulary>
 void testLookupBatchOverUnderlying(const std::string& filename) {
   auto cleanup = vocabulary_test::makeVocabFileCleanup<Vocabulary>(filename);
@@ -417,12 +414,17 @@ void testLookupBatchOverUnderlying(const std::string& filename) {
   }
 }
 
+// Test `lookupBatch` over the in-memory vocabulary (whose batch result is views
+// into the vocabulary), one of the two instantiations of
+// `PolymorphicVocabulary`.
 TEST(CompressedVocabularyOverInMemory, lookupBatch) {
   testLookupBatchOverUnderlying<CompressedVocabulary<
       VocabularyInMemory, FsstSquaredCompressionWrapper, 4>>(
       gtestCurrentTestName());
 }
 
+// Test `lookupBatch` over the internal-external vocabulary, the other
+// instantiation of `PolymorphicVocabulary`.
 TEST(CompressedVocabularyOverInternalExternal, lookupBatch) {
   testLookupBatchOverUnderlying<CompressedVocabulary<
       VocabularyInternalExternal, FsstSquaredCompressionWrapper, 4>>(
