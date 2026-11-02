@@ -15,10 +15,15 @@ permissions:
 concurrency:
   # Comments that are not a review command (e.g. the bot's own result or error
   # comments) get a group of their own, so they cannot cancel a running review.
+  # The fan-out command (`/open-code-review-fanout`) shares this prefix but
+  # belongs to the fan-out workflow alone (2026-11-02: it used to start this
+  # review too, about 0.84 M extra tokens per fan-out).
   group: >-
     ${{ github.event_name == 'issue_comment' &&
-    !startsWith(github.event.comment.body, '/open-code-review') &&
-    !startsWith(github.event.comment.body, '@open-code-review') &&
+    (!(startsWith(github.event.comment.body, '/open-code-review') ||
+    startsWith(github.event.comment.body, '@open-code-review')) ||
+    startsWith(github.event.comment.body, '/open-code-review-fanout') ||
+    startsWith(github.event.comment.body, '@open-code-review-fanout')) &&
     format('ocr-ignored-{0}', github.run_id) ||
     format('ocr-{0}', github.event.pull_request.number ||
     github.event.issue.number || github.run_id) }}
@@ -33,7 +38,9 @@ jobs:
         github.event.comment.author_association == 'OWNER' ||
         github.event.comment.author_association == 'COLLABORATOR') &&
        (startsWith(github.event.comment.body, '/open-code-review') ||
-        startsWith(github.event.comment.body, '@open-code-review')))
+        startsWith(github.event.comment.body, '@open-code-review')) &&
+       !startsWith(github.event.comment.body, '/open-code-review-fanout') &&
+       !startsWith(github.event.comment.body, '@open-code-review-fanout'))
     # GitHub-hosted: this job is LLM-API-bound, not CPU-bound, so it must
     # not occupy fleet compile runners (CI speedup 2026-09-24). ubuntu-latest
     # ships node/npm; the per-run npm/HOME isolation below is kept as-is.
