@@ -140,10 +140,8 @@ auto transform(Range&& input, F unaryOp) {
 template <typename Range0, typename... Ranges>
 void validateSameLength(const Range0& first, const Ranges&... rest) {
   const auto n = ql::ranges::size(first);
-  auto valid = ((ql::ranges::size(rest) == n) && ...);
-  if (!valid) {
-    AD_THROW("The ranges must have the same length.");
-  }
+  AD_CONTRACT_CHECK(((ql::ranges::size(rest) == n) && ...),
+                    "The ranges must have the same length");
 }
 
 /*
