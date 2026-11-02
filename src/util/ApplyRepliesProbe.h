@@ -16,7 +16,7 @@
 // merge.
 namespace ad_utility {
 
-// Return the sum of the first `n` values. The values are sorted.
+// Return the sum of the first `n` values.
 inline int sumOfFirst(const std::vector<int>& values, size_t n) {
   int sum = 0;
   for (size_t i = 0; i < n; ++i) {
