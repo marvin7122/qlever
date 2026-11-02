@@ -196,7 +196,9 @@ class IoUringPolicy {
 
   // Batches with a failed or short read, mapped to the message of their first
   // failure. `addBatch` and the `wait()` of another batch also reap CQEs, so a
-  // failure is kept here until the `wait()` of its own batch throws it.
+  // failure is kept here until the `wait()` of its own batch throws it. The
+  // message must stay valid until then; `processCqe` only stores string
+  // literals.
   ad_utility::HashMap<BatchHandle, const char*> failedBatches_;
 
   // Per-read metadata needed when a completion is reaped: which batch the read
@@ -218,8 +220,9 @@ class IoUringPolicy {
   ad_utility::HashMap<uint64_t, OutstandingRead> outstandingReadsByRequestId_;
 
   // The size of a wave: when the ring is full or `wait()` blocks, wait for up
-  // to this many completions (fewer if fewer requests can complete), then reap
-  // all ready ones in one pass. This amortizes `io_uring_enter` and the
+  // to this many completions, then reap all ready ones in one pass. `addBatch`
+  // waits for at most the number of outstanding reads, `wait()` for at most the
+  // remaining reads of its own batch. This amortizes `io_uring_enter` and the
   // CQ-head update over the wave.
   static constexpr unsigned REAP_WAVE = 8;
 
@@ -231,7 +234,8 @@ class IoUringPolicy {
 
   // Apply one completion to the bookkeeping of the outstanding reads. Always
   // updates the counts, also for a failed read, and records a failed or short
-  // read in `failedBatches_`.
+  // read in `failedBatches_`. A negative `numBytesRead` is `-errno`;
+  // `requestId` must be the id of a read that `addBatch` prepared.
   void processCqe(int numBytesRead, uint64_t requestId);
 
  public:
@@ -256,7 +260,10 @@ class IoUringPolicy {
   // Block until every read in the batch that is represented by the `handle` has
   // completed. (The `handle` was submitted along the read requests using
   // `addBatch`.) Throws if a read of this batch failed or was short, after all
-  // of its reads are reaped.
+  // of its reads are reaped; the failure is reported only once, so a later
+  // `wait()` for the same handle returns normally. Also throws, possibly
+  // before all reads of the batch are reaped, if waiting for completions fails
+  // (see `drainAtLeast`).
   void wait(BatchHandle handle);
 };
 

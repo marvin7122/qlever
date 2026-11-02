@@ -87,9 +87,11 @@ IoUringPolicy::~IoUringPolicy() {
   }
   // Reap the outstanding completions before tearing down the ring, so the
   // kernel is no longer writing into any target buffer once we return. We
-  // deliberately do not call `drainAtLeast` here: it throws on I/O errors, and
-  // a destructor must not throw. We also stop if `io_uring_wait_cqe` fails, to
-  // avoid spinning forever (it would not decrement the outstanding count).
+  // deliberately do not call `drainAtLeast` here: it throws if
+  // `io_uring_wait_cqes` fails and on its correctness checks, and a destructor
+  // must not throw. (Failed reads do not throw there; `processCqe` only records
+  // them.) We also stop if `io_uring_wait_cqe` fails, to avoid spinning
+  // forever (it would not decrement the outstanding count).
   while (numOutstandingReadRequests_ > 0) {
     io_uring_cqe* cqe = nullptr;
     if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
