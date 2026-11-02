@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <climits>
 #include <cstdio>
 #include <cstring>
@@ -246,17 +247,18 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
 // more than 64 CQEs can be ready at once, so a wave is reaped in several
 // chunks.
 TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanRing) {
-  const std::pair<unsigned, size_t> ringSizeAndNumReads[] = {
-      {4, 80}, {8, 80}, {256, 600}};
-  for (auto [ringSize, numReads] : ringSizeAndNumReads) {
+  constexpr std::array<std::pair<unsigned, size_t>, 3> ringSizeAndNumReads{
+      {{4, 80}, {8, 80}, {256, 600}}};
+  for (const auto& [ringSize, numReads] : ringSizeAndNumReads) {
     SequentialReadScenarioForTesting scenario;
-    for (size_t i = 0; i < numReads; ++i) {
+    for (size_t i : ql::views::iota(size_t{0}, numReads)) {
       // Distinct chunks, so that a completion in the wrong buffer is detected.
       scenario.addRead(absl::StrFormat("%04zu", i));
     }
     auto [tmp, fd] = makeTempFile(scenario.content());
     TypeParam manager(ringSize);
-    // All reads are page-cache hits; send them through the decorated policy.
+    // All reads are page-cache hits, so switch the fast path off to force them
+    // through the ring (the wrapped policy).
     manager.setPageCacheFastPath(false);
     manager.wait(scenario.submitTo(manager, fd));
     EXPECT_THAT(scenario.results(),
@@ -276,9 +278,9 @@ TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
   std::vector<std::vector<std::string>> expected(M);
   std::vector<ReadBatchForTesting> batches(M);
   size_t numChunks = 0;
-  for (size_t i = 0; i < M; ++i) {
+  for (size_t i : ql::views::iota(size_t{0}, M)) {
     const size_t numReads = 2 * (i % 3) + 1;
-    for (size_t j = 0; j < numReads; ++j) {
+    for ([[maybe_unused]] size_t j : ql::views::iota(size_t{0}, numReads)) {
       // Distinct chunks, so that a completion in the wrong buffer is detected.
       std::string chunk = absl::StrFormat("%03zu", numChunks++);
       batches[i].add(fileContent.size(), chunk.size());
@@ -289,7 +291,8 @@ TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
   auto [tmp, fd] = makeTempFile(fileContent);
 
   TypeParam manager(64);
-  // All reads are page-cache hits; send them through the decorated policy.
+  // All reads are page-cache hits, so switch the fast path off to force them
+  // through the ring (the wrapped policy).
   manager.setPageCacheFastPath(false);
   std::vector<typename TypeParam::BatchHandle> handles;
   for (auto& batch : batches) {
@@ -297,10 +300,11 @@ TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
   }
   // Wait on the last batch first, then on the rest in submission order.
   manager.wait(handles.back());
-  for (size_t i = 0; i + 1 < M; ++i) {
-    manager.wait(handles[i]);
+  for (const auto& handle :
+       ql::span<const typename TypeParam::BatchHandle>{handles}.first(M - 1)) {
+    manager.wait(handle);
   }
-  for (size_t i = 0; i < M; ++i) {
+  for (size_t i : ql::views::iota(size_t{0}, M)) {
     EXPECT_THAT(batches[i].result(), ::testing::ElementsAreArray(expected[i]))
         << "mismatch at batch " << i;
   }
@@ -312,14 +316,16 @@ TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
 TYPED_TEST(IoUringManagerTest, ErrorInWaveKeepsOtherBatchesConsistent) {
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
 
-  TypeParam manager(64);
-  // The reads are page-cache hits; send them through the decorated policy so
-  // that `good` and `bad` share the ring.
-  manager.setPageCacheFastPath(false);
   ReadBatchForTesting good;
   good.add({{0, 4}, {4, 4}, {8, 4}});
   ReadBatchForTesting bad;
-  bad.add(8, 16);  // past EOF: short read
+  bad.add({{0, 4}, {8, 16}});  // the second read is past EOF: short read
+  // Declared after the batches, so that their buffers outlive the drain in the
+  // destructor of `IoUringPolicy` if the test unwinds early.
+  TypeParam manager(64);
+  // The reads are page-cache hits, so switch the fast path off to force them
+  // through the ring (the wrapped policy), where `good` and `bad` share it.
+  manager.setPageCacheFastPath(false);
 
   // `SyncIoPolicy` reads in `addBatch`, so its throw happens on submission.
   auto goodHandle = good.submitTo(manager, fd);
@@ -474,11 +480,13 @@ TEST(IoUringPolicyErrors, failureIsThrownByItsOwnBatch) {
   }
   using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
-  Manager manager(64);
   ReadBatchForTesting bad;
-  bad.add(8, 16);  // past EOF: short read
+  bad.add({{0, 4}, {8, 16}});  // the second read is past EOF: short read
   ReadBatchForTesting good;
   good.add({{0, 4}, {4, 4}, {8, 4}});
+  // Declared after the batches, so that their buffers outlive the drain in the
+  // destructor of `IoUringPolicy` if the test unwinds early.
+  Manager manager(64);
   auto badHandle = bad.submitTo(manager, fd);
   auto goodHandle = good.submitTo(manager, fd);
   // Cached reads complete during submission, so this wave can also reap the
@@ -487,8 +495,36 @@ TEST(IoUringPolicyErrors, failureIsThrownByItsOwnBatch) {
   EXPECT_THAT(good.result(), ::testing::ElementsAre("AAAA", "BBBB", "CCCC"));
   AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(badHandle),
                                HasSubstr("read fewer bytes than requested"));
+  // The successful read of the failed batch landed in its buffer.
+  EXPECT_EQ(bad.result()[0], "AAAA");
   // Reported once; nothing of `bad` is outstanding any more.
   manager.wait(badHandle);
+}
+
+// A failure that `addBatch` reaps while it waits for a free slot in the full
+// ring is also kept for the failed batch: neither `addBatch` nor the `wait()`
+// of the other batch throws it.
+TEST(IoUringPolicyErrors, failureReapedByAddBatchIsThrownByItsOwnBatch) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
+  ReadBatchForTesting bad;
+  bad.add({{0, 4}, {8, 16}});  // the second read is past EOF: short read
+  ReadBatchForTesting good;
+  good.add({{0, 4}, {4, 4}, {8, 4}});
+  // A ring of 2 slots, which `bad` fills, so submitting `good` reaps the
+  // completions of `bad` in `addBatch`.
+  Manager manager(2);
+  auto badHandle = bad.submitTo(manager, fd);
+  auto goodHandle = good.submitTo(manager, fd);
+  manager.wait(goodHandle);
+  EXPECT_THAT(good.result(), ::testing::ElementsAre("AAAA", "BBBB", "CCCC"));
+  AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(badHandle),
+                               HasSubstr("read fewer bytes than requested"));
+  EXPECT_EQ(bad.result()[0], "AAAA");
 }
 
 // Drop the manager while reads are still outstanding (submitted but never
