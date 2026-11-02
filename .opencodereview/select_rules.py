@@ -5,7 +5,10 @@ Usage: select_rules.py RULE_JSON OUT_JSON
 
 Environment: GH_TOKEN, REPO (owner/name), PR_NUMBER, OCR_LLM_URL,
 OCR_LLM_AUTH_TOKEN, OCR_LLM_MODEL, OCR_RULES_PER_LEG (default 14), and
-GITHUB_OUTPUT (the step outputs `count`, `num_chunks` and `chunks`).
+GITHUB_OUTPUT (the step outputs `count`, `num_chunks`, `chunks`,
+`selection_cost_usd` and `leg_budget_usd`). With OCR_REVIEW_BUDGET_USD and
+the OCR_PRICE_*_PER_M prices, each leg gets an equal share of what the
+review budget leaves after this call (`leg_budget_usd`; empty = unlimited).
 
 Two passes, both conservative:
 1. Triggers: a rule with triggers is kept only if one of its trigger regexes
@@ -30,6 +33,9 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from stage1_deterministic import SCRIPTED_RULE_IDS  # noqa: E402
+
+# Usage of the selection call, as the API reported it (empty if none ran).
+SELECTION_USAGE = {}
 
 # Diff characters sent to the selection call; the rest is listed by name only.
 MAX_DIFF_CHARS = 60_000
@@ -131,12 +137,29 @@ def select_with_model(labels, summaries, files, diff_text):
     with urllib.request.urlopen(request, timeout=300) as response:
         answer = json.load(response)
     usage = answer.get("usage", {})
+    SELECTION_USAGE.update(usage)
     log(f"selection call model: {answer.get('model')}, usage: {json.dumps(usage)}")
     content = answer["choices"][0]["message"]["content"]
     selected = json.loads(content)["rule_ids"]
     if not isinstance(selected, list):
         raise ValueError(f"rule_ids is not a list: {content[:200]}")
     return {str(rule_id_) for rule_id_ in selected}
+
+
+def price(name):
+    try:
+        return max(float(os.environ.get(name, "")), 0.0)
+    except ValueError:
+        return 0.0
+
+
+def selection_cost():
+    """USD of the selection call (DeepSeek reports cache hits and misses)."""
+    hits = SELECTION_USAGE.get("prompt_cache_hit_tokens", 0)
+    misses = SELECTION_USAGE.get("prompt_cache_miss_tokens", SELECTION_USAGE.get("prompt_tokens", 0) - hits)
+    output = SELECTION_USAGE.get("completion_tokens", 0)
+    return (misses * price("OCR_PRICE_INPUT_PER_M") + hits * price("OCR_PRICE_CACHE_HIT_PER_M")
+            + output * price("OCR_PRICE_OUTPUT_PER_M")) / 1e6
 
 
 def main():
@@ -219,6 +242,12 @@ def main():
 
     num_chunks = math.ceil(len(selected) / per_leg)
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+        cost = selection_cost()
+        budget = price("OCR_REVIEW_BUDGET_USD")
+        leg_budget = f"{(budget - cost) / num_chunks:.4f}" if budget > 0 and num_chunks else ""
+        out.write(f"selection_cost_usd={cost:.6f}\n")
+        out.write(f"leg_budget_usd={leg_budget}\n")
+        log(f"selection cost ${cost:.6f}; per-leg budget {leg_budget or 'unlimited'}")
         out.write(f"count={len(selected)}\n")
         out.write(f"num_chunks={num_chunks}\n")
         out.write(f"chunks={json.dumps(list(range(num_chunks)))}\n")
