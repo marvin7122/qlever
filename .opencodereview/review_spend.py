@@ -48,12 +48,22 @@ def main():
     # by the poster).
     totals = {key: 0 for key, _ in FINDING_COUNTS}
     per_leg = {}
+    # One-click suggestions (the poster's "suggestions" entry): findings with a
+    # code change, how many of them are suggestions on every place, and why
+    # the other places are not.
+    suggestions = {"findings_with_change": 0, "one_click": 0}
+    fallback = {}
     for path in glob.glob(os.path.join(usage_dir, "ocr-usage-*", "rule-stats.json")):
         leg = int(re.search(r"ocr-usage-(\d+)", path).group(1))
         with open(path, encoding="utf-8") as f:
             stats = json.load(f)
         for key, _ in FINDING_COUNTS:
             totals[key] += stats.get(key, 0)
+        sugg = stats.get("suggestions") or {}
+        for key in suggestions:
+            suggestions[key] += sugg.get(key, 0)
+        for reason, count in (sugg.get("fallback") or {}).items():
+            fallback[reason] = fallback.get(reason, 0) + count
         notes = [f"{label} {stats[key]}" for key, label in FINDING_COUNTS[1:] if stats.get(key)]
         if notes:
             per_leg[leg] = ", ".join(notes)
@@ -98,6 +108,13 @@ def main():
         lines.append(f"No usage from {legs_text(missing)} (failed before the first model call, or killed).")
     lines.append(f"Findings posted: {totals['findings']}. "
                  + "; ".join(f"{label}: {totals[key]}" for key, label in FINDING_COUNTS[1:]) + ".")
+    if suggestions["findings_with_change"]:
+        line = (f"One-click suggestions: {suggestions['one_click']} of {suggestions['findings_with_change']} "
+                "findings with a code change.")
+        if fallback:
+            line += " Places without one: " + "; ".join(
+                f"{reason.replace('_', ' ')}: {count}" for reason, count in sorted(fallback.items())) + "."
+        lines.append(line)
     if per_leg:
         lines.append("Per leg: " + "; ".join(f"leg {leg}: {text}" for leg, text in sorted(per_leg.items()))
                      + ". Rejected findings are in the legs' logs.")

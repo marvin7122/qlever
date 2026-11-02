@@ -91,10 +91,13 @@ def test_review_spend_counts_rejections():
             ({"calls": 43, "input_tokens": 500000, "cache_read_tokens": 450000, "output_tokens": 4000,
               "cost_usd": 0.0095, "truncated": True, "truncated_reason": "model-call cap 200 reached"},
              {"findings": 3, "rejected_no_rule": 1, "rejected_unverified_link": 0, "rejected_invalid_citation": 1,
-              "rejected_rule_does_not_fit": 1, "reassigned_rule": 2, "unverified": 1}),
+              "rejected_rule_does_not_fit": 1, "reassigned_rule": 2, "unverified": 1,
+              "suggestions": {"findings_with_change": 2, "one_click": 1, "locations": 4, "locations_one_click": 2,
+                              "fallback": {"outside_diff": 1, "clang_format": 1}}}),
             ({"calls": 12, "input_tokens": 100000, "cache_read_tokens": 90000, "output_tokens": 1000,
               "cost_usd": 0.0020, "truncated": False},
-             {"findings": 0, "rejected_no_rule": 0, "rejected_unverified_link": 2}),
+             {"findings": 0, "rejected_no_rule": 0, "rejected_unverified_link": 2,
+              "suggestions": {"findings_with_change": 1, "one_click": 1, "fallback": {}}}),
         ]):
             os.makedirs(os.path.join(d, f"ocr-usage-{leg}"))
             json.dump(usage, open(os.path.join(d, f"ocr-usage-{leg}", "usage.json"), "w"))
@@ -112,6 +115,8 @@ def test_review_spend_counts_rejections():
     assert ("Per leg: leg 0: rejected, no valid rule 1, rejected, invalid citation 1, rejected, rule does not fit 1, "
             "re-assigned to a fitting rule 2, posted unverified 1; leg 1: rejected, unverified link 2.") in text, text
     assert "Left out of this review (no knowledge card): PP20, rule:includes." in text, text
+    assert ("One-click suggestions: 2 of 3 findings with a code change. "
+            "Places without one: clang format: 1; outside diff: 1.") in text, text
 
 
 def test_rule_statements_for_the_filter():
