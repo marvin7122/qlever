@@ -356,9 +356,13 @@ FILE = "".join(f"  int x{n} = {n};\n" for n in range(1, 31))
 
 class SuggestionTest(unittest.TestCase):
     def test_render(self):
-        s = a.Suggestion("src/a.cpp", 3, 4, "old3\nold4", "new3")
+        s = a.Suggestion("src/a.cpp", 3, 4, "old3\nold4\n", "new3\n")
         self.assertEqual(s.block(), "```suggestion\nnew3\n```")
-        self.assertEqual(a.Suggestion("src/a.cpp", 3, 3, "old", "").block(), "```suggestion\n```", "deletes the line")
+        self.assertEqual(a.Suggestion("src/a.cpp", 3, 3, "old\n", "").block(), "```suggestion\n```", "deletes the line")
+        self.assertEqual(a.Suggestion("src/a.cpp", 3, 3, "old\n", "\n").block(), "```suggestion\n\n```",
+                         "one empty line, not a deletion")
+        self.assertEqual(a.Suggestion("src/a.cpp", 9, 9, "x", "y").block(), "```suggestion\ny\n```",
+                         "the last line of a file without a final newline")
         self.assertEqual(s.state(7)["comment_id"], 7)
 
     def test_diff_suggestions_and_round_trip(self):
@@ -367,12 +371,20 @@ class SuggestionTest(unittest.TestCase):
         new = new.replace("  int x20 = 20;\n", "")  # a deletion
         suggestions = a.diff_suggestions("src/a.cpp", FILE, new)
         self.assertEqual([(s.start, s.end, s.new) for s in suggestions],
-                         [(5, 5, "  int x5 = 50;"), (10, 10, "  int x10 = 10;\n  int y = 0;"), (20, 20, "")])
+                         [(5, 5, "  int x5 = 50;\n"), (10, 10, "  int x10 = 10;\n  int y = 0;\n"), (20, 20, "")])
         self.assertEqual(a.apply_suggestions(FILE, suggestions), new)
         # An insertion at the top of the file is anchored on the line below.
         top = "#include <x>\n" + FILE
         [s] = a.diff_suggestions("src/a.cpp", FILE, top)
-        self.assertEqual((s.start, s.end, s.new), (1, 1, "#include <x>\n  int x1 = 1;"))
+        self.assertEqual((s.start, s.end, s.new), (1, 1, "#include <x>\n  int x1 = 1;\n"))
+        # Regression (end-to-end run on #338): an insertion anchored on an empty
+        # line that ends with an empty line keeps both empty lines.
+        head = "#include <vector>\n\n// A comment.\nnamespace a {\n"
+        committed = "#include <vector>\n\n#include \"util/Exception.h\"\n\n// A comment.\nnamespace a {\n"
+        [s] = a.diff_suggestions("src/a.h", head, committed)
+        self.assertEqual(s.end - s.start, 0, "one anchor line")
+        self.assertEqual(a.apply_suggestions(head, [s]), committed)
+        self.assertEqual(a.one_click_gate("src/a.h", head, committed, [(1, 4)], lambda *args: "")[1], "")
         # Blocks that touch are merged into one suggestion.
         touching = FILE.replace("  int x7 = 7;\n  int x8 = 8;\n", "  int x7 = 70;\n  int x8 = 80;\n  int z = 0;\n")
         self.assertEqual(len(a.diff_suggestions("src/a.cpp", FILE, touching)), 1)
@@ -397,9 +409,14 @@ class SuggestionTest(unittest.TestCase):
         # Not formatted: the formatter's verdict decides.
         self.assertEqual(a.one_click_gate("src/a.cpp", FILE, new, [(1, 30)], lambda *args: "not formatted")[1],
                          "not formatted")
-        # Round trip: a file without a final newline cannot be reproduced line by line.
-        no_newline = new[:-1]
-        self.assertIn("would not give the proposed file", a.one_click_gate("src/a.cpp", FILE, no_newline, [(1, 30)], ok)[1])
+        # A file without a final newline round-trips too (the lines are kept exactly).
+        self.assertEqual(a.one_click_gate("src/a.cpp", FILE, new[:-1], [(1, 30)], ok)[1], "")
+        # Round trip: if committing the suggestions does not give the side-branch file, no one-click.
+        original, a.apply_suggestions = a.apply_suggestions, lambda content, suggestions: content
+        try:
+            self.assertIn("would not give the proposed file", a.one_click_gate("src/a.cpp", FILE, new, [(1, 30)], ok)[1])
+        finally:
+            a.apply_suggestions = original
         self.assertEqual(a.one_click_gate("src/a.cpp", FILE, FILE, [(1, 30)], ok)[1], "the change is empty")
 
     def test_clang_format_check(self):
@@ -426,8 +443,8 @@ class SuggestionTest(unittest.TestCase):
         own, others = a.place_suggestions(t, FILE, suggestions)
         # Inside the anchor: one suggestion replacing exactly the anchored lines 4-6.
         self.assertEqual((own.start, own.end), (4, 6))
-        self.assertEqual(own.new, "  int x4 = 4;\n  int x5 = 50;\n  int x6 = 6;")
-        self.assertEqual(own.old, "  int x4 = 4;\n  int x5 = 5;\n  int x6 = 6;")
+        self.assertEqual(own.new, "  int x4 = 4;\n  int x5 = 50;\n  int x6 = 6;\n")
+        self.assertEqual(own.old, "  int x4 = 4;\n  int x5 = 5;\n  int x6 = 6;\n")
         # Outside: a review comment of its own on exactly its lines.
         self.assertEqual([(s.start, s.end) for s in others], [(20, 20)])
         # Committing the anchor suggestion and the other one gives the proposed file.
