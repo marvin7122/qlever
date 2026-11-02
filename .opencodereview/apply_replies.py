@@ -496,20 +496,65 @@ def backend():
     return pick("URL"), pick("MODEL"), pick("AUTH_TOKEN")
 
 
+FENCE = re.compile(r"^\s*```[a-zA-Z]*\s*\n(.*?)\n?```\s*$", re.S)
+
+
+def parse_json_object(text):
+    """The first complete JSON object of a model answer. Strips a Markdown
+    fence (```json ... ```); what follows the object is ignored (logged: a
+    second object of the same schema, as in #323's run 41510928135, or other
+    text). Raises ValueError if no object can be parsed."""
+    text = text or ""
+    fenced = FENCE.match(text)
+    if fenced:
+        text = fenced.group(1)
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("the answer contains no JSON object")
+    decoder = json.JSONDecoder()
+    value, end = decoder.raw_decode(text, start)
+    if not isinstance(value, dict):
+        raise ValueError("the answer's JSON is not an object")
+    rest = text[end:].strip()
+    if rest:
+        try:
+            second, _ = decoder.raw_decode(rest)
+            same = isinstance(second, dict) and set(second) & set(value)
+            log("ignoring " + ("a second JSON object of the same schema" if same else "a second JSON value")
+                + " after the first one")
+        except ValueError:
+            log(f"ignoring text after the JSON object: {rest[:80]!r}")
+    return value
+
+
+STRICT_JSON = ("Your answer could not be parsed. Answer again with exactly one JSON object and nothing else: "
+               "no Markdown fence, no text before or after it, no second object.")
+
+
 def chat(messages, spend):
-    if spend.exhausted():
-        raise BudgetExhausted()
-    url, model, token = backend()
-    body = {"model": model, "messages": messages, "response_format": {"type": "json_object"},
-            "max_tokens": 8192, "temperature": 0}
-    if (os.environ.get("OCR_APPLY_THINKING") or "disabled") == "disabled":
-        body["thinking"] = {"type": "disabled"}
-    request = urllib.request.Request(url, data=json.dumps(body).encode(), headers={
-        "Content-Type": "application/json", "Authorization": f"Bearer {token}"})
-    with urllib.request.urlopen(request, timeout=600) as response:
-        answer = json.load(response)
-    spend.add(answer.get("usage", {}))
-    return json.loads(answer["choices"][0]["message"]["content"])
+    """The model's answer as one JSON object; one retry with a stricter
+    instruction if it cannot be parsed, then RuntimeError (the thread is
+    reported as failed)."""
+    for attempt in range(2):
+        if spend.exhausted():
+            raise BudgetExhausted()
+        url, model, token = backend()
+        body = {"model": model, "messages": messages, "response_format": {"type": "json_object"},
+                "max_tokens": 8192, "temperature": 0}
+        if (os.environ.get("OCR_APPLY_THINKING") or "disabled") == "disabled":
+            body["thinking"] = {"type": "disabled"}
+        request = urllib.request.Request(url, data=json.dumps(body).encode(), headers={
+            "Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+        with urllib.request.urlopen(request, timeout=600) as response:
+            answer = json.load(response)
+        spend.add(answer.get("usage", {}))
+        content = answer["choices"][0]["message"]["content"]
+        try:
+            return parse_json_object(content)
+        except ValueError as error:
+            log(f"the answer is not one JSON object ({error}): {content[:120]!r}")
+            messages = messages + [{"role": "assistant", "content": content}, {"role": "user", "content": STRICT_JSON}]
+    raise RuntimeError("the model did not answer with a JSON object, also not after a retry")
 
 
 EDIT_PROMPT = """You fix one code review finding in a C++ repository by editing one file.
