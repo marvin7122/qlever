@@ -60,7 +60,7 @@ void forEachPosition(size_t numPositions,
                      ql::span<const InternalWord> internalWords,
                      OnInternal onInternal, OnExternal onExternal) {
   auto nextInternal = internalWords.begin();
-  for (const size_t position : ql::views::iota(size_t{0}, numPositions)) {
+  for (const size_t position : ad_utility::integerRange(numPositions)) {
     if (nextInternal != internalWords.end() &&
         nextInternal->position == position) {
       onInternal(*nextInternal);
