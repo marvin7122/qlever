@@ -11,7 +11,11 @@ under every finding lists the reactions and keywords), then posts a signal:
   /approve-all    (PR comment)    apply every pending proposal
 
 What a thread's owner signal means (the latest owner reply wins over
-reactions; threads without one are left alone):
+reactions; threads without one are left alone; a resolved thread is acted on
+like an open one; a reply in one of this flow's own suggestion threads counts
+as a reply in its finding's thread; an outdated finding is relocated at the
+head from its diff hunk, or reported as already applied or as skipped; the
+summary lists every thread with an owner signal, skipped ones with the reason):
   👍 ❤️, a free-text reply, `/improve <text>`  implement (guided by the text)
   😕 confusing, 😄 too long, `/not-actionable`  rewrite the finding: a TL;DR,
                                   a concrete code proposal, at most three
@@ -269,7 +273,7 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
           id isResolved path line startLine
           comments(first: 50) {
             nodes {
-              databaseId url body createdAt author { login }
+              databaseId url body createdAt author { login } originalLine originalStartLine diffHunk
               reactions(first: 50) { nodes { content createdAt user { login } } }
             }
           }
@@ -296,6 +300,8 @@ def fetch_threads(repo, number):
                 "line": node["line"], "startLine": node["startLine"],
                 "comments": [{
                     "id": c["databaseId"], "url": c["url"], "body": c["body"], "createdAt": c["createdAt"],
+                    "originalLine": c.get("originalLine"), "originalStartLine": c.get("originalStartLine"),
+                    "diffHunk": c.get("diffHunk") or "",
                     "author": (c["author"] or {}).get("login", ""),
                     "reactions": [{"content": r["content"], "createdAt": r["createdAt"],
                                    "user": (r["user"] or {}).get("login", "")}
@@ -310,6 +316,95 @@ def fetch_threads(repo, number):
 def is_finding_thread(thread, finding_authors):
     first = thread["comments"][0] if thread["comments"] else None
     return bool(first and FINDING_MARKER.search(first["body"]) and first["author"] in finding_authors)
+
+
+SUGGESTION_MARKER = re.compile(r"<!-- ocr-apply-suggestion (\{.*?\}) -->")
+SUGGESTION_BLOCK = re.compile(r"```suggestion[^\n]*\n(.*?)```", re.S)
+
+
+def suggestion_parent(thread):
+    """The first comment id of the finding thread a suggestion comment of
+    this flow belongs to (`<!-- ocr-apply-suggestion {"thread": N} -->`), or None."""
+    match = SUGGESTION_MARKER.search(thread["comments"][0]["body"]) if thread["comments"] else None
+    try:
+        return int(json.loads(match.group(1))["thread"]) if match else None
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def with_suggestion_replies(threads):
+    """The threads, with the replies in this flow's own suggestion threads
+    moved into their parent finding threads (in time order), so a reply
+    there counts like a reply in the finding's thread."""
+    by_first = {t["comments"][0]["id"]: t for t in threads if t["comments"]}
+    moved = {}
+    for t in threads:
+        parent = suggestion_parent(t)
+        if parent in by_first:
+            moved.setdefault(parent, []).extend(t["comments"][1:])
+    merged = []
+    for t in threads:
+        extra = moved.get(t["comments"][0]["id"]) if t["comments"] else None
+        if extra:
+            t = {**t, "comments": [t["comments"][0]] + sorted(t["comments"][1:] + extra,
+                                                              key=lambda c: c["createdAt"])}
+        merged.append(t)
+    return merged
+
+
+def anchored_original(thread):
+    """The text of the lines a finding was anchored on when it was posted:
+    the last lines of the right side of its diff hunk (the hunk ends at
+    `originalLine`), or None if the comment lacks them."""
+    first = thread["comments"][0]
+    end = first.get("originalLine")
+    start = first.get("originalStartLine") or end
+    if not end or not first.get("diffHunk"):
+        return None
+    right = [line[1:] + "\n" for line in first["diffHunk"].split("\n")[1:]
+             if line and not line.startswith(("-", "\\"))]
+    count = end - start + 1
+    return "".join(right[-count:]) if 0 < count <= len(right) else None
+
+
+def relocate_lines(block, content, near, window=60):
+    """(start, end), 1-based, of `block`'s lines in `content`: an exact match
+    (the one whose last line is nearest line `near`, the original anchor's
+    last line), else a match ignoring whitespace that ends within `window`
+    lines of `near`; None if neither exists."""
+    lines, wanted = content.splitlines(True), block.splitlines(True)
+    count = len(wanted)
+    if not count:
+        return None
+
+    def distance(i):
+        return abs(i + count - near)
+    exact = [i for i in range(len(lines) - count + 1) if lines[i:i + count] == wanted]
+    if exact:
+        i = min(exact, key=distance)
+        return i + 1, i + count
+
+    def squeeze(group):
+        return ["".join(line.split()) for line in group]
+    target = squeeze(wanted)
+    nearby = [i for i in range(len(lines) - count + 1)
+              if distance(i) <= window and squeeze(lines[i:i + count]) == target]
+    if nearby:
+        i = min(nearby, key=distance)
+        return i + 1, i + count
+    return None
+
+
+def own_suggestion_applied(thread, content):
+    """True if the finding's own suggestion block (posted by the review) is
+    already on the branch: its text is in the file and the lines it
+    replaced are gone (unless the suggestion keeps them)."""
+    match = SUGGESTION_BLOCK.search(thread["comments"][0]["body"])
+    new = match.group(1) if match else ""
+    if not new.strip() or new not in content:
+        return False
+    old = anchored_original(thread)
+    return not old or old in new or old not in content
 
 
 def finding_rule(thread):
@@ -405,15 +500,36 @@ def eyes_original(thread, threads, owner, finding_authors):
     return earliest, ""
 
 
-def plan_tasks(threads, owner, mode, finding_authors, repo=None, number=None, committed=None):
-    """One task per finding thread that needs one in this mode. A duplicate
-    gets its original resolved; an original that has no task of its own and
-    is not handled yet is implemented. A pending proposal whose suggestions
-    the owner already committed with GitHub's button (`committed(state)` is
-    true) is only resolved, in every mode."""
+def unknown_command(thread, owner):
+    """The owner's latest reply in the thread if it is an unknown command
+    (it starts with "/" but is no keyword), else None."""
+    replies = [c for c in thread["comments"][1:] if c["author"] == owner and not APPLY_MARKER.search(c["body"])]
+    if not replies:
+        return None
+    word = (max(replies, key=lambda c: c["createdAt"])["body"].strip().split() or [""])[0]
+    known = set(KEYWORD_ACTIONS) | PR_KEYWORDS
+    return word if word.startswith("/") and word not in known else None
+
+
+def plan_tasks(threads, owner, mode, finding_authors, repo=None, number=None, committed=None, skipped=None):
+    """One task per finding thread that needs one in this mode. Replies in
+    this flow's own suggestion threads count as replies in their finding's
+    thread; a resolved thread is acted on like an open one (resolving is not
+    a signal). A duplicate gets its original resolved; an original that has
+    no task of its own and is not handled yet is implemented. A pending
+    proposal whose suggestions the owner already committed with GitHub's
+    button (`committed(state)` is true) is only resolved, in every mode.
+    Every other thread with an owner signal is appended to `skipped` as
+    (thread, why) - in `replies` mode all of them, in the other modes those
+    with a decision that cannot be carried out."""
     tasks = []
+    skip = skipped.append if skipped is not None else (lambda item: None)
+    threads = with_suggestion_replies(threads)
     for thread in threads:
+        signal = owner_signal(thread, owner)
         if not is_finding_thread(thread, finding_authors):
+            if signal is not None and suggestion_parent(thread) is None and mode == "replies":
+                skip((thread, "not an OpenCodeReview finding thread"))
             continue
         state, state_at = last_apply_state(thread)
         pending = state if state and state.get("state") == "proposed" else None
@@ -421,22 +537,27 @@ def plan_tasks(threads, owner, mode, finding_authors, repo=None, number=None, co
             tasks.append(Task(thread, Action.COMMITTED, Signal(Action.COMMITTED, "", "suggestion button", ""),
                               finding_rule(thread), pending))
             continue
-        signal = owner_signal(thread, owner)
         if mode == "approve-all":
             if pending:
                 tasks.append(Task(thread, Action.APPROVE, Signal(Action.APPROVE, "", "/approve-all", ""),
                                   finding_rule(thread), pending))
             continue
         if signal is None:
+            command = unknown_command(thread, owner)
+            if command and mode == "replies":
+                skip((thread, f"unknown keyword `{command}`"))
             continue
         if signal.action in (Action.APPROVE, Action.REJECT):
             if pending and signal.at > state_at:
                 tasks.append(Task(thread, signal.action, signal, finding_rule(thread), pending))
+            elif not (state and state_at > signal.at):
+                skip((thread, f"`{signal.what}` without a pending proposal"))
             continue
-        if mode == "decisions" or thread["isResolved"]:
+        if mode == "decisions":
             continue
         if state is not None and state_at >= signal.at:
-            continue  # handled since the owner's last signal
+            skip((thread, f"already handled ({state.get('state')})"))
+            continue
         tasks.append(Task(thread, signal.action, signal, finding_rule(thread)))
     for task in [t for t in tasks if t.action is Action.DUPLICATE]:
         if task.signal.what == "/duplicate":
@@ -858,8 +979,9 @@ def place_suggestions(thread, head_content, suggestions):
     """(the suggestion on the thread's own anchored lines, or None; the
     suggestions that need a review comment of their own). Suggestions inside
     the anchor are merged into one that replaces exactly the anchored lines,
-    so it can go into the thread's reply."""
-    end = thread["line"]
+    so it can go into the thread's reply. A relocated (outdated) thread has
+    no anchor at the head that a reply's suggestion could apply to."""
+    end = None if thread.get("relocated") else thread["line"]
     start = thread["startLine"] or end
     inside = [s for s in suggestions if end and s.path == thread["path"] and start <= s.start and s.end <= end]
     others = [s for s in suggestions if s not in inside]
@@ -993,6 +1115,7 @@ class Run:
         self.statements = rule_statements()
         self.spend = Spend(float(os.environ.get("OCR_APPLY_BUDGET_USD") or 2.0))
         self.results = []  # (outcome, thread url, rule, detail)
+        self.handled_earlier = []  # owner signals an earlier run handled, listed collapsed
         self.applied = []
         self.proposals = []
         self.one_click = [0, 0]  # proposals posted as one-click suggestions, proposals posted
@@ -1136,12 +1259,43 @@ class Run:
             self.record("committed via suggestion", task, task.proposal["branch"])
 
     def outdated(self, task):
-        if task.thread["line"]:
+        """False if the task's thread has lines at the PR head to act on, also
+        after relocating an outdated thread (task.thread then carries the
+        relocated lines); True after reporting why it cannot be acted on: the
+        finding's own suggestion is already on the branch, or its anchored
+        lines could not be found."""
+        thread = task.thread
+        if thread["line"]:
             return False
-        reply(self.repo, self.number, task.thread,
-              "Not changed: this finding is outdated (its lines no longer exist at the PR head).", {"state": "failed"})
-        self.record("failed", task, "outdated")
-        return True
+        try:
+            content = self.file_content(thread["path"])
+        except OSError:
+            reply(self.repo, self.number, thread, "Skipped: this finding is outdated and its file no longer exists.",
+                  {"state": "skipped", "reason": "outdated"})
+            self.record("skipped: outdated, the file is gone", task, "")
+            return True
+        if own_suggestion_applied(thread, content):
+            reply(self.repo, self.number, thread,
+                  "Already on the branch: this finding's own suggestion was committed. Resolving.",
+                  {"state": "applied", "via": "finding suggestion"})
+            if not thread["isResolved"]:
+                resolve(thread)
+            self.record("already applied", task, "the finding's own suggestion is on the branch")
+            return True
+        block = anchored_original(thread)
+        place = relocate_lines(block, content, thread["comments"][0]["originalLine"]) if block else None
+        if place is None:
+            reply(self.repo, self.number, thread,
+                  "Skipped: this finding is outdated, and the lines it was anchored on could not be found at the PR "
+                  "head. Reply with an instruction that names the lines to change, then post `/apply-replies`.",
+                  {"state": "skipped", "reason": "outdated"})
+            self.record("skipped: outdated, could not relocate", task, "")
+            return True
+        start, end = place
+        log(f"{thread['path']}: outdated finding relocated from line {thread['comments'][0]['originalLine']} "
+            f"to {start}-{end}")
+        task.thread = {**thread, "startLine": start if start != end else None, "line": end, "relocated": True}
+        return False
 
     def implement(self, task):
         if self.outdated(task):
@@ -1330,7 +1484,12 @@ class Run:
         if self.one_click[1]:
             lines.insert(1, f"One-click: {self.one_click[0]} of {self.one_click[1]} proposals.")
         for outcome, url, rule, detail in self.results:
-            lines.append(f"- {outcome}: [{rule}]({url}) {detail}")
+            lines.append(f"- {outcome}: [{rule}]({url}) {detail}".rstrip())
+        if self.handled_earlier:
+            lines += ["", f"<details><summary>Owner signals already handled by an earlier run "
+                      f"({len(self.handled_earlier)})</summary>", ""]
+            lines += [f"- {outcome}: [{rule}]({url})" for outcome, url, rule, _ in self.handled_earlier]
+            lines += ["", "</details>"]
         if any(outcome == "applied" for outcome, *_ in self.results) and os.environ.get("OCR_APPLY_CI_STARTS") != "true":
             lines += ["", "The commits were pushed with the workflow token, which does not start the PR's CI; push "
                       "any commit or re-run the CI to check them (or give the fan-out app \"Contents: write\" and set "
@@ -1341,8 +1500,15 @@ class Run:
         self.check_target()
         threads = fetch_threads(self.repo, self.number)
         self.thread_of_comment = {t["comments"][0]["id"]: t for t in threads if t["comments"]}
+        skipped = []
         tasks = plan_tasks(threads, self.owner, self.mode, self.finding_authors, self.repo, self.number,
-                           committed=self.committed_via_button)
+                           committed=self.committed_via_button, skipped=skipped)
+        # Never skip silently: every thread with an owner signal is in the summary.
+        for thread, why in skipped:
+            first = thread["comments"][0]
+            rule = finding_rule(thread) if FINDING_MARKER.search(first["body"]) else first["author"] or "comment"
+            target = self.handled_earlier if why.startswith("already handled") else self.results
+            target.append((f"skipped: {why}", first["url"], rule, ""))
         # Duplicates first: their originals' implementations follow.
         tasks.sort(key=lambda t: t.action is not Action.DUPLICATE)
         log(f"{len(tasks)} task(s): " + ", ".join(f"{t.action.value}@{t.thread['path']}:{t.thread['line']}"
@@ -1365,7 +1531,7 @@ class Run:
                 self.record("failed", task, str(error)[:200])
         self.push_and_report_applied()
         self.post_proposals()
-        if self.results:
+        if self.results or self.handled_earlier:
             gh("pr", "comment", str(self.number), "-R", self.repo, "--body", self.summary())
 
     def committed_via_button(self, proposal):
