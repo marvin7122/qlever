@@ -100,6 +100,8 @@ jobs:
           # Replies and resolving threads: the workflow token (pull-requests: write).
           GH_TOKEN: ${{ github.token }}
           OCR_APPLY_CI_STARTS: ${{ steps.app-token.outputs.token != '' }}
+          # Split-off PRs (`/split`): opened as the fan-out app with OCR_APPLY_PUSH_TOKEN=app, else as Actions.
+          OCR_APPLY_PR_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           OCR_APPLY_OWNER: ${{ github.repository_owner }}
