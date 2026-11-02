@@ -753,8 +753,8 @@ def diff_details(path, old_content, new_content):
 @dataclasses.dataclass(frozen=True)
 class Suggestion:
     """A one-click change: the lines `start` to `end` (1-based) of `path` at
-    the PR head, their text `old`, and their replacement `new` (both without
-    the last line's newline; an empty `new` deletes the lines)."""
+    the PR head, their text `old`, and their replacement `new`, each line
+    with its newline, so "" deletes the lines and "\\n" is one empty line."""
     path: str
     start: int
     end: int
@@ -762,15 +762,12 @@ class Suggestion:
     new: str
 
     def block(self):
-        return f"```suggestion\n{self.new}\n```" if self.new else "```suggestion\n```"
+        lines = self.new if not self.new or self.new.endswith("\n") else self.new + "\n"
+        return f"```suggestion\n{lines}```"
 
     def state(self, comment_id=None):
         return {"path": self.path, "start": self.start, "end": self.end, "old": self.old, "new": self.new,
                 "comment_id": comment_id}
-
-
-def _without_last_newline(text):
-    return text[:-1] if text.endswith("\n") else text
 
 
 def diff_suggestions(path, old_content, new_content):
@@ -794,8 +791,7 @@ def diff_suggestions(path, old_content, new_content):
             blocks[-1] = (p1, max(p2, i2), q1, max(q2, j2))
         else:
             blocks.append((i1, i2, j1, j2))
-    return [Suggestion(path, i1 + 1, i2, _without_last_newline("".join(old_lines[i1:i2])),
-                       _without_last_newline("".join(new_lines[j1:j2])))
+    return [Suggestion(path, i1 + 1, i2, "".join(old_lines[i1:i2]), "".join(new_lines[j1:j2]))
             for i1, i2, j1, j2 in blocks]
 
 
@@ -803,7 +799,7 @@ def apply_suggestions(content, suggestions):
     """`content` with every suggestion committed, as GitHub's button does."""
     lines = content.splitlines(True)
     for s in sorted(suggestions, key=lambda s: s.start, reverse=True):
-        lines[s.start - 1:s.end] = replacement_lines(s.new)
+        lines[s.start - 1:s.end] = s.new.splitlines(True)
     return "".join(lines)
 
 
@@ -872,9 +868,8 @@ def place_suggestions(thread, head_content, suggestions):
     lines = head_content.splitlines(True)
     block = lines[start - 1:end]
     for s in sorted(inside, key=lambda s: s.start, reverse=True):
-        block[s.start - start:s.end - start + 1] = replacement_lines(s.new)
-    return (Suggestion(thread["path"], start, end, _without_last_newline("".join(lines[start - 1:end])),
-                       _without_last_newline("".join(block))), others)
+        block[s.start - start:s.end - start + 1] = s.new.splitlines(True)
+    return Suggestion(thread["path"], start, end, "".join(lines[start - 1:end]), "".join(block)), others
 
 
 def suggestions_applied(contents, suggestions):
