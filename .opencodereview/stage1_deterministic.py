@@ -123,9 +123,12 @@ def clang_format_findings(path, content, lines, style_file):
         capture_output=True, text=True,
     )
     os.unlink(temp)
-    findings = []
-    for match in re.finditer(r":(\d+):\d+: (?:error|warning): code should be clang-formatted", result.stderr):
-        findings.append(("error", path, int(match.group(1)), "clang-format", "not formatted with clang-format"))
+    # clang-format reports every violating column; report each line once.
+    bad_lines = sorted({
+        int(match.group(1))
+        for match in re.finditer(r":(\d+):\d+: (?:error|warning): code should be clang-formatted", result.stderr)
+    })
+    findings = [("error", path, n, "clang-format", "not formatted with clang-format") for n in bad_lines]
     if result.returncode != 0 and not findings:
         raise RuntimeError(f"clang-format failed on {path}: {result.stderr.strip()[:300]}")
     return findings
