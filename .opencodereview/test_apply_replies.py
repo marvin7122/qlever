@@ -247,26 +247,46 @@ class EditTest(unittest.TestCase):
         self.assertFalse(a.is_mechanical_edit("src/a.cpp", "// c\nf(x);", "// c\nAD_CONTRACT_CHECK(x);\nf(x);"))
 
     def test_apply_edits(self):
-        content = "a\nb\nc\n"
-        self.assertEqual(a.apply_edits(content, [a.Edit("p", "b\n", "B\nB2\n")]), "a\nB\nB2\nc\n")
+        content = "a\nb\nc\nd\n"
+        # Several ranges, applied bottom-up; an insertion repeats its anchor line; "" deletes.
+        edits = [a.Edit("p", 2, 2, "B\nB2"), a.Edit("p", 4, 4, "")]
+        self.assertEqual(a.apply_edits(content, edits), "a\nB\nB2\nc\n")
+        self.assertEqual(a.apply_edits(content, [a.Edit("p", 1, 1, "a\n#include <x>\n")]), "a\n#include <x>\nb\nc\nd\n")
+        self.assertEqual(a.edit_old_text(content, a.Edit("p", 2, 3, "")), "b\nc\n")
         with self.assertRaises(RuntimeError):
-            a.apply_edits("x\nx\n", [a.Edit("p", "x", "y")])
+            a.apply_edits(content, [a.Edit("p", 4, 5, "x")])
 
-    def test_suggestion_and_diff(self):
+    def test_edit_problems(self):
+        content = "a\nb\nc\n"
+        self.assertEqual(a.edit_problems(content, [a.Edit("p", 1, 1, ""), a.Edit("p", 2, 3, "")]), [])
+        self.assertIn("not lines of the file", a.edit_problems(content, [a.Edit("p", 0, 1, "")])[0])
+        self.assertIn("not lines of the file", a.edit_problems(content, [a.Edit("p", 3, 2, "")])[0])
+        self.assertIn("overlap", a.edit_problems(content, [a.Edit("p", 1, 2, ""), a.Edit("p", 2, 3, "")])[0])
+        self.assertEqual(a.parse_edits("p", [{"start": "2", "end": 2, "replacement": "x"}])[0],
+                         [a.Edit("p", 2, 2, "x")])
+        self.assertIn("malformed", a.parse_edits("p", [{"old": "x"}])[1])
+
+    def test_relocate_edits(self):
+        base = "a\nb\nc\n"
+        edits = [a.Edit("p", 2, 2, "B")]
+        self.assertEqual(a.relocate_edits(base, base, edits), edits)
+        self.assertEqual(a.relocate_edits(base, "x\ny\na\nb\nc\n", edits), [a.Edit("p", 4, 4, "B")])
+        self.assertIsNone(a.relocate_edits(base, "b\na\nb\n", edits), "ambiguous")
+        self.assertIsNone(a.relocate_edits(base, "a\nc\n", edits), "gone")
+
+    def test_diff(self):
         old = "".join(f"line{n}\n" for n in range(1, 21))
-        inside = old.replace("line10\n", "line10 changed\nline10b\n")
-        t = thread(line=11, start=10)
-        self.assertEqual(a.suggestion_block(t, old, inside), "```suggestion\nline10 changed\nline10b\nline11\n```")
         outside = old.replace("line3\n", "line3 changed\n")
-        self.assertIsNone(a.suggestion_block(t, old, outside))
         diff = a.unified_diff("src/a.cpp", old, outside)
         self.assertIn("-line3\n+line3 changed\n", diff)
         self.assertTrue(diff.startswith("--- a/src/a.cpp\n+++ b/src/a.cpp\n"))
-        self.assertEqual(a.changed_lines(old, inside), [10, 11])
+        self.assertIn("<details><summary>Diff (src/a.cpp)</summary>", a.diff_details("src/a.cpp", old, outside))
+        self.assertEqual(a.changed_lines(old, old.replace("line10\n", "line10 changed\nline10b\n")), [10, 11])
 
     def test_search_replace_harness_retries(self):
-        answers = [{"edits": [{"old": "missing", "new": "x"}], "kind": "mechanical", "summary": "s"},
-                   {"edits": [{"old": "// old", "new": "// new"}], "kind": "mechanical", "summary": "fix the comment"}]
+        answers = [{"edits": [{"start": 2, "end": 9, "replacement": "x"}], "kind": "mechanical", "summary": "s"},
+                   {"edits": [{"start": 2, "end": 2, "replacement": "// new"}], "kind": "mechanical",
+                    "summary": "fix the comment"}]
         seen = []
 
         def fake_chat(messages, spend):
@@ -278,8 +298,10 @@ class EditTest(unittest.TestCase):
             result = a.search_replace_harness(task, "int x;\n// old\n", "Comments are accurate.", a.Spend(1.0))
         finally:
             a.chat = original
-        self.assertEqual((result.summary, result.model_kind, len(result.edits)), ("fix the comment", "mechanical", 1))
-        self.assertIn("do not occur exactly once", seen[1])
+        self.assertEqual((result.summary, result.model_kind, result.edits),
+                         ("fix the comment", "mechanical", [a.Edit("src/a.cpp", 2, 2, "// new")]))
+        self.assertIn("cannot be applied", seen[1])
+        self.assertIn("not lines of the file (1-2)", seen[1])
         self.assertIn("Rule PP10: Comments are accurate.", seen[0])
 
     def test_rewrite_harness_focus(self):
@@ -287,7 +309,8 @@ class EditTest(unittest.TestCase):
 
         def fake_chat(messages, spend):
             prompts.append(messages[-1]["content"])
-            return {"tldr": "Name the check.", "edits": [{"old": "// old", "new": "// new"}], "kind": "mechanical",
+            return {"tldr": "Name the check.", "edits": [{"start": 2, "end": 2, "replacement": "// new"}],
+                    "kind": "mechanical",
                     "summary": "s", "why": "w", "where": ["src/a.cpp:2"], "verify": "run aTest", "risk": "none"}
         original, a.chat = a.chat, fake_chat
         try:
@@ -325,6 +348,129 @@ class EditTest(unittest.TestCase):
     def test_finding_text(self):
         body = "<!-- ocr-1 -->\n![b](c)\nPP10: stale.\n<details><summary>x</summary>code</details>\nRule: [PP10](u)\nReact: 👍"
         self.assertEqual(a.finding_text(body), "PP10: stale.")
+
+
+REPO_ROOT = os.path.dirname(HERE)
+FILE = "".join(f"  int x{n} = {n};\n" for n in range(1, 31))
+
+
+class SuggestionTest(unittest.TestCase):
+    def test_render(self):
+        s = a.Suggestion("src/a.cpp", 3, 4, "old3\nold4", "new3")
+        self.assertEqual(s.block(), "```suggestion\nnew3\n```")
+        self.assertEqual(a.Suggestion("src/a.cpp", 3, 3, "old", "").block(), "```suggestion\n```", "deletes the line")
+        self.assertEqual(s.state(7)["comment_id"], 7)
+
+    def test_diff_suggestions_and_round_trip(self):
+        new = FILE.replace("  int x5 = 5;\n", "  int x5 = 50;\n")  # a replacement
+        new = new.replace("  int x10 = 10;\n", "  int x10 = 10;\n  int y = 0;\n")  # an insertion
+        new = new.replace("  int x20 = 20;\n", "")  # a deletion
+        suggestions = a.diff_suggestions("src/a.cpp", FILE, new)
+        self.assertEqual([(s.start, s.end, s.new) for s in suggestions],
+                         [(5, 5, "  int x5 = 50;"), (10, 10, "  int x10 = 10;\n  int y = 0;"), (20, 20, "")])
+        self.assertEqual(a.apply_suggestions(FILE, suggestions), new)
+        # An insertion at the top of the file is anchored on the line below.
+        top = "#include <x>\n" + FILE
+        [s] = a.diff_suggestions("src/a.cpp", FILE, top)
+        self.assertEqual((s.start, s.end, s.new), (1, 1, "#include <x>\n  int x1 = 1;"))
+        # Blocks that touch are merged into one suggestion.
+        touching = FILE.replace("  int x7 = 7;\n  int x8 = 8;\n", "  int x7 = 70;\n  int x8 = 80;\n  int z = 0;\n")
+        self.assertEqual(len(a.diff_suggestions("src/a.cpp", FILE, touching)), 1)
+
+    def test_diff_hunks(self):
+        patch = "@@ -1,3 +1,4 @@\n a\n+b\n c\n d\n@@ -40,2 +41,5 @@ void f() {\n x\n@@ -60 +64 @@\n@@ -70,2 +75,0 @@\n"
+        self.assertEqual(a.diff_hunks(patch), [(1, 4), (41, 45), (64, 64)])
+        self.assertEqual(a.diff_hunks(None), [])
+
+    def test_gate(self):
+        new = FILE.replace("  int x5 = 5;\n", "  int x5 = 50;\n").replace("  int x25 = 25;\n", "  int x25 = 250;\n")
+        ok = lambda *args: ""  # noqa: E731
+        suggestions, why = a.one_click_gate("src/a.cpp", FILE, new, [(1, 30)], ok)
+        self.assertEqual((len(suggestions), why), (2, ""))
+        # A line outside the PR's diff hunks: no one-click suggestion.
+        suggestions, why = a.one_click_gate("src/a.cpp", FILE, new, [(1, 10)], ok)
+        self.assertEqual(suggestions, [])
+        self.assertIn("line(s) 25 of `src/a.cpp` are not within one hunk", why)
+        # A suggestion spanning two hunks cannot be one multi-line comment.
+        two_lines = FILE.replace("  int x5 = 5;\n  int x6 = 6;\n", "  int x5 = 50;\n  int x6 = 60;\n")
+        self.assertIn("not within one hunk", a.one_click_gate("src/a.cpp", FILE, two_lines, [(1, 5), (6, 30)], ok)[1])
+        # Not formatted: the formatter's verdict decides.
+        self.assertEqual(a.one_click_gate("src/a.cpp", FILE, new, [(1, 30)], lambda *args: "not formatted")[1],
+                         "not formatted")
+        # Round trip: a file without a final newline cannot be reproduced line by line.
+        no_newline = new[:-1]
+        self.assertIn("would not give the proposed file", a.one_click_gate("src/a.cpp", FILE, no_newline, [(1, 30)], ok)[1])
+        self.assertEqual(a.one_click_gate("src/a.cpp", FILE, FILE, [(1, 30)], ok)[1], "the change is empty")
+
+    def test_clang_format_check(self):
+        # Under the file's real name, from the repository root (its .clang-format).
+        saved_dir, saved = os.getcwd(), os.environ.get("CLANG_FORMAT")
+        os.chdir(REPO_ROOT)
+        os.environ["CLANG_FORMAT"] = "clang-format"
+        try:
+            formatted = "int f() { return 1; }\n"
+            self.assertEqual(a.clang_format_problem("src/util/X.cpp", formatted, [1]), "")
+            self.assertIn("would change", a.clang_format_problem("src/util/X.cpp", "int  f( ){return 1;}\n", [1]))
+            self.assertEqual(a.clang_format_problem("docs/x.md", "anything", [1]), "", "not C++")
+        finally:
+            os.chdir(saved_dir)
+            if saved is None:
+                os.environ.pop("CLANG_FORMAT", None)
+            else:
+                os.environ["CLANG_FORMAT"] = saved
+
+    def test_place_in_thread_or_own_comment(self):
+        t = thread(path="src/a.cpp", line=6, start=4)
+        new = FILE.replace("  int x5 = 5;\n", "  int x5 = 50;\n").replace("  int x20 = 20;\n", "  int x20 = 200;\n")
+        suggestions = a.diff_suggestions("src/a.cpp", FILE, new)
+        own, others = a.place_suggestions(t, FILE, suggestions)
+        # Inside the anchor: one suggestion replacing exactly the anchored lines 4-6.
+        self.assertEqual((own.start, own.end), (4, 6))
+        self.assertEqual(own.new, "  int x4 = 4;\n  int x5 = 50;\n  int x6 = 6;")
+        self.assertEqual(own.old, "  int x4 = 4;\n  int x5 = 5;\n  int x6 = 6;")
+        # Outside: a review comment of its own on exactly its lines.
+        self.assertEqual([(s.start, s.end) for s in others], [(20, 20)])
+        # Committing the anchor suggestion and the other one gives the proposed file.
+        self.assertEqual(a.apply_suggestions(FILE, [own] + others), new)
+        # No suggestion inside the anchor: all get their own comment.
+        own, others = a.place_suggestions(thread(path="src/a.cpp", line=12), FILE, suggestions)
+        self.assertIsNone(own)
+        self.assertEqual(len(others), 2)
+        # Another file is never placed in the thread.
+        own, _ = a.place_suggestions(thread(path="src/b.cpp", line=6, start=4), FILE, suggestions)
+        self.assertIsNone(own)
+
+    def test_committed_via_button(self):
+        new = FILE.replace("  int x5 = 5;\n", "  int x5 = 50;\n").replace("  int x20 = 20;\n", "")
+        recorded = [s.state() for s in a.diff_suggestions("src/a.cpp", FILE, new)]
+        self.assertTrue(a.suggestions_applied({"src/a.cpp": new}, recorded))
+        self.assertFalse(a.suggestions_applied({"src/a.cpp": FILE}, recorded), "nothing committed")
+        half = FILE.replace("  int x5 = 5;\n", "  int x5 = 50;\n")
+        self.assertFalse(a.suggestions_applied({"src/a.cpp": half}, recorded), "the deletion is missing")
+        self.assertFalse(a.suggestions_applied({}, recorded), "the file is gone")
+        self.assertFalse(a.suggestions_applied({"src/a.cpp": new}, []), "no suggestions recorded")
+        inserted = FILE.replace("  int x9 = 9;\n", "  int x9 = 9;\n  int y = 1;\n")
+        recorded = [s.state() for s in a.diff_suggestions("src/a.cpp", FILE, inserted)]
+        self.assertTrue(a.suggestions_applied({"src/a.cpp": inserted}, recorded), "an insertion keeps its anchor line")
+
+    def test_plan_notices_button_commits(self):
+        proposal = {"state": "proposed", "branch": "apply/1-1", "commit": "abc", "base": "def",
+                    "suggestions": [{"path": "src/a.cpp", "start": 5, "end": 5, "old": "o", "new": "n"}]}
+        t = thread(replies=[("Fix it.", "2026-11-02T11:00:00Z", OWNER),
+                            (a.marker(proposal) + "\nProposed.", "2026-11-02T12:00:00Z", "github-actions[bot]")])
+        for mode in ("replies", "decisions", "approve-all"):
+            tasks = a.plan_tasks([t], OWNER, mode, BOT, committed=lambda state: True)
+            self.assertEqual([(x.action, x.proposal["branch"]) for x in tasks], [(a.Action.COMMITTED, "apply/1-1")])
+        self.assertEqual(a.plan_tasks([t], OWNER, "replies", BOT, committed=lambda state: False), [])
+        self.assertEqual([x.action for x in a.plan_tasks([t], OWNER, "approve-all", BOT, committed=lambda s: False)],
+                         [a.Action.APPROVE])
+
+    def test_summary_counts_one_click(self):
+        run = a.Run.__new__(a.Run)
+        run.mode, run.results, run.one_click, run.spend = "replies", [], [2, 3], a.Spend(2.0)
+        self.assertIn("One-click: 2 of 3 proposals.", run.summary())
+        run.one_click = [0, 0]
+        self.assertNotIn("One-click", run.summary())
 
 
 class ConfigTest(unittest.TestCase):

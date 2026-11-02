@@ -27,8 +27,17 @@ Code changes are split by kind. A mechanical change (rule listed in
 apply_kinds.json, or a free-text instruction the model classifies as
 mechanical, and an edit that passes `is_mechanical_edit`) is committed to the
 PR branch directly. Everything else becomes a proposal: a commit on the side
-branch `apply/<pr>-<thread>` and a reply with the change (a GitHub suggestion
-if it replaces exactly the anchored lines), applied only on `/approve`.
+branch `apply/<pr>-<thread>`, applied on `/approve`, and, wherever the gate
+in `one_click_gate` allows it, one-click GitHub suggestions: one per changed
+block of lines, in the thread's reply if it lies within the thread's anchor,
+else in a review comment of its own on exactly its lines. The gate requires
+that committing the suggestions to the file at the PR head gives exactly the
+side-branch result, that each lies within one hunk of the PR's diff, and
+that the result is clang-formatted; otherwise the reply shows the diff,
+marked "⚠ no one-click suggestion possible: <why>". Proposals are posted
+after the run's own commits are pushed, so the suggestions anchor on the head
+they apply to. A proposal whose suggestions the owner committed with GitHub's
+button is noticed by the next run and only resolved.
 A rewrite's reply records the original finding and the rewrite in its marker,
 so the feedback collection (marvin7122/ocr-runners) can learn a better
 comment format per rule from them.
@@ -53,6 +62,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.request
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -84,6 +94,7 @@ class Action(enum.Enum):
     RESOLVE = "resolve"
     APPROVE = "approve"
     REJECT = "reject"
+    COMMITTED = "committed"  # the owner committed a proposal's suggestions with GitHub's button
 
 
 class Kind(enum.Enum):
@@ -239,6 +250,15 @@ def gh(*args):
     return result.stdout
 
 
+def gh_json(path, payload):
+    """POST `payload` as JSON to the API path."""
+    result = subprocess.run(["gh", "api", path, "--method", "POST", "--input", "-"], input=json.dumps(payload),
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"gh api {path} failed: {result.stderr.strip()[:500]}")
+    return result.stdout
+
+
 THREADS_QUERY = """
 query($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
@@ -385,16 +405,22 @@ def eyes_original(thread, threads, owner, finding_authors):
     return earliest, ""
 
 
-def plan_tasks(threads, owner, mode, finding_authors, repo=None, number=None):
+def plan_tasks(threads, owner, mode, finding_authors, repo=None, number=None, committed=None):
     """One task per finding thread that needs one in this mode. A duplicate
     gets its original resolved; an original that has no task of its own and
-    is not handled yet is implemented."""
+    is not handled yet is implemented. A pending proposal whose suggestions
+    the owner already committed with GitHub's button (`committed(state)` is
+    true) is only resolved, in every mode."""
     tasks = []
     for thread in threads:
         if not is_finding_thread(thread, finding_authors):
             continue
         state, state_at = last_apply_state(thread)
         pending = state if state and state.get("state") == "proposed" else None
+        if pending and committed is not None and committed(pending):
+            tasks.append(Task(thread, Action.COMMITTED, Signal(Action.COMMITTED, "", "suggestion button", ""),
+                              finding_rule(thread), pending))
+            continue
         signal = owner_signal(thread, owner)
         if mode == "approve-all":
             if pending:
@@ -501,7 +527,7 @@ Finding:
 {instruction}
 
 Answer with JSON only:
-{{"edits": [{{"old": "<exact text from the file, unique in it>", "new": "<replacement>"}}],
+{{"edits": [{{"start": <first line>, "end": <last line>, "replacement": "<the new text of exactly those lines>"}}],
   "kind": "mechanical" or "behavior",
   "summary": "<one sentence: what the change does>"}}
 {edit_rules}"""
@@ -522,7 +548,7 @@ Finding as posted:
 
 Answer with JSON only:
 {{"tldr": "<one sentence: what is wrong and what to do>",
-  "edits": [{{"old": "<exact text from the file, unique in it>", "new": "<replacement>"}}],
+  "edits": [{{"start": <first line>, "end": <last line>, "replacement": "<the new text of exactly those lines>"}}],
   "kind": "mechanical" or "behavior",
   "summary": "<one sentence: what the change does>",
   "why": "<one short sentence>",
@@ -531,17 +557,23 @@ Answer with JSON only:
   "risk": "<one short sentence>"}}
 The edits are the concrete code proposal for this file. {edit_rules}"""
 
-EDIT_RULES = ("`old` must be copied exactly (without the line numbers) and occur exactly once in the file. Keep the "
-              "edit minimal; change nothing the finding does not ask for. `kind` is \"mechanical\" only if the change "
-              "cannot change behavior (comments, docstrings, test assertion messages, includes, formatting); otherwise "
-              "\"behavior\". If no change is needed, give no edits and say why in `summary`.")
+EDIT_RULES = ("Each edit replaces the whole lines `start` to `end` (the numbers shown, inclusive) with `replacement` "
+              "(without line numbers; an empty string deletes the lines). Edits must not overlap. To insert lines, "
+              "replace an adjacent existing line with that line plus the new ones. Keep each edit minimal and "
+              "change nothing the finding does not ask for: every edit becomes a one-click suggestion on exactly "
+              "its lines. `kind` is \"mechanical\" only if the change cannot change behavior (comments, docstrings, "
+              "test assertion messages, includes, formatting); otherwise \"behavior\". If no change is needed, give "
+              "no edits and say why in `summary`.")
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class Edit:
+    """Replacement text for the lines `start` to `end` (1-based, inclusive)
+    of the file at `path`; an empty replacement deletes them."""
     path: str
-    old: str
-    new: str
+    start: int
+    end: int
+    replacement: str
 
 
 @dataclasses.dataclass
@@ -563,25 +595,48 @@ def anchored_range(thread):
     return (thread["startLine"] or end), end
 
 
+def parse_edits(path, raw):
+    """The model's edits as Edit objects, or (None, why) if they are malformed."""
+    edits = []
+    for item in raw or []:
+        try:
+            edits.append(Edit(path, int(item["start"]), int(item["end"]), str(item.get("replacement", ""))))
+        except (KeyError, TypeError, ValueError):
+            return None, f"malformed edit {json.dumps(item)[:120]}"
+    return edits, ""
+
+
+def edit_problems(content, edits):
+    """Why the edits cannot be applied to `content` (empty if they can):
+    ranges outside the file, reversed, or overlapping."""
+    count = len(content.splitlines())
+    problems = [f"lines {e.start}-{e.end} are not lines of the file (1-{count})"
+                for e in edits if not 1 <= e.start <= e.end <= count]
+    ordered = sorted(edits, key=lambda e: e.start)
+    problems += [f"lines {a.start}-{a.end} and {b.start}-{b.end} overlap"
+                 for a, b in zip(ordered, ordered[1:]) if b.start <= a.end]
+    return problems
+
+
 def request_edits(prompt, path, content, spend):
-    """Ask the model; one retry with the error if an `old` text is not unique
-    in the file."""
+    """Ask the model; one retry with the error if its line ranges cannot be
+    applied to the file."""
     messages = [{"role": "user", "content": prompt}]
     for _ in range(2):
         answer = chat(messages, spend)
-        edits = [Edit(path, e["old"], e["new"]) for e in answer.get("edits") or []]
-        problems = [e.old[:80] for e in edits if content.count(e.old) != 1]
+        edits, malformed = parse_edits(path, answer.get("edits"))
+        problems = [malformed] if malformed else edit_problems(content, edits)
         if not problems:
             extra = {k: v for k, v in answer.items() if k not in ("edits", "kind", "summary")}
             return EditResult(edits, answer.get("kind", "behavior"), answer.get("summary", ""), extra)
         messages += [{"role": "assistant", "content": json.dumps(answer)},
-                     {"role": "user", "content": "These `old` texts do not occur exactly once in the file: "
-                      + json.dumps(problems) + ". Answer again with exact, unique `old` texts."}]
-    raise RuntimeError(f"the edit does not match the file: {problems}")
+                     {"role": "user", "content": "These edits cannot be applied: " + json.dumps(problems)
+                      + ". Answer again with valid, non-overlapping line ranges of the file."}]
+    raise RuntimeError(f"the edits do not fit the file: {problems}")
 
 
 def search_replace_harness(task, content, statement, spend):
-    """Exact search/replace edits of the finding's file, for IMPLEMENT."""
+    """Line-range edits of the finding's file, for IMPLEMENT."""
     thread = task.thread
     start, end = anchored_range(thread)
     instruction = (f"The repository owner asks: {task.signal.text}" if task.signal.text
@@ -594,7 +649,7 @@ def search_replace_harness(task, content, statement, spend):
 
 
 def search_replace_rewrite(task, content, statement, spend):
-    """The rewrite of a finding plus its code proposal as exact edits, for REWRITE."""
+    """The rewrite of a finding plus its code proposal as line-range edits, for REWRITE."""
     thread = task.thread
     start, end = anchored_range(thread)
     focus, _ = REWRITE_FOCUS[task.signal.what]
@@ -622,12 +677,45 @@ def harness():
 # _____________________________________________________________________________
 # Edits and their rendering.
 
+def replacement_lines(text):
+    """The lines of a replacement text (without the trailing newline it may have)."""
+    if text.endswith("\n"):
+        text = text[:-1]
+    return [line + "\n" for line in text.split("\n")] if text else []
+
+
 def apply_edits(content, edits):
+    """`content` with every edit's lines replaced (from the bottom up, so the
+    line numbers of the other edits stay valid)."""
+    problems = edit_problems(content, edits)
+    if problems:
+        raise RuntimeError("; ".join(problems))
+    lines = content.splitlines(True)
+    for edit in sorted(edits, key=lambda e: e.start, reverse=True):
+        lines[edit.start - 1:edit.end] = replacement_lines(edit.replacement)
+    return "".join(lines)
+
+
+def edit_old_text(content, edit):
+    """The text of the lines an edit replaces."""
+    return "".join(content.splitlines(True)[edit.start - 1:edit.end])
+
+
+def relocate_edits(old_content, new_content, edits):
+    """The edits moved from `old_content` to `new_content` (the same file
+    after other commits of this run), by finding each edit's lines there
+    once; None if an edit's lines are not there exactly once."""
+    if old_content == new_content:
+        return edits
+    new_lines = new_content.splitlines(True)
+    moved = []
     for edit in edits:
-        if content.count(edit.old) != 1:
-            raise RuntimeError(f"`{edit.old[:60]}` does not occur exactly once")
-        content = content.replace(edit.old, edit.new, 1)
-    return content
+        block = old_content.splitlines(True)[edit.start - 1:edit.end]
+        places = [i for i in range(len(new_lines) - len(block) + 1) if new_lines[i:i + len(block)] == block]
+        if len(places) != 1:
+            return None
+        moved.append(dataclasses.replace(edit, start=places[0] + 1, end=places[0] + len(block)))
+    return moved
 
 
 def changed_lines(old_content, new_content):
@@ -653,31 +741,159 @@ def unified_diff(path, old_content, new_content):
                                         f"a/{path}", f"b/{path}", n=3))
 
 
-def suggestion_block(thread, old_content, new_content):
-    """The replacement of exactly the anchored lines as a GitHub suggestion,
-    or None if the change reaches outside them."""
+def diff_details(path, old_content, new_content):
+    """The change as a unified diff in a collapsible block."""
+    diff = unified_diff(path, old_content, new_content)
+    return f"<details><summary>Diff ({path})</summary>\n\n```diff\n{diff}```\n</details>"
+
+
+# _____________________________________________________________________________
+# One-click suggestions.
+
+@dataclasses.dataclass(frozen=True)
+class Suggestion:
+    """A one-click change: the lines `start` to `end` (1-based) of `path` at
+    the PR head, their text `old`, and their replacement `new` (both without
+    the last line's newline; an empty `new` deletes the lines)."""
+    path: str
+    start: int
+    end: int
+    old: str
+    new: str
+
+    def block(self):
+        return f"```suggestion\n{self.new}\n```" if self.new else "```suggestion\n```"
+
+    def state(self, comment_id=None):
+        return {"path": self.path, "start": self.start, "end": self.end, "old": self.old, "new": self.new,
+                "comment_id": comment_id}
+
+
+def _without_last_newline(text):
+    return text[:-1] if text.endswith("\n") else text
+
+
+def diff_suggestions(path, old_content, new_content):
+    """The change from `old_content` to `new_content` as suggestions, one per
+    changed block of lines. GitHub can only replace existing lines, so a pure
+    insertion is anchored on the line above it (or below, at the top of the
+    file); blocks that touch are merged."""
+    old_lines, new_lines = old_content.splitlines(True), new_content.splitlines(True)
+    blocks = []
+    matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if i1 == i2:
+            if i1 > 0:
+                i1, j1 = i1 - 1, j1 - 1
+            else:
+                i2, j2 = i2 + 1, j2 + 1
+        if blocks and i1 <= blocks[-1][1]:
+            p1, p2, q1, q2 = blocks[-1]
+            blocks[-1] = (p1, max(p2, i2), q1, max(q2, j2))
+        else:
+            blocks.append((i1, i2, j1, j2))
+    return [Suggestion(path, i1 + 1, i2, _without_last_newline("".join(old_lines[i1:i2])),
+                       _without_last_newline("".join(new_lines[j1:j2])))
+            for i1, i2, j1, j2 in blocks]
+
+
+def apply_suggestions(content, suggestions):
+    """`content` with every suggestion committed, as GitHub's button does."""
+    lines = content.splitlines(True)
+    for s in sorted(suggestions, key=lambda s: s.start, reverse=True):
+        lines[s.start - 1:s.end] = replacement_lines(s.new)
+    return "".join(lines)
+
+
+HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
+
+
+def diff_hunks(patch):
+    """The right-side line ranges of the hunks of a file's patch in the PR's
+    diff: the only lines GitHub accepts review comments (and so suggestions)
+    on. A multi-line comment must lie within one hunk."""
+    hunks = []
+    for match in HUNK_HEADER.finditer(patch or ""):
+        start, count = int(match[1]), int(match[2]) if match[2] is not None else 1
+        if count:
+            hunks.append((start, start + count - 1))
+    return hunks
+
+
+def clang_format_problem(path, content, lines):
+    """Why `content` is not clang-formatted on `lines` (empty if it is, or if
+    the file is not C++), checked under the file's real name."""
+    if not lines or not path.endswith((".h", ".hpp", ".cpp", ".cc", ".cxx")):
+        return ""
+    clang_format = os.environ.get("CLANG_FORMAT", "clang-format-18")
+    ranges = [f"--lines={n}:{n}" for n in sorted(set(lines))]
+    try:
+        result = subprocess.run([clang_format, "--style=file", "--dry-run", "-Werror", f"--assume-filename={path}",
+                                 *ranges], input=content, capture_output=True, text=True)
+    except OSError:
+        return f"{clang_format} is not available"
+    return "" if result.returncode == 0 else "clang-format would change the suggested lines"
+
+
+def one_click_gate(path, head_content, committed, hunks, format_problem=clang_format_problem):
+    """(the suggestions that give exactly the side-branch result, "") if the
+    change can be committed with GitHub's button, else ([], why not):
+    committing all suggestions to the file at the PR head must give exactly
+    `committed`, each suggestion must lie within one hunk of the PR's diff,
+    and the result must be clang-formatted on the changed lines."""
+    suggestions = diff_suggestions(path, head_content, committed)
+    if not suggestions:
+        return [], "the change is empty"
+    if apply_suggestions(head_content, suggestions) != committed:
+        return [], "committing the suggestions would not give the proposed file"
+    outside = [s for s in suggestions if not any(a <= s.start and s.end <= b for a, b in hunks)]
+    if outside:
+        ranges = ", ".join(f"{s.start}-{s.end}" if s.start != s.end else f"{s.start}" for s in outside)
+        return [], f"line(s) {ranges} of `{path}` are not within one hunk of the PR's diff"
+    problem = format_problem(path, committed, changed_lines(head_content, committed))
+    if problem:
+        return [], problem
+    return suggestions, ""
+
+
+def place_suggestions(thread, head_content, suggestions):
+    """(the suggestion on the thread's own anchored lines, or None; the
+    suggestions that need a review comment of their own). Suggestions inside
+    the anchor are merged into one that replaces exactly the anchored lines,
+    so it can go into the thread's reply."""
     end = thread["line"]
-    if not end:
-        return None
     start = thread["startLine"] or end
-    changed = changed_lines(old_content, new_content)
-    old_lines, new_lines = old_content.splitlines(), new_content.splitlines()
-    delta = len(new_lines) - len(old_lines)
-    if not changed or min(changed) < start or max(changed) > end + max(delta, 0):
-        return None
-    if old_lines[:start - 1] != new_lines[:start - 1] or old_lines[end:] != new_lines[end + delta:]:
-        return None
-    replacement = "\n".join(new_lines[start - 1:end + delta])
-    return f"```suggestion\n{replacement}\n```"
+    inside = [s for s in suggestions if end and s.path == thread["path"] and start <= s.start and s.end <= end]
+    others = [s for s in suggestions if s not in inside]
+    if not inside:
+        return None, others
+    lines = head_content.splitlines(True)
+    block = lines[start - 1:end]
+    for s in sorted(inside, key=lambda s: s.start, reverse=True):
+        block[s.start - start:s.end - start + 1] = replacement_lines(s.new)
+    return (Suggestion(thread["path"], start, end, _without_last_newline("".join(lines[start - 1:end])),
+                       _without_last_newline("".join(block))), others)
 
 
-def code_proposal(thread, old_content, new_content):
-    """The suggestion block if the change fits the anchored lines, and the
-    diff in a collapsible block."""
-    suggestion = suggestion_block(thread, old_content, new_content)
-    diff = unified_diff(thread["path"], old_content, new_content)
-    return ((f"{suggestion}\n\n" if suggestion else "")
-            + f"<details><summary>Diff ({thread['path']})</summary>\n\n```diff\n{diff}```\n</details>")
+def suggestions_applied(contents, suggestions):
+    """True if every recorded suggestion is already on the branch (committed
+    with GitHub's button): its new text is in the file and its old text is
+    gone. `contents` maps a path to the file's content at the PR head."""
+    if not suggestions:
+        return False
+    for s in suggestions:
+        content = contents.get(s["path"])
+        if content is None:
+            return False
+        if s["old"] == s["new"]:
+            continue
+        if s["new"] and s["new"] not in content:
+            return False
+        if s["old"] and s["old"] not in s["new"] and s["old"] in content:
+            return False
+    return True
 
 
 def where_links(where, repo, sha, repo_dir):
@@ -760,6 +976,18 @@ class Applied:
     state: dict
 
 
+@dataclasses.dataclass
+class Proposal:
+    """A change that needs sign-off, posted after the run's own commits are
+    pushed, so its suggestions are anchored on the PR head they apply to.
+    `base` is the file the edits were made against; `rewrite` holds the
+    rewrite's fields, bullets, record and original finding, if it is one."""
+    task: Task
+    base: str
+    result: object
+    rewrite: tuple | None = None
+
+
 class Run:
     def __init__(self, args):
         self.repo = os.environ["REPO"]
@@ -771,6 +999,9 @@ class Run:
         self.spend = Spend(float(os.environ.get("OCR_APPLY_BUDGET_USD") or 2.0))
         self.results = []  # (outcome, thread url, rule, detail)
         self.applied = []
+        self.proposals = []
+        self.one_click = [0, 0]  # proposals posted as one-click suggestions, proposals posted
+        self.thread_of_comment = {}  # first comment id -> review thread, for resolving suggestion threads
         pr = json.loads(gh("api", f"repos/{self.repo}/pulls/{self.number}"))
         self.pr = pr
         self.owner = os.environ.get("OCR_APPLY_OWNER") or pr["user"]["login"]
@@ -805,9 +1036,10 @@ class Run:
             f"{message}\n\nFinding: {task.thread['comments'][0]['url']}\nRule: {task.rule}")
         return git(self.repo_dir, "rev-parse", "HEAD")
 
-    def change_kind(self, task, result, has_text):
+    def change_kind(self, task, result, has_text, content):
         kind = decide_kind(task.rule, self.kinds, has_text, result.model_kind)
-        if kind is Kind.MECHANICAL and not all(is_mechanical_edit(e.path, e.old, e.new) for e in result.edits):
+        if kind is Kind.MECHANICAL and not all(is_mechanical_edit(e.path, edit_old_text(content, e), e.replacement)
+                                               for e in result.edits):
             log(f"{task.thread['path']}:{task.thread['line']}: the edit changes code, so it needs sign-off")
             return Kind.SIGNOFF
         return kind
@@ -840,9 +1072,22 @@ class Run:
     def commit_url(self, sha):
         return f"https://github.com/{self.repo}/commit/{sha}"
 
-    def proposal_status(self, sha, branch):
-        return (f"Commit [{sha[:9]}]({self.commit_url(sha)}) on `{branch}`. Reply `/approve` to apply it to "
-                f"this PR, or `/reject` to drop it.")
+    def proposal_status(self, sha, branch, one_click):
+        commit = f"commit [{sha[:9]}]({self.commit_url(sha)}) on `{branch}`"
+        if one_click:
+            return (f"Commit the suggestion(s) with GitHub's button (the next `/apply-replies` notices it and "
+                    f"resolves this thread), or reply `/approve` to apply {commit}, or `/reject` to drop it.")
+        return f"Reply `/approve` to apply {commit} to this PR, or `/reject` to drop it."
+
+    def resolve_suggestion_threads(self, proposal):
+        """Resolve the review threads of a proposal's own suggestion comments."""
+        for s in proposal.get("suggestions") or []:
+            thread = self.thread_of_comment.get(s.get("comment_id"))
+            if thread is not None and not thread["isResolved"]:
+                resolve(thread)
+
+    def delete_branch(self, branch):
+        subprocess.run(["git", "push", "-q", "origin", "--delete", branch], cwd=self.repo_dir)
 
     # Simple outcomes.
     def handle(self, task):
@@ -880,10 +1125,20 @@ class Run:
             self.approve(task)
         elif action is Action.REJECT:
             branch = task.proposal["branch"]
-            subprocess.run(["git", "push", "-q", "origin", "--delete", branch], cwd=self.repo_dir)
+            self.delete_branch(branch)
             reply(self.repo, self.number, thread, "Proposal dropped (`/reject`).", {"state": "rejected"})
             resolve(thread)
+            self.resolve_suggestion_threads(task.proposal)
             self.record("rejected", task, branch)
+        elif action is Action.COMMITTED:
+            self.delete_branch(task.proposal["branch"])
+            reply(self.repo, self.number, thread,
+                  "Already on the branch: the suggestion(s) were committed with GitHub's button. Resolving.",
+                  {"state": "applied", "via": "suggestion"})
+            if not thread["isResolved"]:
+                resolve(thread)
+            self.resolve_suggestion_threads(task.proposal)
+            self.record("committed via suggestion", task, task.proposal["branch"])
 
     def outdated(self, task):
         if task.thread["line"]:
@@ -904,17 +1159,12 @@ class Run:
             self.record("no change", task, result.summary)
             return
         new = apply_edits(old, result.edits)
-        if self.change_kind(task, result, bool(task.signal.text)) is Kind.MECHANICAL:
+        if self.change_kind(task, result, bool(task.signal.text), old) is Kind.MECHANICAL:
             sha = self.commit_change(task, old, new, f"apply-replies: {result.summary}")
             self.applied.append(Applied(task, sha, lambda s, r=result: f"Applied in [{s[:9]}]({self.commit_url(s)}): "
                                         f"{r.summary}", {"state": "applied"}))
             return
-        sha, branch, committed, base = self.push_proposal(task, old, new, result.summary)
-        reason = "behavior change" if result.model_kind != "mechanical" else "not provably mechanical"
-        body = (f"**Proposed change** (needs sign-off: {reason}): {result.summary}\n\n"
-                f"{code_proposal(thread, old, committed)}\n\n{self.proposal_status(sha, branch)}")
-        reply(self.repo, self.number, thread, body, {"state": "proposed", "branch": branch, "commit": sha, "base": base})
-        self.record("proposed", task, f"{branch} {sha[:9]}")
+        self.proposals.append(Proposal(task, old, result))
 
     def rewrite(self, task):
         """Rewrite the finding with a concrete proposal (😕, 😄, /not-actionable)."""
@@ -937,22 +1187,107 @@ class Run:
             self.record("rewritten", task, "no code change")
             return
         new = apply_edits(old, result.edits)
-        if self.change_kind(task, result, False) is Kind.MECHANICAL:
+        if self.change_kind(task, result, False, old) is Kind.MECHANICAL:
             sha = self.commit_change(task, old, new, f"apply-replies: {result.summary}")
             formatted = self.file_content(thread["path"])
-            code = code_proposal(thread, old, formatted)
+            code = diff_details(thread["path"], old, formatted)
             self.applied.append(Applied(
                 task, sha,
                 lambda s, f=fields, c=code: render_rewrite(f, bullets, c, f"Applied in [{s[:9]}]({self.commit_url(s)}).",
                                                            original),
                 {"state": "applied", "rewrite": record}))
             return
-        sha, branch, committed, base = self.push_proposal(task, old, new, result.summary)
-        body = render_rewrite(fields, bullets, code_proposal(thread, old, committed),
-                              self.proposal_status(sha, branch), original)
-        reply(self.repo, self.number, thread, body,
-              {"state": "proposed", "branch": branch, "commit": sha, "base": base, "rewrite": record})
-        self.record("proposed", task, f"rewrite, {branch} {sha[:9]}")
+        self.proposals.append(Proposal(task, old, result, (fields, bullets, record, original)))
+
+    # Proposals, posted after the push.
+    def wait_for_head(self):
+        """The PR head after this run's push; waits (bounded) until GitHub
+        shows the pushed commit, so new comments anchor on it."""
+        local = git(self.repo_dir, "rev-parse", "HEAD")
+        for _ in range(30):
+            head = json.loads(gh("api", f"repos/{self.repo}/pulls/{self.number}"))["head"]["sha"]
+            if head == local:
+                break
+            time.sleep(2)
+        return local
+
+    def fetch_hunks(self):
+        """{path: the right-side line ranges of its hunks in the PR's diff}."""
+        pages = json.loads(gh("api", "--paginate", "--slurp", f"repos/{self.repo}/pulls/{self.number}/files?per_page=100"))
+        return {f["filename"]: diff_hunks(f.get("patch")) for page in pages for f in page}
+
+    def post_suggestion_comment(self, suggestion, head_sha, thread, rule):
+        """A review comment of its own for a suggestion outside the thread's
+        anchor, on exactly its lines; returns (comment id, url)."""
+        body = (f"<!-- ocr-apply-suggestion {json.dumps({'thread': thread['comments'][0]['id']})} -->\n"
+                f"Part of the proposal for [this finding]({thread['comments'][0]['url']}) ({rule}).\n\n"
+                f"{suggestion.block()}")
+        payload = {"body": body, "commit_id": head_sha, "path": suggestion.path, "line": suggestion.end,
+                   "side": "RIGHT"}
+        if suggestion.start < suggestion.end:
+            payload.update(start_line=suggestion.start, start_side="RIGHT")
+        comment = json.loads(gh_json(f"repos/{self.repo}/pulls/{self.number}/comments", payload))
+        return comment["id"], comment["html_url"]
+
+    def post_proposals(self):
+        if not self.proposals:
+            return
+        head_sha = self.wait_for_head()
+        hunks = self.fetch_hunks()
+        for proposal in self.proposals:
+            try:
+                self.post_proposal(proposal, head_sha, hunks)
+            except Exception as error:  # noqa: BLE001 - one failed thread must not stop the others
+                log(f"{proposal.task.thread['path']}:{proposal.task.thread['line']}: {error!r}")
+                self.record("failed", proposal.task, str(error)[:200])
+
+    def post_proposal(self, proposal, head_sha, hunks):
+        """Commit the change on a side branch, then post it as one-click
+        suggestions if the gate passes, else as a diff."""
+        task, result = proposal.task, proposal.result
+        thread, path = task.thread, task.thread["path"]
+        head_content = self.file_content(path)
+        edits = relocate_edits(proposal.base, head_content, result.edits)
+        if edits is None:
+            reply(self.repo, self.number, thread, "Not proposed: the lines of this change were changed by another "
+                  "commit of this run. Reply again and post `/apply-replies` for a new proposal.", {"state": "failed"})
+            self.record("failed", task, "lines changed in this run")
+            return
+        sha, branch, committed, base = self.push_proposal(task, head_content, apply_edits(head_content, edits),
+                                                          result.summary)
+        suggestions, why_not = one_click_gate(path, head_content, committed, hunks.get(path, []))
+        self.one_click[1] += 1
+        recorded = []
+        if suggestions:
+            self.one_click[0] += 1
+            own, others = place_suggestions(thread, head_content, suggestions)
+            parts = [own.block()] if own else []
+            if own:
+                recorded.append(own.state())
+            links = []
+            for s in others:
+                comment_id, url = self.post_suggestion_comment(s, head_sha, thread, task.rule)
+                recorded.append(s.state(comment_id))
+                links.append(f"[{s.path}:{s.start}{'-' + str(s.end) if s.end != s.start else ''}]({url})")
+            if links:
+                parts.append(("Suggestion" if own is None and len(links) == 1 else "Further suggestions")
+                             + " on other lines (each committable with its own button): " + ", ".join(links))
+            code = "\n\n".join(parts)
+        else:
+            code = f"⚠ no one-click suggestion possible: {why_not}\n\n" + diff_details(path, head_content, committed)
+        status = self.proposal_status(sha, branch, bool(suggestions))
+        state = {"state": "proposed", "branch": branch, "commit": sha, "base": base,
+                 "one_click": bool(suggestions), "suggestions": recorded}
+        if proposal.rewrite:
+            fields, bullets, record, original = proposal.rewrite
+            body = render_rewrite(fields, bullets, code, status, original)
+            state["rewrite"] = record
+        else:
+            reason = "behavior change" if result.model_kind != "mechanical" else "not provably mechanical"
+            body = f"**Proposed change** (needs sign-off: {reason}): {result.summary}\n\n{code}\n\n{status}"
+        reply(self.repo, self.number, thread, body, state)
+        self.record("proposed", task, f"{'one-click, ' if suggestions else ''}{'rewrite, ' if proposal.rewrite else ''}"
+                    f"{branch} {sha[:9]}")
 
     def approve(self, task):
         proposal = task.proposal
@@ -986,8 +1321,8 @@ class Run:
             reply(self.repo, self.number, item.task.thread, item.body(item.sha), {**item.state, "commit": item.sha})
             resolve(item.task.thread)
             if item.task.proposal:
-                subprocess.run(["git", "push", "-q", "origin", "--delete", item.task.proposal["branch"]],
-                               cwd=self.repo_dir)
+                self.delete_branch(item.task.proposal["branch"])
+                self.resolve_suggestion_threads(item.task.proposal)
             self.record("applied", item.task, item.sha[:9])
 
     def summary(self):
@@ -997,6 +1332,8 @@ class Run:
         lines = [f"**OpenCodeReview apply-replies** (`{self.mode}`): "
                  + (", ".join(f"{n} {o}" for o, n in sorted(counts.items())) or "nothing to do")
                  + f"; model spend ${self.spend.usd:.4f} of ${self.spend.budget:.2f} ({self.spend.calls} calls).", ""]
+        if self.one_click[1]:
+            lines.insert(1, f"One-click: {self.one_click[0]} of {self.one_click[1]} proposals.")
         for outcome, url, rule, detail in self.results:
             lines.append(f"- {outcome}: [{rule}]({url}) {detail}")
         if any(outcome == "applied" for outcome, *_ in self.results) and os.environ.get("OCR_APPLY_CI_STARTS") != "true":
@@ -1007,8 +1344,10 @@ class Run:
 
     def main(self):
         self.check_target()
-        tasks = plan_tasks(fetch_threads(self.repo, self.number), self.owner, self.mode, self.finding_authors,
-                           self.repo, self.number)
+        threads = fetch_threads(self.repo, self.number)
+        self.thread_of_comment = {t["comments"][0]["id"]: t for t in threads if t["comments"]}
+        tasks = plan_tasks(threads, self.owner, self.mode, self.finding_authors, self.repo, self.number,
+                           committed=self.committed_via_button)
         # Duplicates first: their originals' implementations follow.
         tasks.sort(key=lambda t: t.action is not Action.DUPLICATE)
         log(f"{len(tasks)} task(s): " + ", ".join(f"{t.action.value}@{t.thread['path']}:{t.thread['line']}"
@@ -1030,8 +1369,22 @@ class Run:
                 log(f"{task.thread['path']}:{task.thread['line']}: {error!r}")
                 self.record("failed", task, str(error)[:200])
         self.push_and_report_applied()
+        self.post_proposals()
         if self.results:
             gh("pr", "comment", str(self.number), "-R", self.repo, "--body", self.summary())
+
+    def committed_via_button(self, proposal):
+        """True if the owner already committed all of a proposal's
+        suggestions with GitHub's button (checked on the checkout of the PR
+        head, before this run commits anything)."""
+        suggestions = proposal.get("suggestions") or []
+        contents = {}
+        for path in {s["path"] for s in suggestions}:
+            try:
+                contents[path] = self.file_content(path)
+            except OSError:
+                return False
+        return suggestions_applied(contents, suggestions)
 
 
 def rule_statements():
