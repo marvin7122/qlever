@@ -79,7 +79,7 @@ TEST(VocabularyInMemory, LookupBatch) {
                                ::testing::HasSubstr("!indices.empty()"));
   AD_EXPECT_THROW_WITH_MESSAGE(
       vocab.lookupBatch(std::vector<size_t>{0, words.size()}),
-      ::testing::HasSubstr("idx < size()"));
+      ::testing::HasSubstr("idx < words->size()"));
 
   vocab.close();
   ASSERT_EQ(vocab.size(), 0u);
