@@ -21,7 +21,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 
 CPP_FILE = re.compile(r"\.(h|hpp|cpp|cc|cxx)$")
 MAX_REPORTED = 60
@@ -113,16 +112,15 @@ def clang_format_findings(path, content, lines, style_file):
     if not lines:
         return []
     clang_format = os.environ.get("CLANG_FORMAT", "clang-format-18")
-    suffix = os.path.splitext(path)[1]
-    with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False) as f:
-        f.write(content)
-        temp = f.name
     ranges = [f"--lines={n}:{n}" for n in lines]
+    # The content goes through stdin under the file's real path: clang-format
+    # finds a file's main header (sorted first) by the file name, so a
+    # temporary name reports a false include-order error in almost every .cpp.
     result = subprocess.run(
-        [clang_format, f"--style=file:{style_file}", "--dry-run", "-Werror", *ranges, temp],
-        capture_output=True, text=True,
+        [clang_format, f"--style=file:{style_file}", "--dry-run", "-Werror",
+         f"--assume-filename={path}", *ranges],
+        input=content, capture_output=True, text=True,
     )
-    os.unlink(temp)
     # clang-format reports every violating column; report each line once.
     bad_lines = sorted({
         int(match.group(1))
