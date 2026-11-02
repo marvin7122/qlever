@@ -22,6 +22,7 @@ namespace ad_utility {
 // `readPageCacheHits` (in `PageCacheFirstPolicy.h`) and must not call or
 // replace this pointer. It has its own header so that the interface
 // header of the page-cache fast path does not carry a test-only seam.
+// This header is test-only and lives in the test utilities directory.
 namespace detail {
 // The one `preadv2(fd, iov, iovcnt, offset, RWF_NOWAIT)` call per run that
 // `readPageCacheHits` makes, with the same contract (the number of bytes read,
