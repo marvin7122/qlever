@@ -50,7 +50,7 @@ or if there is anything else you want to tell us, please [open an
 issue](https://github.com/ad-freiburg/qlever/issues) or [open a
 discussion](https://github.com/ad-freiburg/qlever/discussions).
 
-# Quickstart and documentation
+# Quickstart and docs
 
 To get started with QLever, use our native packages released for [Debian, Ubuntu](https://docs.qlever.dev/quickstart/#debian-and-ubuntu) and [macOS](https://docs.qlever.dev/quickstart/#macos-apple-silicon). Additionally, a platform-independent version of QLever is available as an [image for Docker and Podman](https://hub.docker.com/r/adfreiburg/qlever). Whether you use the native packages or the Docker/Podman image, everything related to QLever can be controlled via a single command-line tool `qlever`. Please refer to our [Quickstart documentation](https://docs.qlever.dev/quickstart/) for details.
 
