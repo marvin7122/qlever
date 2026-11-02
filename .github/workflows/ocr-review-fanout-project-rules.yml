@@ -86,7 +86,7 @@ env:
   # 40 calls stopped every leg of run 41433048860 after about 2 minutes and
   # $0.01 of its $0.125 share; at about $0.00025 per call, 200 calls cost
   # about $0.05, so the token cap and the dollar share are the real limits.
-  OCR_MAX_LLM_CALLS_PER_LEG: '200'
+  OCR_MAX_LLM_CALLS_PER_LEG: '2000'
   # Uncached input + output only (cache hits cost a fiftieth): in run
   # 41447089114 every leg hit 3 M counted with cache hits at about $0.035 of
   # its $0.14 share. Counted this way, 3 M tokens cost at least $0.42, so the
