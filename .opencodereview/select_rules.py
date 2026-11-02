@@ -29,6 +29,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -99,6 +100,27 @@ def triggers_hit(rule, texts):
         if any(compiled.search(text) for text in texts):
             return True
     return False
+
+
+# Answers of the model endpoint that every leg would get as well (key rejected,
+# account empty, rate limit): the review stops instead of falling back to all
+# rules, which would start legs that are bound to fail.
+ACCOUNT_ERRORS = {401, 402, 403, 429}
+
+
+def stop_for_account_error(error, data, out_path):
+    """Write empty outputs and the stop report for an account error."""
+    detail = error.read().decode(errors="replace")[:300]
+    log(f"pass 2 stopped: the model endpoint answered {error.code} ({detail})")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump({**data, "rules": []}, f, indent=1)
+        f.write("\n")
+    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+        out.write("count=0\nnum_chunks=0\nchunks=[]\nselection_cost_usd=0\nleg_budget_usd=\nstopped=true\n")
+    with open(os.environ["OCR_STOP_REPORT"], "w", encoding="utf-8") as f:
+        f.write(f"**Review stopped at stage 2 (rule selection):** the model endpoint answered "
+                f"`{error.code} {error.reason}`; no review legs were started.\n\n"
+                f"```\n{detail}\n```\n\nFix the account, then trigger the review again.\n")
 
 
 def select_with_model(labels, summaries, files, diff_text):
@@ -230,7 +252,10 @@ def main():
 
             log(f"pass 2 (model): selected {len(selected)} of {len(kept)} rules: {[name(i) for i in selected]}")
             log(f"pass 2 left out: {[name(i) for i in kept if i not in selected]}")
-        except Exception as error:  # noqa: BLE001 - any failure falls back
+        except Exception as error:  # noqa: BLE001 - any other failure falls back
+            if isinstance(error, urllib.error.HTTPError) and error.code in ACCOUNT_ERRORS:
+                stop_for_account_error(error, data, out_path)
+                return
             log(f"pass 2 failed ({error!r}); keeping all {len(kept)} rules of pass 1")
             selected = kept
     else:

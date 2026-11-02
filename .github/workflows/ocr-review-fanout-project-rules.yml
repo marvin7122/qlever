@@ -118,11 +118,29 @@ jobs:
       - name: Fetch the CI gate (sparse, base ref)
         uses: actions/checkout@v5
         with:
-          sparse-checkout: .opencodereview/stage0_ci_gate.py
+          sparse-checkout: |
+            .opencodereview/stage0_balance.py
+            .opencodereview/stage0_ci_gate.py
           sparse-checkout-cone-mode: false
           fetch-depth: 1
+      # First, so that an empty account stops the review within seconds
+      # instead of after the wait for CI.
+      - name: Check that the LLM account can pay for the review
+        id: balance
+        env:
+          OCR_LLM_URL: ${{ vars.OCR_LLM_URL }}
+          OCR_LLM_AUTH_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+        run: python3 .opencodereview/stage0_balance.py '${{ runner.temp }}/stage0-balance.md'
+      - name: Report why the review stopped (LLM account)
+        if: steps.balance.outputs.ok != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment '${{ github.event.issue.number }}' -R '${{ github.repository }}' \
+            --body-file '${{ runner.temp }}/stage0-balance.md'
       - name: Wait for the PR's CI and check it passed
         id: gate
+        if: steps.balance.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -130,7 +148,7 @@ jobs:
           CI_WAIT_MINUTES: '120'
         run: python3 .opencodereview/stage0_ci_gate.py '${{ runner.temp }}/stage0.md'
       - name: Report why the review stopped
-        if: steps.gate.outputs.ok != 'true'
+        if: steps.balance.outputs.ok == 'true' && steps.gate.outputs.ok != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -207,9 +225,17 @@ jobs:
           OCR_LLM_AUTH_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           OCR_LLM_MODEL: ${{ vars.OCR_LLM_MODEL }}
           OCR_RULES_PER_LEG: '14'
+          OCR_STOP_REPORT: ${{ runner.temp }}/stage2.md
         run: |
           python3 .opencodereview/select_rules.py \
             .opencodereview/rule.json '${{ runner.temp }}/selected-rules.json'
+      - name: Report why the review stopped (LLM account)
+        if: steps.select.outputs.stopped == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment '${{ github.event.issue.number }}' -R '${{ github.repository }}' \
+            --body-file '${{ runner.temp }}/stage2.md'
       - name: Upload the selected rules
         uses: actions/upload-artifact@v4
         with:
