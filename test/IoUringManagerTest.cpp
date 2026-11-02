@@ -807,8 +807,9 @@ TEST(IoUringPolicyModel, aBrokenRingTerminates) {
 // see the `RingSize` test.)
 TEST(IoUringPolicyModel, invalidConstructionThrows) {
   AD_EXPECT_THROW_WITH_MESSAGE(
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
       ad_utility::IoUringPolicy(ad_utility::RingSize{8}, nullptr),
-      HasSubstr("ring_ != nullptr"));
+      HasSubstr("ring_ != nullptr"), ad_utility::Exception);
 }
 #endif
 
