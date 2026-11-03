@@ -16,6 +16,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <iostream>
 #include <range/v3/range/conversion.hpp>
 #include <stdexcept>
 #include <string>
@@ -23,10 +25,10 @@
 #include <vector>
 
 #include "backports/algorithm.h"
-#include "util/io_uring/BatchManagerPool.h"
 #include "util/Exception.h"
 #include "util/GTestHelpers.h"
 #include "util/Views.h"
+#include "util/io_uring/BatchManagerPool.h"
 
 using ad_utility::BatchManagerBase;
 using ad_utility::BatchManagerPool;
@@ -233,69 +235,71 @@ TEST(BatchManagerPool, noManagerIsUsedByTwoThreadsAtOnce) {
 TEST(BatchManagerPool, zeroManagersAreRejected) {
   AD_EXPECT_THROW_WITH_MESSAGE((BatchManagerPool{0, /*preferIoUring=*/false}),
                                ::testing::HasSubstr("at least one manager"));
+  AD_EXPECT_THROW_WITH_MESSAGE(ad_utility::setUpGlobalBatchManagerPool(0),
+                               ::testing::HasSubstr("at least one manager"));
 }
 
-// _____________________________________________________________________________
-// The process-wide pool takes its configuration from the calls before its
-// creation and keeps it afterwards, when it rejects another configuration.
-// NOTE: The process-wide pool cannot be reset. When this test runs in its own
-// binary, it is the first user of the pool and creates it with two synchronous
-// managers. In the single test binary (`SINGLE_TEST_BINARY=ON`) the pool
-// already exists with the default configuration, so only the assertions that
-// hold for an existing pool are made.
-TEST(BatchManagerPool, globalPoolIsConfiguredBeforeItsCreation) {
-  const bool configured = ad_utility::trySetGlobalBatchManagerPoolConfig(
-      2, /*preferIoUring=*/false);
-  auto& pool = ad_utility::globalBatchManagerPool();
-  EXPECT_EQ(&pool, &ad_utility::globalBatchManagerPool());
-  if (configured) {
-    EXPECT_EQ(pool.size(), 2u);
-    EXPECT_FALSE(pool.usesIoUring());
-    EXPECT_TRUE(ad_utility::trySetGlobalBatchManagerPoolConfig(
-        2, /*preferIoUring=*/false));
-    EXPECT_FALSE(ad_utility::trySetGlobalBatchManagerPoolConfig(
-        2, /*preferIoUring=*/true));
+namespace {
+
+// Exit with code 0 if `check` holds, and with code 1 and the `message` on
+// `stderr` otherwise.
+void exitWith(bool check, std::string_view message) {
+  if (!check) {
+    std::cerr << message << std::endl;
+    std::exit(1);
   }
-  const size_t size = pool.size();
-  const bool usesIoUring = pool.usesIoUring();
-  EXPECT_FALSE(ad_utility::trySetGlobalBatchManagerPoolConfig(
-      size + 1, /*preferIoUring=*/false));
-  EXPECT_FALSE(ad_utility::trySetGlobalBatchManagerPoolConfig(
-      size + 1, /*preferIoUring=*/true));
-  EXPECT_EQ(pool.size(), size);
-  EXPECT_EQ(pool.usesIoUring(), usesIoUring);
-  AD_EXPECT_THROW_WITH_MESSAGE(ad_utility::trySetGlobalBatchManagerPoolConfig(
-                                   0, /*preferIoUring=*/false),
-                               ::testing::HasSubstr("at least one manager"));
+}
+
+// The checks of the process-wide pool. Each of them runs in a fresh process
+// (see below), because the pool cannot be reset.
+void setUpBeforeTheFirstUse() {
+  ad_utility::setUpGlobalBatchManagerPool(2);
+  auto& pool = ad_utility::globalBatchManagerPool();
+  exitWith(pool.size() == 2, "the pool does not have two managers");
+  exitWith(&pool == &ad_utility::globalBatchManagerPool(),
+           "the pool was created twice");
+  // Setting up the same size again is not a conflict.
+  ad_utility::setUpGlobalBatchManagerPool(2);
+  try {
+    ad_utility::setUpGlobalBatchManagerPool(3);
+    exitWith(false, "a second size was accepted");
+  } catch (const std::exception& e) {
+    exitWith(
+        std::string_view{e.what()}.find(
+            "must be set up before its first use") != std::string_view::npos,
+        e.what());
+  }
+  exitWith(pool.size() == 2, "the pool changed its size");
   TempFile file{"AAAABBBBCCCC"};
   auto lease = pool.acquire();
-  EXPECT_EQ(readFourBytesAt(*lease, file, 8), "CCCC");
+  exitWith(readFourBytesAt(*lease, file, 8) == "CCCC", "the read failed");
+  std::exit(0);
 }
 
+void setUpAfterTheFirstUse() {
+  const size_t size = ad_utility::globalBatchManagerPool().size();
+  exitWith(size >= 1, "the default pool has no manager");
+  try {
+    ad_utility::setUpGlobalBatchManagerPool(size + 1);
+    exitWith(false, "a pool that was used before its set-up was accepted");
+  } catch (const std::exception& e) {
+    exitWith(
+        std::string_view{e.what()}.find(
+            "must be set up before its first use") != std::string_view::npos,
+        e.what());
+  }
+  std::exit(0);
+}
+
+}  // namespace
+
 // _____________________________________________________________________________
-// `setUpGlobalBatchManagerPool` keeps an existing pool. It warns if the
-// requested configuration differs from that of the pool, and does not warn if
-// it is the same.
-TEST(BatchManagerPool, setUpKeepsTheExistingGlobalPool) {
-  auto& pool = ad_utility::globalBatchManagerPool();
-  const size_t size = pool.size();
-  // The existing pool accepts only its own configuration, so this finds out
-  // whether it was created with io_uring preferred.
-  const bool preferIoUring = ad_utility::trySetGlobalBatchManagerPoolConfig(
-      size, /*preferIoUring=*/true);
-  ASSERT_TRUE(
-      ad_utility::trySetGlobalBatchManagerPoolConfig(size, preferIoUring));
-  {
-    auto [cleanup, logStream] = setGlobalLoggingStreamToStringStream();
-    ad_utility::setUpGlobalBatchManagerPool(size, preferIoUring);
-    EXPECT_THAT(logStream.str(),
-                ::testing::Not(::testing::HasSubstr("is ignored")));
-  }
-  {
-    auto [cleanup, logStream] = setGlobalLoggingStreamToStringStream();
-    ad_utility::setUpGlobalBatchManagerPool(size + 1, preferIoUring);
-    EXPECT_THAT(logStream.str(), ::testing::HasSubstr("is ignored"));
-  }
-  EXPECT_EQ(&ad_utility::globalBatchManagerPool(), &pool);
-  EXPECT_EQ(pool.size(), size);
+// The process-wide pool gets the size of its set-up, and a set-up with another
+// size after the first use throws. Each check runs in a fresh process (the
+// "threadsafe" style of death tests re-executes the test binary), so it does
+// not depend on whether another test of the same process created the pool.
+TEST(BatchManagerPool, globalPoolIsSetUpBeforeItsFirstUse) {
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+  EXPECT_EXIT(setUpBeforeTheFirstUse(), ::testing::ExitedWithCode(0), "");
+  EXPECT_EXIT(setUpAfterTheFirstUse(), ::testing::ExitedWithCode(0), "");
 }

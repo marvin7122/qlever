@@ -9,7 +9,10 @@
 
 #include "util/io_uring/BatchManagerPool.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <algorithm>
+#include <atomic>
 #include <range/v3/range/conversion.hpp>
 #include <range/v3/view/generate_n.hpp>
 #include <thread>
@@ -82,74 +85,43 @@ void BatchManagerPool::release(
 
 namespace {
 
-struct GlobalPoolConfig {
-  std::mutex mutex_;
-  // The configuration that the pool has or will have.
-  size_t numManagers_ =
+// The number of managers that the global pool gets when it is created.
+std::atomic<size_t>& numberOfManagersOfGlobalPool() {
+  static std::atomic<size_t> numberOfManagers =
       std::max<size_t>(1, std::thread::hardware_concurrency());
-  bool preferIoUring_ = true;
-  // Set as soon as the pool has been created, after which the configuration
-  // can no longer be changed.
-  bool poolWasCreated_ = false;
-};
-
-GlobalPoolConfig& config() {
-  static GlobalPoolConfig config;
-  return config;
+  return numberOfManagers;
 }
 
 }  // namespace
 
 // _____________________________________________________________________________
-bool trySetGlobalBatchManagerPoolConfig(size_t numManagers,
-                                        bool preferIoUring) {
-  AD_CONTRACT_CHECK(
-      numManagers > 0,
-      "The global `BatchManagerPool` needs at least one manager.");
-  auto& conf = config();
-  std::lock_guard lock{conf.mutex_};
-  if (conf.poolWasCreated_) {
-    return conf.numManagers_ == numManagers &&
-           conf.preferIoUring_ == preferIoUring;
-  }
-  conf.numManagers_ = numManagers;
-  conf.preferIoUring_ = preferIoUring;
-  return true;
-}
-
-// _____________________________________________________________________________
 BatchManagerPool& globalBatchManagerPool() {
   // NOTE: The initialization of a function-local static is thread-safe, so the
-  // lambda (and with it the marking of the configuration as final) runs exactly
-  // once.
-  static std::unique_ptr<BatchManagerPool> pool = []() {
-    auto& conf = config();
-    std::lock_guard lock{conf.mutex_};
-    auto pool = std::make_unique<BatchManagerPool>(conf.numManagers_,
-                                                   conf.preferIoUring_);
-    // Only mark the configuration as final once the pool exists, so that a
-    // constructor that throws leaves the configuration changeable.
-    conf.poolWasCreated_ = true;
-    return pool;
-  }();
+  // pool is created exactly once. The pool is deliberately never destroyed:
+  // threads that are still inside a batched read when the process exits would
+  // otherwise give their manager back to a destroyed pool.
+  static BatchManagerPool* pool =
+      new BatchManagerPool{numberOfManagersOfGlobalPool().load(),
+                           /*preferIoUring=*/true};
   return *pool;
 }
 
 // _____________________________________________________________________________
-void setUpGlobalBatchManagerPool(size_t numManagers, bool preferIoUring) {
-  trySetGlobalBatchManagerPoolConfig(numManagers, preferIoUring);
+void setUpGlobalBatchManagerPool(size_t numManagers) {
+  AD_CONTRACT_CHECK(
+      numManagers > 0,
+      "The global `BatchManagerPool` needs at least one manager.");
+  numberOfManagersOfGlobalPool() = numManagers;
   const auto& pool = globalBatchManagerPool();
-  // Now that the pool exists, the call reports whether the pool has this
-  // configuration, also if another thread changed the configuration between
-  // the first call and the creation.
-  if (!trySetGlobalBatchManagerPoolConfig(numManagers, preferIoUring)) {
-    AD_LOG_WARN << "The pool of batch I/O managers already exists with "
-                << pool.size() << " managers (io_uring "
-                << (pool.usesIoUring() ? "used" : "not used")
-                << "), so the requested configuration of " << numManagers
-                << " managers (io_uring "
-                << (preferIoUring ? "preferred" : "not preferred")
-                << ") is ignored" << std::endl;
+  // The pool has another size if it was created before this call, or if a
+  // concurrent call set another size first.
+  if (pool.size() != numManagers) {
+    AD_THROW(absl::StrCat(
+        "The pool of batch I/O managers must be set up before its first use: ",
+        numManagers,
+        " managers were requested, but the pool already exists "
+        "with ",
+        pool.size(), " managers"));
   }
   AD_LOG_INFO << "Batched vocabulary reads use " << pool.size()
               << " I/O managers ("

@@ -104,40 +104,29 @@ class BatchManagerPool : public NoCopyNoMove {
 };
 
 // The process-wide pool that all batched reads share (currently those of
-// `VocabularyOnDisk::lookupBatch`). It is created on the first call of
-// `globalBatchManagerPool()`, with the configuration that was set by
-// `trySetGlobalBatchManagerPoolConfig` before, or by default with one manager
-// per hardware thread and io_uring preferred. The constructor of `Qlever`
-// creates the pool (see `setUpGlobalBatchManagerPool`), with one manager per
-// query thread in the server, so the rings exist and the io_uring probe has
-// run before the first query. Programs without an engine (the index builder,
-// tests) get the default pool on their first batched read.
+// `VocabularyOnDisk::lookupBatch`). It prefers io_uring and is created on the
+// first call of `globalBatchManagerPool()` or `setUpGlobalBatchManagerPool`.
+// The server calls the latter at startup with one manager per query thread, so
+// the rings exist and the io_uring probe has run before the first query.
+// Other programs (libqlever, tests) get one manager per hardware thread on
+// their first batched read.
 //
 // NOTE: Like `globalExecutor` (see the TODO in `util/GlobalExecutor.h`), this
-// is a mutable process-wide singleton whose configuration can only be set
-// before its first use. Once the server passes its resources to the index
-// explicitly, the pool should become an object that is owned by the server and
-// handed to its users.
+// is a mutable process-wide singleton whose size can only be set before its
+// first use. It is global and not owned by the engine, because
+// `lookupBatch(indices)` is the common interface of all vocabulary types, and
+// passing a pool to the one type that performs I/O would mean to change
+// either that interface or `open` in every vocabulary type and in all their
+// tests. Once the engine passes its resources to the index explicitly, the pool
+// should become an object that the engine owns and hands to its users.
 
-// Configure the pool: `numManagers` (> 0) managers that try io_uring iff
-// `preferIoUring`. This only has an effect before the pool exists. Return
-// `true` if the configuration was set, or if the pool already exists with
-// exactly this configuration. Return `false` if the pool already exists with
-// a different one. Thread-safe, but a configuration that was set can still be
-// replaced by another call before the pool exists; call this again after
-// `globalBatchManagerPool()` to confirm the configuration of the pool, as
-// `setUpGlobalBatchManagerPool` does.
-bool trySetGlobalBatchManagerPoolConfig(size_t numManagers, bool preferIoUring);
+// Create the process-wide pool with `numManagers` (> 0) managers and log their
+// number and backend. Throw if the pool already exists with another number of
+// managers, because then it was used before it was set up.
+void setUpGlobalBatchManagerPool(size_t numManagers);
 
 // Return the process-wide pool, creating it on the first call. Thread-safe.
 BatchManagerPool& globalBatchManagerPool();
-
-// Configure the process-wide pool (see `trySetGlobalBatchManagerPoolConfig`)
-// and create it right away, so that the rings exist and the io_uring probe has
-// run before the first batched read. Log the number of managers and their
-// backend. If the pool already exists with a different configuration, keep it
-// and log a warning.
-void setUpGlobalBatchManagerPool(size_t numManagers, bool preferIoUring);
 
 }  // namespace ad_utility
 

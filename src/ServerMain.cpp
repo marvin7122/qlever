@@ -25,6 +25,7 @@
 #include "util/ReadableNumberFacet.h"
 #include "util/ResourceMonitor.h"
 #include "util/http/HttpProxyConfig.h"
+#include "util/io_uring/BatchManagerPool.h"
 #include "util/metrics/Metrics.h"
 
 using std::size_t;
@@ -424,10 +425,12 @@ int main(int argc, char** argv) {
                             ad_utility::ResourceMonitor::Mode::Append,
                             std::chrono::seconds{resourceUsageIntervalS});
     }
-    // One batch I/O manager per query thread, see `EngineConfig`. The option
-    // accepts `-j 0`, but the pool needs at least one manager.
-    config.numBatchIoManagers_ =
-        std::max<size_t>(1, static_cast<size_t>(numSimultaneousQueries));
+    // The batched vocabulary reads of the export run on the query threads, so
+    // one batch I/O manager per query thread means that such a read never
+    // waits for a manager. The option accepts `-j 0`, but the pool needs at
+    // least one manager.
+    ad_utility::setUpGlobalBatchManagerPool(
+        std::max<size_t>(1, static_cast<size_t>(numSimultaneousQueries)));
     auto metricsReader = ad_utility::metrics::initialize(metricsEnabled);
     Server server(port, numSimultaneousQueries, std::move(accessToken), config,
                   noAccessCheck, std::move(metricsReader),
