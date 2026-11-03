@@ -11,6 +11,7 @@
 #ifndef QLEVER_SRC_UTIL_IO_URING_IOURINGMANAGERCONCEPTS_H
 #define QLEVER_SRC_UTIL_IO_URING_IOURINGMANAGERCONCEPTS_H
 
+#include <cstddef>
 #include <cstdint>
 
 #include "backports/concepts.h"
