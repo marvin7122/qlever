@@ -184,7 +184,10 @@ class IoUringInterface {
   virtual ~IoUringInterface() = default;
 
   // Fill a free SQE with a read of `numBytes` bytes at `offset` of `fd` into
-  // `buffer`, tagged with `requestId`. Return false if no SQE is free.
+  // `buffer`, tagged with `requestId`. Return false if no SQE is free. An
+  // implementation must have a free SQE whenever fewer requests than the ring
+  // size are queued or in the kernel: `IoUringPolicy` never exceeds that
+  // bound and treats a `false` as a broken invariant.
   virtual bool prepareRead(int fd, char* buffer, size_t numBytes,
                            uint64_t offset, uint64_t requestId) = 0;
 
