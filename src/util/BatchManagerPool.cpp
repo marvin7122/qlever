@@ -40,7 +40,8 @@ BatchManagerPool::Lease::~Lease() {
 // _____________________________________________________________________________
 BatchManagerPool::BatchManagerPool(size_t numManagers, bool preferIoUring)
     : numManagers_{numManagers} {
-  AD_CONTRACT_CHECK(numManagers > 0);
+  AD_CONTRACT_CHECK(numManagers > 0,
+                    "A `BatchManagerPool` needs at least one manager.");
   // `makeBatchManager` clears `preferIoUring` (a reference parameter) when the
   // io_uring setup fails or io_uring is not compiled in, so after the first
   // failure the remaining managers are synchronous ones, and the flag is still
@@ -71,7 +72,9 @@ void BatchManagerPool::release(
     std::lock_guard lock{mutex_};
     // The pool only ever hands out its own managers, so there is always room
     // and the `push_back` does not allocate.
-    AD_CORRECTNESS_CHECK(idle_.size() < numManagers_);
+    AD_CORRECTNESS_CHECK(idle_.size() < numManagers_,
+                         "More managers were given back to the pool than it "
+                         "has, so `release` would have to allocate.");
     idle_.push_back(std::move(manager));
   }
   managerReturned_.notify_one();
@@ -100,7 +103,9 @@ GlobalPoolConfig& config() {
 // _____________________________________________________________________________
 bool trySetGlobalBatchManagerPoolConfig(size_t numManagers,
                                         bool preferIoUring) {
-  AD_CONTRACT_CHECK(numManagers > 0);
+  AD_CONTRACT_CHECK(
+      numManagers > 0,
+      "The global `BatchManagerPool` needs at least one manager.");
   auto& conf = config();
   std::lock_guard lock{conf.mutex_};
   if (conf.poolWasCreated_) {

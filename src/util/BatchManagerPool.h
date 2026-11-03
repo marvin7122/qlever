@@ -52,11 +52,11 @@ class BatchManagerPool : public NoCopyNoMove {
 
     // Return the manager. The lease has to be valid, see `isValid`.
     BatchManagerBase& operator*() const {
-      AD_CONTRACT_CHECK(isValid());
+      AD_CONTRACT_CHECK(isValid(), "A moved-from `Lease` holds no manager.");
       return *manager_;
     }
     BatchManagerBase* operator->() const {
-      AD_CONTRACT_CHECK(isValid());
+      AD_CONTRACT_CHECK(isValid(), "A moved-from `Lease` holds no manager.");
       return manager_.get();
     }
 
