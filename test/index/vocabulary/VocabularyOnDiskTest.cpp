@@ -10,7 +10,6 @@
 
 #include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
-#include <unistd.h>
 
 #include <optional>
 #include <random>
@@ -370,33 +369,12 @@ TEST(VocabularyOnDisk, LookupBatchFollowsThePageCacheFastPathParameter) {
 // read after `numEveryOtherReadCalls` was reset.
 namespace {
 size_t numEveryOtherReadCalls = 0;
-// Serve the whole run with blocking `pread` (every byte that exists),
-// without involving the real `preadv2(RWF_NOWAIT)`.
-int64_t fullyCached(int fd, const ::iovec* iov, int iovcnt,
-                    int64_t offset) noexcept {
-  int64_t total = 0;
-  for (const ::iovec& iovec :
-       ql::span<const ::iovec>{iov, static_cast<size_t>(iovcnt)}) {
-    auto* base = static_cast<char*>(iovec.iov_base);
-    size_t remaining = iovec.iov_len;
-    while (remaining > 0) {
-      const ssize_t numBytesRead = ::pread(fd, base, remaining, offset + total);
-      if (numBytesRead <= 0) {
-        return numBytesRead < 0 ? int64_t{-1} : total;
-      }
-      base += numBytesRead;
-      remaining -= static_cast<size_t>(numBytesRead);
-      total += numBytesRead;
-    }
-  }
-  return total;
-}
 int64_t everyOtherReadCached(int fd, const ::iovec* iov, int iovcnt,
                              int64_t offset) noexcept {
   if (numEveryOtherReadCalls++ % 2 == 1) {
     return pageCacheReadTestHelpers::nothingCached(fd, iov, iovcnt, offset);
   }
-  return fullyCached(fd, iov, iovcnt, offset);
+  return pageCacheReadTestHelpers::fullyCached(fd, iov, iovcnt, offset);
 }
 }  // namespace
 
