@@ -287,8 +287,7 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     fileOffset = index * sizeof(uint64_t);
     target = reinterpret_cast<char*>(&offsetPair);
   }
-  manager.wait(
-      manager.addBatch(offsetsFile_.fd(), sizes, fileOffsets, targets));
+  manager.readBatch(offsetsFile_.fd(), sizes, fileOffsets, targets);
   return offsetPairs;
 }
 
@@ -320,7 +319,7 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     bufferOffset += size;
   }
 
-  manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targets));
+  manager.readBatch(file_.fd(), sizes, fileOffsets, targets);
   return VocabBatchLookupData::asResult(std::move(data));
 }
 
