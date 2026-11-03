@@ -35,13 +35,13 @@ struct IdToStringAndTypeCacheConfig {
   // computed directly.
   size_t capacity_;
   // The maximal total size of the cached strings. Every entry gets the same
-  // share, `maxSize_ / capacity_`: a term whose string is larger is returned
-  // but not cached. This bounds the memory of the strings even when a result
-  // repeats very long terms (for example large WKT literals), which a bound on
-  // the number of entries alone does not. Each entry additionally takes a
-  // fixed amount of memory for its bookkeeping (the `Id`, the `Value` with its
-  // `std::string` object, the hash-map slot and the LRU list node). Neither is
-  // counted against the memory limit of the query.
+  // share, `maxSize_ / capacity_`: a term whose string has a larger
+  // `capacity()` is returned but not cached. This bounds the memory of the
+  // strings even when a result repeats very long terms (for example large WKT
+  // literals), which a bound on the number of entries alone does not. Each
+  // entry additionally takes a fixed amount of memory for its bookkeeping (the
+  // `Id`, the `Value` with its `std::string` object, the hash-map slot and the
+  // LRU list node). Neither is counted against the memory limit of the query.
   ad_utility::MemorySize maxSize_;
   // The hit rate is checked after every `numberOfLookupsPerWindow_` cached
   // lookups. If the hit rate of that window is below `minHitRate_`, the cache
