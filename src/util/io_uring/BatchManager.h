@@ -8,8 +8,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_UTIL_BATCHMANAGER_H
-#define QLEVER_SRC_UTIL_BATCHMANAGER_H
+#ifndef QLEVER_SRC_UTIL_IO_URING_BATCHMANAGER_H
+#define QLEVER_SRC_UTIL_IO_URING_BATCHMANAGER_H
 
 #include <cstdint>
 
@@ -19,7 +19,7 @@
 #include "util/IoUringManager.h"
 #include "util/IoUringManagerConcepts.h"
 #include "util/NoCopyNoMove.h"
-#include "util/RingSize.h"
+#include "util/io_uring/RingSize.h"
 
 namespace ad_utility {
 
@@ -61,4 +61,4 @@ class BatchManager final : public BatchManagerBase, NoCopyNoMove {
 
 }  // namespace ad_utility
 
-#endif  // QLEVER_SRC_UTIL_BATCHMANAGER_H
+#endif  // QLEVER_SRC_UTIL_IO_URING_BATCHMANAGER_H

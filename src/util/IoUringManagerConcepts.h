@@ -15,7 +15,7 @@
 
 #include "backports/concepts.h"
 #include "backports/span.h"
-#include "util/RingSize.h"
+#include "util/io_uring/RingSize.h"
 
 // The concepts that the templates of the batch-read module (`BatchManager` in
 // `BatchManager.h`, `PageCacheFirstPolicy`) put on their template arguments:

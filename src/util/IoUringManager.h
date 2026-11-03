@@ -15,7 +15,7 @@
 #include <memory>
 
 #include "backports/span.h"
-#include "util/RingSize.h"
+#include "util/io_uring/RingSize.h"
 
 // The interface of the batched reads of `VocabularyOnDisk::lookupBatch`: a
 // `BatchManagerBase`, built by `makeBatchManager`. The implementation is in

@@ -27,13 +27,13 @@
 #include <thread>
 #include <utility>
 
-#include "util/BatchManager.h"
 #include "util/Exception.h"
 #include "util/ExceptionHandling.h"
-#include "util/IoUringPolicy.h"
 #include "util/Log.h"
 #include "util/PageCacheFirstPolicy.h"
-#include "util/SyncIoPolicy.h"
+#include "util/io_uring/BatchManager.h"
+#include "util/io_uring/IoUringPolicy.h"
+#include "util/io_uring/SyncIoPolicy.h"
 
 namespace ad_utility {
 

@@ -15,7 +15,7 @@
 
 #include "util/GTestHelpers.h"
 #include "util/IoUringManagerTestHelpers.h"
-#include "util/SyncIoPolicy.h"
+#include "util/io_uring/SyncIoPolicy.h"
 
 namespace {
 

@@ -21,7 +21,7 @@
 #include "util/Exception.h"
 #include "util/IoUringManagerConcepts.h"
 #include "util/NoCopyNoMove.h"
-#include "util/RingSize.h"
+#include "util/io_uring/RingSize.h"
 
 namespace ad_utility {
 

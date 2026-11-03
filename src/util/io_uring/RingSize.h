@@ -8,8 +8,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_UTIL_RINGSIZE_H
-#define QLEVER_SRC_UTIL_RINGSIZE_H
+#ifndef QLEVER_SRC_UTIL_IO_URING_RINGSIZE_H
+#define QLEVER_SRC_UTIL_IO_URING_RINGSIZE_H
 
 #include <absl/numeric/bits.h>
 
@@ -67,4 +67,4 @@ class RingSize {
 
 }  // namespace ad_utility
 
-#endif  // QLEVER_SRC_UTIL_RINGSIZE_H
+#endif  // QLEVER_SRC_UTIL_IO_URING_RINGSIZE_H

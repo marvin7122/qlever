@@ -24,7 +24,7 @@
 
 #include "backports/algorithm.h"
 #include "util/Exception.h"
-#include "util/IoUringPolicy.h"
+#include "util/io_uring/IoUringPolicy.h"
 
 #ifdef QLEVER_HAS_IO_URING
 
