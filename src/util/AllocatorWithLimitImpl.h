@@ -160,6 +160,15 @@ class AllocatorWithLimit {
     return tracker_.amountMemoryLeft();
   }
 
+  // Count `n` bytes as used by this allocator and all of its copies without
+  // allocating them, for memory that is allocated elsewhere (for example by a
+  // container that does not use this allocator). Return false and change
+  // nothing if fewer than `n` bytes are left. `releaseReservation` undoes it.
+  [[nodiscard]] bool tryReserveWithoutAllocating(MemorySize n) noexcept {
+    return tracker_.tryReserve(n);
+  }
+  void releaseReservation(MemorySize n) { tracker_.release(n); }
+
   // Increase the memory limit that this allocator and all of its copies share
   // by `n`.
   void increaseMemoryLimit(MemorySize n) { tracker_.increaseMemoryLimit(n); }
