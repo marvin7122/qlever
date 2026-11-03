@@ -431,16 +431,11 @@ void VocabularyOnDisk::open(const std::string& filename) {
   id_ = nextId++;
   file_.open(filename, "r");
   offsetsFile_.open(filename + offsetSuffix_, "r");
-  // Switch off the kernel readahead for both files. For a scattered batch of
-  // `lookupBatch`, every page-cache miss would otherwise also read the
-  // readahead window around the page, which is almost never used. For a
-  // sorted, contiguous batch, the kernel then no longer prefetches the
-  // following pages; `operator[]` reads ahead itself for sequential lookups
-  // (see `ReadAheadState`), and `scanAll` reads chunks of up to
-  // `VOCABULARY_SCAN_MAX_WORD_DATA_PER_BATCH`. The advice only applies to these
-  // two file descriptors, and is skipped on platforms without
-  // `posix_fadvise` (macOS). A failure is harmless (the kernel then keeps
-  // reading ahead), so it is ignored.
+  // Tell the kernel that the reads of these files are random. Otherwise a
+  // page-cache miss can start a readahead window (when it lands next to the
+  // previous read of the file, or after cached pages), which the scattered
+  // reads of `lookupBatch` almost never use. A failure is harmless and
+  // ignored; macOS has no `posix_fadvise`.
 #ifdef POSIX_FADV_RANDOM
   for (int fd : {file_.fd(), offsetsFile_.fd()}) {
     ::posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM);
