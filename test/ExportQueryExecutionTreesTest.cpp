@@ -2499,6 +2499,48 @@ TEST(ExportQueryExecutionTrees, LazyResultWithLocalVocabPerBlock) {
 }
 
 // _____________________________________________________________________________
+// The export of terms of the secondary vocabulary (`SecondaryVocabIndex`
+// `Id`s), with every configuration of the term cache.
+TEST(ExportQueryExecutionTrees, SecondaryVocabTerms) {
+  ad_utility::testing::TestIndexConfig config{"<s> <p> <o> ."};
+  config.secondaryVocabWords = std::vector<std::string>{"<zzz>"};
+  auto* qec = ad_utility::testing::getQec(std::move(config));
+  Id zzz = Id::makeFromSecondaryVocabIndex(SecondaryVocabIndex::make(0));
+  Id o = ad_utility::testing::makeGetId(qec->getIndex())("<o>");
+  auto exportAs = [&](ad_utility::MediaType mediaType) {
+    auto qet = ad_utility::makeExecutionTree<ValuesForTesting>(
+        qec, makeIdTableFromVector({{zzz}, {o}, {zzz}}),
+        std::vector<std::optional<Variable>>{Variable{"?o"}});
+    auto pq = parseQuery("SELECT ?o WHERE { ?s ?p ?o }");
+    ad_utility::Timer timer{ad_utility::Timer::Started};
+    std::string result;
+    for (const auto& chunk : ExportQueryExecutionTrees::computeResult(
+             pq, *qet, mediaType, timer,
+             std::make_shared<ad_utility::CancellationHandle<>>())) {
+      result += chunk;
+    }
+    return result;
+  };
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::sparqlResultsJsonWithTime_>(false);
+  forEachTermCacheConfig([&](bool) {
+    using enum ad_utility::MediaType;
+    EXPECT_EQ(exportAs(tsv), "?o\n<zzz>\n<o>\n<zzz>\n");
+    EXPECT_EQ(exportAs(csv), "o\nzzz\no\nzzz\n");
+    EXPECT_EQ(nlohmann::json::parse(exportAs(qleverJson))["res"],
+              nlohmann::json::parse(R"([["<zzz>"], ["<o>"], ["<zzz>"]])"));
+    EXPECT_EQ(
+        nlohmann::json::parse(exportAs(sparqlJson)),
+        makeExpectedSparqlJSON({makeJSONBinding(std::nullopt, "uri", "zzz"),
+                                makeJSONBinding(std::nullopt, "uri", "o"),
+                                makeJSONBinding(std::nullopt, "uri", "zzz")}));
+    auto xml = exportAs(sparqlXml);
+    EXPECT_THAT(xml, HasSubstr("<uri>zzz</uri>"));
+    EXPECT_THAT(xml, HasSubstr("<uri>o</uri>"));
+  });
+}
+
+// _____________________________________________________________________________
 // Regression test for the `Full` deduplication of CONSTRUCT results: the same
 // RDF term may reach the CONSTRUCT template through two different kinds of
 // `Id`. A term that comes straight from the data is a `VocabIndex` `Id`, while

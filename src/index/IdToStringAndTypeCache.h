@@ -14,7 +14,6 @@
 #include <functional>
 #include <list>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -34,10 +33,11 @@ namespace ql::exportIds {
 // The configuration of an `IdToStringAndTypeCache`, see the runtime parameters
 // `select-export-term-cache-*` for the values used by the SELECT export.
 struct IdToStringAndTypeCacheConfig {
-  // The maximal memory of the cache, including its bookkeeping. A single term
-  // may take at most 1/16 of it, so that one term cannot evict most of the
-  // others. A size below 16 times the bookkeeping of one entry (about 3 KB)
-  // disables the cache: every lookup is then computed directly.
+  // The maximal memory of the cache: its entries (strings and list nodes) and
+  // its hash table. A single entry may take at most 1/16 of it, so that one
+  // term cannot evict most of the others. A size that is too small for 16
+  // small entries with their share of the hash table (about 3 KB) disables the
+  // cache: every lookup is then computed directly.
   ad_utility::MemorySize maxSize_;
   // The hit rate is checked after every `numberOfLookupsPerWindow_` lookups
   // that are hits or misses (see `IdToStringAndTypeCache::Statistics`). If the
@@ -64,9 +64,10 @@ struct IdToStringAndTypeCacheConfig {
 //
 // The memory of the cache is reserved from the memory budget of the queries
 // (the `allocator` passed to the constructor) and returned when entries are
-// evicted or the cache is destroyed. A term for which the budget has not
-// enough memory left is returned, but not cached; the cache never makes a
-// query fail.
+// evicted, when the hash table shrinks, and when the cache is switched off or
+// destroyed. A lookup never fails for lack of memory: a term that does not fit
+// into the budget is returned, but not cached. While the memory is reserved,
+// it is not available to other allocations from the same budget.
 template <bool removeQuotesAndAngleBrackets = false,
           bool returnOnlyLiterals = false,
           typename EscapeFunction = ql::identity>
@@ -76,6 +77,7 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
 
   // The number of lookups by how they were answered. Every lookup is counted
   // in exactly one of these. Only hits and misses count for the hit rate.
+  // (`LRUCacheWithStatistics` counts only hits and misses.)
   struct Statistics {
     uint64_t numberOfHits_ = 0;
     uint64_t numberOfMisses_ = 0;
@@ -85,7 +87,7 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
     uint64_t numberOfBitEncodedLookups_ = 0;
     // Computed directly because the cache was disabled.
     uint64_t numberOfLookupsWhileDisabled_ = 0;
-    // Not found and not cached, because the term was larger than 1/16 of the
+    // Not found and not cached, because the entry was larger than 1/16 of the
     // maximal size or the memory budget had not enough memory left.
     uint64_t numberOfTermsNotCachedForLackOfMemory_ = 0;
 
@@ -101,30 +103,31 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
   // dereferences the `LocalVocabEntry` of a `LocalVocabIndex`, which a key of
   // bits can never do. With such keys, a cached `LocalVocabIndex` would be
   // found again for a different word at the same address, which is why
-  // `get` never caches one.
+  // `isWorthCaching` excludes it.
   using Key = Id::T;
   using Cache = ad_utility::util::LRUCache<Key, Value>;
 
-  // An upper estimate of the memory of one entry besides the heap memory of
-  // its string: the slot in the `absl::flat_hash_map` of `LRUCache` (with its
-  // control byte, times 16/7 because the table grows at a load factor of 7/8
-  // to twice its size) and the node of its `std::list` (two pointers, the key,
-  // and 16 bytes of overhead of the memory allocator).
-  static constexpr size_t numberOfBytesOfBookkeepingPerEntry =
-      (sizeof(std::pair<const Key,
-                        std::pair<Value, typename std::list<Key>::iterator>>) +
-       1) *
-          16 / 7 +
-      1 + 2 * sizeof(void*) + sizeof(Key) + 16;
-  static constexpr size_t maxFractionOfOneEntry = 16;
+  // An upper estimate of the memory of a node of the `std::list` of
+  // `LRUCache`: two pointers, the key, and 16 bytes of overhead of the memory
+  // allocator.
+  static constexpr size_t numberOfBytesPerListNode =
+      2 * sizeof(void*) + sizeof(Key) + 16;
+  // The smallest maximal size that enables the cache: 16 entries without heap
+  // memory, each with a list node and its share of a hash table that has just
+  // grown (at most 16/7 slots per entry, see `LRUCache::hashTableCapacity`).
+  static constexpr size_t minNumberOfBytesToEnable =
+      16 * (numberOfBytesPerListNode +
+            Cache::numberOfBytesPerHashTableSlot * 16 / 7 + 1);
 
   std::reference_wrapper<const Index> index_;
   EscapeFunction escapeFunction_;
   ad_utility::AllocatorWithLimit<Id> allocator_;
   size_t maxNumberOfBytes_;
-  // The memory of the entries in the cache, which is reserved from
-  // `allocator_`.
-  size_t numberOfBytes_ = 0;
+  size_t maxNumberOfBytesOfOneEntry_;
+  // The memory of the entries (list nodes and heap memory of the strings) and
+  // of the hash table, both reserved from `allocator_`.
+  size_t numberOfBytesOfEntries_ = 0;
+  size_t numberOfBytesOfHashTable_ = 0;
   // Empty iff the cache is disabled, either by the configuration or because a
   // window's hit rate fell below `minHitRate_`.
   std::optional<Cache> cache_;
@@ -149,15 +152,16 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
         escapeFunction_{std::move(escapeFunction)},
         allocator_{std::move(allocator)},
         maxNumberOfBytes_{config.maxSize_.getBytes()},
+        maxNumberOfBytesOfOneEntry_{maxNumberOfBytes_ / 16},
         numberOfLookupsPerWindow_{config.numberOfLookupsPerWindow_},
         minHitRate_{config.minHitRate_},
         numberOfLookupsLeftInWindow_{config.numberOfLookupsPerWindow_} {
-    if (maxNumberOfBytes_ / maxFractionOfOneEntry >=
-        numberOfBytesOfBookkeepingPerEntry) {
-      // Every entry takes at least `numberOfBytesOfBookkeepingPerEntry`, so
-      // the bound on the bytes is reached before the bound on the number of
-      // entries (see `makeRoomFor`).
-      cache_.emplace(maxNumberOfBytes_ / numberOfBytesOfBookkeepingPerEntry);
+    if (maxNumberOfBytes_ >= minNumberOfBytesToEnable) {
+      // Every entry takes at least `numberOfBytesPerListNode`, so the bound on
+      // the bytes is reached before this bound on the number of entries, and
+      // `LRUCache` never evicts an entry on its own (which would leave its
+      // memory reserved).
+      cache_.emplace(maxNumberOfBytes_ / numberOfBytesPerListNode + 1);
     }
   }
 
@@ -167,7 +171,9 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
   ~IdToStringAndTypeCache() {
     switchOff();
     const auto& s = statistics_;
-    if (s.numberOfLookups() > 0) {
+    if (s.numberOfHits_ + s.numberOfMisses_ +
+            s.numberOfTermsNotCachedForLackOfMemory_ >
+        0) {
       AD_LOG_DEBUG << "SELECT export term cache: " << s.numberOfHits_
                    << " hits, " << s.numberOfMisses_ << " misses, "
                    << s.numberOfTermsNotCachedForLackOfMemory_
@@ -175,16 +181,15 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
                    << s.numberOfLocalVocabLookups_ << " local vocab lookups, "
                    << s.numberOfBitEncodedLookups_ << " bit-encoded values, "
                    << s.numberOfLookupsWhileDisabled_
-                   << " lookups while disabled" << std::endl;
+                   << " lookups while disabled" << '\n';
     }
   }
 
   // Return `idToStringAndType` for `id`, from the cache if possible. The
-  // reference is only valid until the next call: lookups that are not
-  // answered from the cache share one slot, and an insertion can evict or move
-  // a cached value. Every caller in the SELECT export uses the value before
-  // the next call. A callback API would avoid this restriction, but the
-  // TSV/CSV export has to `co_yield` the value, which a callback cannot do.
+  // reference is only valid until the next call, like the one returned by
+  // `LRUCache::getOrCompute`: lookups that are not answered from the cache
+  // share one slot, and an insertion can evict or move a cached value. Every
+  // caller in the SELECT export uses the value before the next call.
   const Value& get(Id id, const LocalVocab& localVocab) {
     if (!canBeCachedForWholeExport(id)) {
       ++statistics_.numberOfLocalVocabLookups_;
@@ -206,14 +211,24 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
     }
     Value value = compute(id, localVocab);
     size_t numberOfBytes = numberOfBytesOfEntry(value);
-    if (!makeRoomFor(numberOfBytes)) {
+    if (numberOfBytes > maxNumberOfBytesOfOneEntry_ ||
+        !allocator_.tryReserveWithoutAllocating(
+            ad_utility::MemorySize::bytes(numberOfBytes))) {
       ++statistics_.numberOfTermsNotCachedForLackOfMemory_;
       uncached_ = std::move(value);
       return uncached_;
     }
     ++statistics_.numberOfMisses_;
-    numberOfBytes_ += numberOfBytes;
-    return endOfWindowLookup(cache_->insertAbsent(key, std::move(value)));
+    numberOfBytesOfEntries_ += numberOfBytes;
+    makeRoomForOneMoreEntry();
+    const Value& result = cache_->insertAbsent(key, std::move(value));
+    if (!chargeHashTable()) {
+      // The budget has no memory left for the grown hash table.
+      uncached_ = result;
+      switchOff();
+      return uncached_;
+    }
+    return endOfWindowLookup(result);
   }
 
   // True while lookups can be answered from the cache.
@@ -221,17 +236,22 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
 
   const Statistics& statistics() const { return statistics_; }
 
-  // The memory of the entries in the cache, including their bookkeeping.
+  // The reserved memory of the entries and the hash table.
   ad_utility::MemorySize memoryUsed() const {
-    return ad_utility::MemorySize::bytes(numberOfBytes_);
+    return ad_utility::MemorySize::bytes(numberOfBytesOfEntries_ +
+                                         numberOfBytesOfHashTable_);
   }
 
-  // True iff the conversion of `id` reads a vocabulary or the text index. The
-  // other values (`Undefined`, `Bool`, `Int`, `Double`, `Date`, `GeoPoint`,
+  // True iff `id` may be cached (see `canBeCachedForWholeExport`) and its
+  // conversion reads a vocabulary or the text index. The other values
+  // (`Undefined`, `Bool`, `Int`, `Double`, `Date`, `GeoPoint`,
   // `BlankNodeIndex`) are formatted from the bits of the `Id` without reading
   // any vocabulary, so caching them saves no read; they would only take the
   // place of terms that need one and distort the hit rate.
   static bool isWorthCaching(Id id) {
+    if (!canBeCachedForWholeExport(id)) {
+      return false;
+    }
     using enum Datatype;
     switch (id.getDatatype()) {
       case VocabIndex:
@@ -257,11 +277,11 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
     return uncached_;
   }
 
-  // The memory of an entry with `value`: the bookkeeping, and the heap memory
-  // of the string unless it is stored inside the `std::string` object (small
-  // string optimization).
+  // The memory of an entry with `value` besides its slot in the hash table:
+  // the list node, and the heap memory of the string unless it is stored
+  // inside the `std::string` object (small string optimization).
   static size_t numberOfBytesOfEntry(const Value& value) {
-    size_t numberOfBytes = numberOfBytesOfBookkeepingPerEntry;
+    size_t numberOfBytes = numberOfBytesPerListNode;
     if (value.has_value()) {
       const std::string& string = value->first;
       const char* object = reinterpret_cast<const char*>(&string);
@@ -275,51 +295,73 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
     return numberOfBytes;
   }
 
-  // Evict least recently used entries until an entry of `numberOfBytes` fits
-  // into the maximal size, and reserve its memory from `allocator_`. Return
-  // false if the entry is larger than 1/16 of the maximal size or the memory
-  // budget has not enough memory left; nothing is reserved then.
-  bool makeRoomFor(size_t numberOfBytes) {
-    if (numberOfBytes > maxNumberOfBytes_ / maxFractionOfOneEntry) {
-      return false;
-    }
-    while (numberOfBytes_ + numberOfBytes > maxNumberOfBytes_) {
+  // An upper bound of the capacity of the hash table after one more insertion.
+  // `absl::flat_hash_map` grows from capacity `c` to `2c + 1` when it has no
+  // free slot left (deleted slots are not free). For `c > 16`, it grows only if
+  // more than 25/32 of the slots hold entries, and otherwise reuses the
+  // deleted slots in place. If the table grows differently, `chargeHashTable`
+  // still charges its actual size after the insertion.
+  size_t capacityAfterOneMoreInsertion() const {
+    size_t capacity = cache_->hashTableCapacity();
+    bool mayGrow = capacity <= 16 || (cache_->size() + 1) * 32 > capacity * 25;
+    return mayGrow ? 2 * capacity + 1 : capacity;
+  }
+
+  // Evict least recently used entries until the entries (including the one
+  // that is about to be inserted, which `numberOfBytesOfEntries_` already
+  // contains) and the hash table after the insertion fit into the maximal
+  // size. Shrink the hash table when it is less than 1/4 full.
+  void makeRoomForOneMoreEntry() {
+    while (numberOfBytesOfEntries_ +
+                   Cache::memoryOfHashTable(capacityAfterOneMoreInsertion()) >
+               maxNumberOfBytes_ &&
+           cache_->size() > 0) {
       auto evicted = cache_->popLeastRecentlyUsed();
       AD_CORRECTNESS_CHECK(evicted.has_value());
-      release(numberOfBytesOfEntry(evicted.value()));
+      releaseEntry(numberOfBytesOfEntry(evicted.value()));
+      if (cache_->size() * 4 < cache_->hashTableCapacity()) {
+        cache_->shrinkHashTableToFit();
+        // Shrinking never needs more memory, so this cannot fail.
+        bool isCharged = chargeHashTable();
+        AD_CORRECTNESS_CHECK(isCharged);
+      }
     }
-    // The bound on the bytes implies the bound on the number of entries (see
-    // the constructor), so `LRUCache` never evicts an entry on its own, which
-    // would leave its memory reserved.
     AD_CORRECTNESS_CHECK(cache_->size() < cache_->capacity());
-    auto memorySize = ad_utility::MemorySize::bytes(numberOfBytes);
-    if (allocator_.amountMemoryLeft() < memorySize) {
-      return false;
+  }
+
+  // Make the reservation for the hash table match its actual capacity. Return
+  // false if the table has grown and the budget has not enough memory left.
+  bool chargeHashTable() {
+    size_t actual = Cache::memoryOfHashTable(cache_->hashTableCapacity());
+    if (actual > numberOfBytesOfHashTable_) {
+      if (!allocator_.tryReserveWithoutAllocating(ad_utility::MemorySize::bytes(
+              actual - numberOfBytesOfHashTable_))) {
+        return false;
+      }
+    } else if (actual < numberOfBytesOfHashTable_) {
+      allocator_.releaseReservation(
+          ad_utility::MemorySize::bytes(numberOfBytesOfHashTable_ - actual));
     }
-    try {
-      // Lowering the limit of the shared budget reserves the memory.
-      allocator_.decreaseMemoryLimit(memorySize);
-    } catch (const std::runtime_error&) {
-      // Another query took the memory since the check above.
-      return false;
-    }
+    numberOfBytesOfHashTable_ = actual;
     return true;
   }
 
-  // Return the reservation of an entry of `numberOfBytes` to `allocator_`.
-  void release(size_t numberOfBytes) {
-    AD_CORRECTNESS_CHECK(numberOfBytes_ >= numberOfBytes);
-    numberOfBytes_ -= numberOfBytes;
-    allocator_.increaseMemoryLimit(
-        ad_utility::MemorySize::bytes(numberOfBytes));
+  // Return the reservation of an entry of `numberOfBytes`.
+  void releaseEntry(size_t numberOfBytes) {
+    AD_CORRECTNESS_CHECK(numberOfBytesOfEntries_ >= numberOfBytes);
+    numberOfBytesOfEntries_ -= numberOfBytes;
+    allocator_.releaseReservation(ad_utility::MemorySize::bytes(numberOfBytes));
   }
 
   // Destroy all entries and return their memory.
   void switchOff() {
     cache_.reset();
-    allocator_.increaseMemoryLimit(
-        ad_utility::MemorySize::bytes(numberOfBytes_));
-    numberOfBytes_ = 0;
+    size_t reserved = numberOfBytesOfEntries_ + numberOfBytesOfHashTable_;
+    if (reserved > 0) {
+      allocator_.releaseReservation(ad_utility::MemorySize::bytes(reserved));
+    }
+    numberOfBytesOfEntries_ = 0;
+    numberOfBytesOfHashTable_ = 0;
   }
 
   // Complete a hit or a miss with the `result` that is stored in the cache:

@@ -556,13 +556,20 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   STREAMABLE_YIELD(absl::StrJoin(variables, std::string_view{&separator, 1}));
   STREAMABLE_YIELD('\n');
 
-  constexpr auto& escapeFunction =
-      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
+  // A stateless functor (rather than a function pointer), so that the escape
+  // function is part of the type of the cache and its call can be inlined.
+  auto escapeFunction = [](std::string input) {
+    if constexpr (format == tsv) {
+      return RdfEscaping::escapeForTsv(std::move(input));
+    } else {
+      return RdfEscaping::escapeForCsv(std::move(input));
+    }
+  };
   // One cache for the whole export, shared by all columns.
   ql::exportIds::IdToStringAndTypeCache<format == csv, false,
-                                        std::decay_t<decltype(escapeFunction)>>
+                                        decltype(escapeFunction)>
       cache{qet.getQec()->getIndex(), selectExportTermCacheConfig(),
-            qet.getQec()->getAllocator(), escapeFunction};
+            qet.getQec()->getAllocator()};
   uint64_t resultSize = 0;
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {

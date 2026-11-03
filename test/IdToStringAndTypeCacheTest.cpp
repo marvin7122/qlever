@@ -94,8 +94,8 @@ TEST(IdToStringAndTypeCache, IsWorthCaching) {
                             WordVocabIndex, TextRecordIndex}) {
     EXPECT_TRUE(worth(datatype)) << toString(datatype);
   }
-  for (Datatype datatype :
-       {Undefined, Bool, Int, Double, Date, GeoPoint, BlankNodeIndex}) {
+  for (Datatype datatype : {Undefined, Bool, Int, Double, Date, GeoPoint,
+                            BlankNodeIndex, LocalVocabIndex}) {
     EXPECT_FALSE(worth(datatype)) << toString(datatype);
   }
 }
@@ -237,6 +237,42 @@ TEST(IdToStringAndTypeCache, EvictsToStayWithinMaxSize) {
   cache.get(getId(0), localVocab);
   EXPECT_EQ(cache.statistics().numberOfHits_, 1u);
   EXPECT_EQ(cache.statistics().numberOfMisses_, 201u);
+}
+
+// _____________________________________________________________________________
+// The memory of the entries and of the hash table stays within the maximal
+// size, also when large terms evict many small ones (the hash table does not
+// shrink by itself when entries are removed).
+TEST(IdToStringAndTypeCache, HashTableCountsForTheMaxSize) {
+  std::string kg;
+  for (size_t i = 0; i < 300; ++i) {
+    absl::StrAppend(&kg, "<s> <p> <a", i, "> . ");
+  }
+  for (size_t i = 0; i < 20; ++i) {
+    absl::StrAppend(&kg, "<s> <q> \"", std::string(400, 'x'), i, "\" . ");
+  }
+  auto qec = ad_utility::testing::getQec(kg);
+  const Index& index = qec->getIndex();
+  auto getId = ad_utility::testing::makeGetId(index);
+  LocalVocab localVocab{};
+  const auto maxSize = MemorySize::kilobytes(8);
+  auto allocator = makeAllocator(MemorySize::megabytes(1));
+  Cache cache{index, Config{maxSize, 0, 0.0}, allocator};
+  auto check = [&](Id id) {
+    EXPECT_EQ(cache.get(id, localVocab),
+              idToStringAndType(index, id, localVocab));
+    EXPECT_LE(cache.memoryUsed(), maxSize);
+    EXPECT_EQ(allocator.amountMemoryLeft(),
+              MemorySize::megabytes(1) - cache.memoryUsed());
+  };
+  for (size_t i = 0; i < 300; ++i) {
+    check(getId(absl::StrCat("<a", i, ">")));
+  }
+  for (size_t i = 0; i < 20; ++i) {
+    check(getId(absl::StrCat("\"", std::string(400, 'x'), i, "\"")));
+  }
+  EXPECT_EQ(cache.statistics().numberOfTermsNotCachedForLackOfMemory_, 0u);
+  EXPECT_EQ(cache.statistics().numberOfMisses_, 320u);
 }
 
 // _____________________________________________________________________________
