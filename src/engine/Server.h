@@ -395,6 +395,13 @@ class Server {
       const ParsedQuery& parsedQuery);
   FRIEND_TEST(ServerTest, chooseBestFittingMediaType);
 
+  // The compression of the response to a query: with
+  // `parallel-response-compression`, `streams::compressStreamInParallel` on
+  // the `executor` of the query, otherwise the sequential default.
+  static ad_utility::httpUtils::CompressBody compressBodyForQuery(
+      qlever::Executor executor);
+  FRIEND_TEST(ServerTest, compressBodyForQuery);
+
   // Do the actual execution of a query.
   CPP_template(typename RequestT, typename SendT)(
       requires ad_utility::httpUtils::HttpRequest<RequestT>)
