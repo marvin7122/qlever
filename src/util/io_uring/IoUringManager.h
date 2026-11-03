@@ -13,6 +13,7 @@
 
 #include <gtest/gtest_prod.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -44,6 +45,10 @@
 #include "util/io_uring/PageCacheFirstPolicy.h"
 
 namespace ad_utility {
+
+// The number of entries of the io_uring ring of a batch manager, unless the
+// caller asks for another one.
+inline constexpr unsigned defaultBatchManagerRingSize = 256;
 
 // Abstract base of `BatchManager` so a pool can hold managers of different
 // `ReadPolicy`s behind a unified interface and pick the backend at runtime.
@@ -90,7 +95,8 @@ class BatchManager final : public BatchManagerBase, public NoCopyNoMove {
   // `ringSize` and `policyArgs` are passed on to the constructor of the
   // `ReadPolicy` (for example the `PageCacheRead` of a `PageCacheFirstPolicy`).
   template <typename... PolicyArgs>
-  explicit BatchManager(unsigned ringSize = 256, PolicyArgs&&... policyArgs)
+  explicit BatchManager(unsigned ringSize = defaultBatchManagerRingSize,
+                        PolicyArgs&&... policyArgs)
       : policy_(ringSize, std::forward<PolicyArgs>(policyArgs)...) {}
 
   [[nodiscard]] BatchHandle addBatch(int fd, ql::span<const size_t> numBytes,
@@ -140,7 +146,9 @@ struct SyncIoPolicy : public NoCopyNoMove {
   //
   // NOTE: GCC rejects `[[maybe_unused]]` on a defaulted parameter; cast to
   // void.
-  explicit SyncIoPolicy(unsigned ringSize = 256) { (void)ringSize; }
+  explicit SyncIoPolicy(unsigned ringSize = defaultBatchManagerRingSize) {
+    (void)ringSize;
+  }
 
   // Immediately execute a batch of reads synchronously. This blocks the calling
   // thread. Read `i` reads `numBytesToReadPerRequest[i]` bytes from file
@@ -234,15 +242,7 @@ class IoUringPolicy : public NoCopyNoMove {
   // `addBatch`.) Throws on any I/O error.
   void wait(BatchId handle);
 };
-
-using BatchIoManager = BatchManager<IoUringPolicy>;
-#else
-using BatchIoManager = BatchManager<SyncIoPolicy>;
 #endif
-
-// The number of entries of the io_uring ring of a batch manager that
-// `makeBatchManager` builds, unless the caller asks for another one.
-inline constexpr unsigned defaultBatchManagerRingSize = 256;
 
 namespace detail {
 // Build a `BatchManager` for `Policy`, decorated with a `PageCacheFirstPolicy`
