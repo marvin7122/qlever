@@ -30,8 +30,11 @@ std::vector<IndexRun> splitIntoRuns(ql::span<const size_t> indices) {
 
 // _____________________________________________________________________________
 std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
-                                        int fd,
-                                        ql::span<const size_t> indices) {
+                                        int fd, ql::span<const size_t> indices,
+                                        size_t numWords) {
+  for (size_t index : indices) {
+    AD_CONTRACT_CHECK(index < numWords);
+  }
   const auto runs = splitIntoRuns(indices);
   // A run of `k` indices needs the `k + 1` entries that bound its words. Each
   // run gets its own consecutive part of `entries`.

@@ -52,13 +52,14 @@ struct IndexRun {
 std::vector<IndexRun> splitIntoRuns(ql::span<const size_t> indices);
 
 // Read the `OffsetPair` of each of the `indices` from the `.offsets` file `fd`
-// with one batch of `manager`, and return them in the order of `indices`. The
-// indices must be smaller than the number of words. Reading each run of
-// consecutive indices (see `splitIntoRuns`) as one range is only an
-// optimization: a run of `k` indices needs `k + 1` entries instead of `2 * k`,
-// in one read instead of `k`.
+// of a vocabulary with `numWords` words, with one batch of `manager`, and
+// return them in the order of `indices`. Throw if an index is not smaller than
+// `numWords`. Reading each run of consecutive indices (see `splitIntoRuns`) as
+// one range is only an optimization: a run of `k` indices needs `k + 1`
+// entries instead of `2 * k`, in one read instead of `k`.
 std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
-                                        int fd, ql::span<const size_t> indices);
+                                        int fd, ql::span<const size_t> indices,
+                                        size_t numWords);
 
 }  // namespace ad_utility::vocabulary
 

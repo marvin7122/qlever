@@ -232,15 +232,10 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
   using OffsetPair = ad_utility::vocabulary::OffsetPair;
 
-  // Phase 1 of `lookupBatch`: return the `OffsetPair` of each of the `indices`
-  // (in the order of `indices`), read from the `.offsets` file in a single
-  // batch via `manager` (see `ad_utility::vocabulary::readOffsetPairs`).
-  std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
-                                          ql::span<const size_t> indices) const;
-
-  // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1, read the
-  // string data from `file_` into one contiguous buffer in a single batched
-  // read via `manager`, and return it as a `VocabBatchLookupResult`.
+  // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1
+  // (`ad_utility::vocabulary::readOffsetPairs`), read the string data from
+  // `file_` into one contiguous buffer in a single batched read via `manager`,
+  // and return it as a `VocabBatchLookupResult`.
   VocabBatchLookupResult readStrings(
       ad_utility::BatchManagerBase& manager,
       ql::span<const OffsetPair> offsetPairs) const;
