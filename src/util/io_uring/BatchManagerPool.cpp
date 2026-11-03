@@ -7,7 +7,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#include "util/BatchManagerPool.h"
+#include "util/io_uring/BatchManagerPool.h"
 
 #include <algorithm>
 #include <range/v3/range/conversion.hpp>

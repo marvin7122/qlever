@@ -296,7 +296,7 @@ struct EngineConfig : CommonConfig {
 
   // The number of batch I/O managers (one io_uring ring each, or the
   // synchronous fallback) that batched vocabulary reads share, see
-  // `util/BatchManagerPool.h`. A manager serves one batched read at a time, so
+  // `util/io_uring/BatchManagerPool.h`. A manager serves one batched read at a time, so
   // this is the number of threads that can perform such reads at the same
   // time; the server sets it to its number of query threads. The pool is
   // process-wide and is created once, by the first engine that is constructed

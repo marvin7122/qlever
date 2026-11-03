@@ -11,7 +11,7 @@
 #include <atomic>
 
 #include "global/Constants.h"
-#include "util/BatchManagerPool.h"
+#include "util/io_uring/BatchManagerPool.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"

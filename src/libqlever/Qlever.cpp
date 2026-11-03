@@ -31,7 +31,7 @@
 #include "index/TextIndexBuilder.h"
 #include "libqlever/QleverTypes.h"
 #include "parser/SparqlParser.h"
-#include "util/BatchManagerPool.h"
+#include "util/io_uring/BatchManagerPool.h"
 #include "util/Exception.h"
 #include "util/File.h"
 #include "util/FilesystemHelpers.h"

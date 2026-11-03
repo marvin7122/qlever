@@ -23,7 +23,7 @@
 #include <vector>
 
 #include "backports/algorithm.h"
-#include "util/BatchManagerPool.h"
+#include "util/io_uring/BatchManagerPool.h"
 #include "util/Exception.h"
 #include "util/GTestHelpers.h"
 #include "util/Views.h"
