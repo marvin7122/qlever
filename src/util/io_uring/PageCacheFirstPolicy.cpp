@@ -19,6 +19,7 @@
 #include <climits>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -145,6 +146,24 @@ size_t serveRun(int fd, Run run, const PageCacheRead& read, bool& supported,
 #endif
 
 //______________________________________________________________________________
+UnservedReads UnservedReads::fromNotServed(std::vector<size_t> notServed,
+                                           size_t numReads) {
+  AD_CONTRACT_CHECK(ql::ranges::adjacent_find(
+                        notServed, std::greater_equal<>{}) == notServed.end(),
+                    "The positions of the unserved reads must be strictly "
+                    "ascending.");
+  AD_CONTRACT_CHECK(notServed.empty() || notServed.back() < numReads,
+                    "A position of an unserved read is not in the batch.");
+  if (notServed.size() == numReads) {
+    return {NothingRead{}};
+  }
+  if (notServed.empty()) {
+    return {AllRead{}};
+  }
+  return {RemainingPositions{std::move(notServed)}};
+}
+
+//______________________________________________________________________________
 UnservedReads PageCacheReader::readPageCacheHits(
     int fd, ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
     ql::span<char*> buffers) {
@@ -178,13 +197,7 @@ UnservedReads PageCacheReader::readPageCacheHits(
                               ::ranges::views::transform(positionOf));
     }
   }
-  if (notServed.size() == numBytes.size()) {
-    return {UnservedReads::NothingRead{}};
-  }
-  if (notServed.empty()) {
-    return {UnservedReads::AllRead{}};
-  }
-  return {UnservedReads::RemainingPositions{std::move(notServed)}};
+  return UnservedReads::fromNotServed(std::move(notServed), numBytes.size());
 #else
   (void)fd;
   return {UnservedReads::NothingRead{}};

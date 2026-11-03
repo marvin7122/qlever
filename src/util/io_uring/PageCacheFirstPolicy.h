@@ -60,13 +60,29 @@ struct UnservedReads {
   struct NothingRead {};
   // Every read of a non-empty batch was served: the caller issues nothing.
   struct AllRead {};
-  // Some, but not all reads were served. `positions_` are the positions in the
-  // batch of the reads that were not served, in ascending order; neither empty
-  // nor all positions of the batch.
-  struct RemainingPositions {
+  // Some, but not all reads were served: `positions()` are the positions in
+  // the batch of the reads that were not served, strictly ascending, neither
+  // empty nor all positions of the batch. Only `fromNotServed` constructs one,
+  // so no other `RemainingPositions` exists.
+  class RemainingPositions {
+   public:
+    const std::vector<size_t>& positions() const { return positions_; }
+
+   private:
+    friend struct UnservedReads;
+    explicit RemainingPositions(std::vector<size_t> positions)
+        : positions_{std::move(positions)} {}
     std::vector<size_t> positions_;
   };
   std::variant<NothingRead, AllRead, RemainingPositions> reads_;
+
+  // The `UnservedReads` of a batch of `numReads` reads of which the reads at
+  // the strictly ascending positions `notServed` were not served: `NothingRead`
+  // if that is every read (also for an empty batch), `AllRead` if it is none,
+  // and `RemainingPositions` otherwise. Throw if `notServed` is not strictly
+  // ascending or has a position that is not smaller than `numReads`.
+  static UnservedReads fromNotServed(std::vector<size_t> notServed,
+                                     size_t numReads);
 };
 
 // Serves the reads of a batch that are completely in the page cache with one
@@ -168,7 +184,7 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
     auto forwardRemaining =
         [&](const UnservedReads::RemainingPositions& remaining) {
           detail::SelectedReads missed{numBytes, offsets, buffers,
-                                       remaining.positions_};
+                                       remaining.positions()};
           policy_.addBatch(fd, missed.numBytes_, missed.offsets_,
                            missed.buffers_, handle);
         };

@@ -80,8 +80,8 @@ bool allRead(const UnservedReads& unserved) {
 auto remainingPositions(std::vector<size_t> positions) {
   return Field(&UnservedReads::reads_,
                VariantWith<UnservedReads::RemainingPositions>(
-                   Field(&UnservedReads::RemainingPositions::positions_,
-                         ElementsAreArray(std::move(positions)))));
+                   Property(&UnservedReads::RemainingPositions::positions,
+                            ElementsAreArray(std::move(positions)))));
 }
 
 // Only the first 6 bytes of every run are "cached": the whole run is read, but
@@ -263,6 +263,24 @@ TEST(ReadPageCacheHits, emptyBatchAndContract) {
   AD_EXPECT_THROW_WITH_MESSAGE(
       reader.readPageCacheHits(fd, numBytes, offsets, targets),
       HasSubstr("offsets.size() == numBytes.size()"));
+}
+
+// _____________________________________________________________________________
+// `fromNotServed` picks the alternative from the number of unserved reads, so
+// a `RemainingPositions` is never empty and never holds the whole batch, and
+// it rejects positions that are not strictly ascending or not in the batch.
+TEST(UnservedReads, fromNotServed) {
+  using U = UnservedReads;
+  EXPECT_TRUE(nothingRead(U::fromNotServed({}, 0)));
+  EXPECT_TRUE(nothingRead(U::fromNotServed({0, 1, 2}, 3)));
+  EXPECT_TRUE(allRead(U::fromNotServed({}, 3)));
+  EXPECT_THAT(U::fromNotServed({0, 2}, 3), remainingPositions({0, 2}));
+  AD_EXPECT_THROW_WITH_MESSAGE(U::fromNotServed({2, 0}, 3),
+                               HasSubstr("strictly ascending"));
+  AD_EXPECT_THROW_WITH_MESSAGE(U::fromNotServed({1, 1}, 3),
+                               HasSubstr("strictly ascending"));
+  AD_EXPECT_THROW_WITH_MESSAGE(U::fromNotServed({3}, 3),
+                               HasSubstr("not in the batch"));
 }
 
 // A `ReadPolicy` that reads synchronously and records the reads it receives.
