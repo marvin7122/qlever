@@ -72,10 +72,8 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
   const bool useIdCache =
       getRuntimeParameter<&RuntimeParameters::constructIdCache_>();
   for (const auto& [rowInBatch, id] : sortedIndices) {
-    decltype(idCache.tryGet(id)) cached;
-    if (useIdCache) {
-      cached = idCache.tryGet(id);
-    }
+    auto cached =
+        useIdCache ? idCache.tryGet(id) : decltype(idCache.tryGet(id)){};
     if (cached) {
       // Note that a `LocalVocabIndex` Id may well produce a hit here, even
       // though such Ids are never inserted into `idCache` (see the comment in
