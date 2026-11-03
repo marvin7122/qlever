@@ -148,7 +148,10 @@ class FakeIoUring final : public IoUringInterface {
       kernel_.push_back(queue_.front());
       queue_.pop_front();
     }
-    AD_CORRECTNESS_CHECK(kernel_.size() + completions_.size() <= cqCapacity_);
+    AD_CORRECTNESS_CHECK(kernel_.size() + completions_.size() <= cqCapacity_,
+                         "The requests in the kernel and the unreaped "
+                         "completions must fit into the completion queue, "
+                         "or a real ring would drop completions.");
     // The kernel may already have completed some of the requests.
     if (faults_.completeOnSubmit) {
       completeRandomRequests(uniform(0, kernel_.size()));

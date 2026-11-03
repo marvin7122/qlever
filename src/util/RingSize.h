@@ -30,10 +30,10 @@ namespace ad_utility {
 //   the next power of two: accepting a non-power would silently make
 //   the effective ring larger than the configured one, while the
 //   bookkeeping still uses the configured value as its cap.
-// - At most 4096 (sixteen times the default of 256), because each ring
-//   costs on the order of 0.4 MB of kernel memory at that size and
-//   there are several managers, while more outstanding reads than that
-//   do not speed up the batched vocabulary lookups.
+// - At most 4096 (sixteen times the default of 256): a ring of 4096 SQEs
+//   takes about 0.4 MB of kernel memory (64-byte SQEs, 16-byte CQEs, twice
+//   as many CQEs as SQEs), each pooled manager has its own ring, and no
+//   caller asks for a larger one.
 //
 // The invariant is enforced at construction, so every consumer can
 // rely on it instead of re-checking the value.

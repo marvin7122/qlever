@@ -71,8 +71,8 @@ class BatchManager final : public BatchManagerBase, NoCopyNoMove {
  private:
   [[no_unique_address]] ReadPolicy policy_;
 
-  // Mints the handles that `addBatch` returns. They only identify batches, so
-  // uniqueness, which `MonotonicCounter` guarantees, is all that is needed.
+  // The source of the handles that `addBatch` returns. Handles only identify
+  // batches, so uniqueness, which `MonotonicCounter` guarantees, suffices.
   MonotonicCounter nextBatchHandle_;
 };
 

@@ -292,6 +292,8 @@ struct RecordingPolicy {
     receivedOffsets.clear();
   }
 
+  // Ignore `ringSize`: a `BatchManager` constructs its policy from one.
+  // `explicit`, like the production policies.
   explicit RecordingPolicy([[maybe_unused]] ad_utility::RingSize ringSize) {}
   void addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,

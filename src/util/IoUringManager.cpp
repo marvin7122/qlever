@@ -92,6 +92,8 @@ namespace {
 // `IoUringInterface` via liburing.
 class LiburingRing final : public IoUringInterface {
  public:
+  // Set up a ring with `ringSize` SQEs. `explicit`, because a `RingSize` is not
+  // a ring. Throws if `io_uring_queue_init` fails.
   explicit LiburingRing(RingSize ringSize) {
     // Set up the submission and completion queues, shared between this
     // process and the kernel, with `ringSize` submission slots and twice as
@@ -462,8 +464,7 @@ std::unique_ptr<BatchManagerBase> makeBatchManager(bool& preferIoUring,
       AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
                   << e.what()
                   << "); falling back to synchronous pread for vocabulary "
-                     "lookups"
-                  << std::endl;
+                     "lookups\n";
     }
   }
 #else
