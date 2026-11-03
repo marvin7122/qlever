@@ -271,3 +271,31 @@ TEST(BatchManagerPool, globalPoolIsConfiguredBeforeItsCreation) {
   auto lease = pool.acquire();
   EXPECT_EQ(readFourBytesAt(*lease, file, 8), "CCCC");
 }
+
+// _____________________________________________________________________________
+// `setUpGlobalBatchManagerPool` keeps an existing pool. It warns if the
+// requested configuration differs from that of the pool, and does not warn if
+// it is the same.
+TEST(BatchManagerPool, setUpKeepsTheExistingGlobalPool) {
+  auto& pool = ad_utility::globalBatchManagerPool();
+  const size_t size = pool.size();
+  // The existing pool accepts only its own configuration, so this finds out
+  // whether it was created with io_uring preferred.
+  const bool preferIoUring = ad_utility::trySetGlobalBatchManagerPoolConfig(
+      size, /*preferIoUring=*/true);
+  ASSERT_TRUE(
+      ad_utility::trySetGlobalBatchManagerPoolConfig(size, preferIoUring));
+  {
+    auto [cleanup, logStream] = setGlobalLoggingStreamToStringStream();
+    ad_utility::setUpGlobalBatchManagerPool(size, preferIoUring);
+    EXPECT_THAT(logStream.str(),
+                ::testing::Not(::testing::HasSubstr("is ignored")));
+  }
+  {
+    auto [cleanup, logStream] = setGlobalLoggingStreamToStringStream();
+    ad_utility::setUpGlobalBatchManagerPool(size + 1, preferIoUring);
+    EXPECT_THAT(logStream.str(), ::testing::HasSubstr("is ignored"));
+  }
+  EXPECT_EQ(&ad_utility::globalBatchManagerPool(), &pool);
+  EXPECT_EQ(pool.size(), size);
+}
