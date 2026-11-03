@@ -47,16 +47,24 @@ struct IndexRun {
   QL_DEFINE_DEFAULTED_EQUALITY_OPERATOR(IndexRun, firstIndex_, numberOfIndices_)
 };
 
+// The maximal number of indices of an `IndexRun`. `readOffsetPairs` reads a
+// run of `k` indices with one read of `(k + 1) * 8` bytes, and one read is
+// limited to about 2 GiB by Linux (`MAX_RW_COUNT`) and to `UINT_MAX` bytes by
+// `io_uring_prep_read`; longer reads would come back short and throw.
+inline constexpr size_t MAX_NUMBER_OF_INDICES_PER_RUN = size_t{1} << 24;
+
 // Split `indices` into maximal runs of consecutive indices (each index is one
-// more than the previous one), in the order of `indices`. Every index belongs
-// to exactly one run, so the runs together have `indices.size()` indices.
+// more than the previous one), in the order of `indices`, but of at most
+// `maxNumberOfIndicesPerRun` indices each. Every index belongs to exactly one
+// run, so the runs together have `indices.size()` indices.
 //
 // TODO<marvin7122> Indices that are almost consecutive (for example every
 // second index) are split into many runs of one index each. Up to some gap
 // size, it is probably cheaper to read them as one range and skip the entries
 // in between; that threshold has to be measured.
 [[nodiscard]] std::vector<IndexRun> splitIntoRuns(
-    ql::span<const size_t> indices);
+    ql::span<const size_t> indices,
+    size_t maxNumberOfIndicesPerRun = MAX_NUMBER_OF_INDICES_PER_RUN);
 
 // Read the `OffsetPair` of each of the `indices` from the `.offsets` file `fd`
 // of a vocabulary with `numWords` words, with one batch of `manager`, and
