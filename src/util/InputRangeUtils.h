@@ -283,7 +283,7 @@ struct InputRangeFromLoopControlGet
       : getFunction_{std::move(transformation)} {}
 
   // The central `get` function, required by the mixin.
-  std::optional<Res> get() {
+  std::optional<Res> get() override {
     if (receivedBreak_) {
       return std::nullopt;
     }
