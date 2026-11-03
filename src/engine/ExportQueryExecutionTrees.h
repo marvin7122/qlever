@@ -200,9 +200,11 @@ class ExportQueryExecutionTrees {
   // a column that is `std::nullopt` or an unbound value), allocated with the
   // `allocator`. This is the unit of work of the parallel CSV or TSV export,
   // so it only reads its arguments and may be called concurrently for
-  // different `rows`. Throw a `CancellationException` if the
-  // `cancellationHandle` is cancelled. Stop early and return the lines so far
-  // as soon as `stop` is requested (the export then no longer needs them).
+  // different `rows`. The vocabulary words of each column are read with
+  // batched lookups of at most 1024 cells.
+  // Throw a `CancellationException` if the `cancellationHandle` is cancelled.
+  // Stop early and return an incomplete (possibly empty) chunk as soon as
+  // `stop` is requested (the export then no longer needs it).
   template <ad_utility::MediaType format>
   static CsvOrTsvChunk csvOrTsvRows(
       const Index& index,

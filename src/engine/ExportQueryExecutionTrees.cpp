@@ -106,18 +106,38 @@ STREAMABLE_GENERATOR_TYPE computeResultForAsk(
 }
 
 // _____________________________________________________________________________
+// The function that escapes the fields of a CSV or TSV export. Both the
+// sequential and the parallel export use it, so that their bytes are the same.
+template <ad_utility::MediaType format>
+constexpr auto& csvOrTsvEscapeFunction() {
+  if constexpr (format == ad_utility::MediaType::tsv) {
+    return RdfEscaping::escapeForTsv;
+  } else {
+    return RdfEscaping::escapeForCsv;
+  }
+}
+
 // Convert the `id` to its field in a CSV or TSV export (`std::nullopt` for an
-// unbound value). This is the per-cell work of both the sequential and the
-// parallel CSV or TSV export.
+// unbound value). This is the per-cell work of the sequential CSV or TSV
+// export.
 template <ad_utility::MediaType format>
 auto idToCsvOrTsvField(const Index& index, Id id,
                        const LocalVocab& localVocab) {
-  using enum ad_utility::MediaType;
-  constexpr auto& escapeFunction =
-      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
-  return ql::exportIds::idToStringAndType<format == csv>(index, id, localVocab,
-                                                         escapeFunction);
+  return ql::exportIds::idToStringAndType<format == ad_utility::MediaType::csv>(
+      index, id, localVocab, csvOrTsvEscapeFunction<format>());
 }
+
+// The fields of one column of a chunk of a CSV or TSV export, in the order of
+// the rows (`std::nullopt` for an unbound value).
+using CsvOrTsvFields =
+    std::vector<std::optional<std::pair<std::string, const char*>>>;
+
+// The maximal number of cells of one column that are converted with one
+// batched lookup in the parallel CSV or TSV export. Between two such batches,
+// the conversion checks for cancellation and for the stop of the export, so a
+// batch must be small enough that even its cold vocabulary reads finish within
+// `DESIRED_CANCELLATION_CHECK_INTERVAL`.
+constexpr size_t MAX_NUMBER_OF_CELLS_PER_LOOKUP_BATCH = 1024;
 }  // namespace
 
 // _____________________________________________________________________________
@@ -134,26 +154,65 @@ ExportQueryExecutionTrees::csvOrTsvRows(
     ad_utility::AsyncTransformStopFlag stop) {
   static constexpr char separator = format == tsv ? '\t' : ',';
   CsvOrTsvChunk lines{allocator};
-  for (uint64_t row : rows) {
-    if (stop.isRequested()) {
-      return lines;
+  const uint64_t firstRow = rows.empty() ? 0 : *rows.begin();
+  const size_t numberOfRows = rows.size();
+  // The fields of each selected column (`std::nullopt` for a column that is
+  // `std::nullopt`). The vocabulary words of a column are read with batched
+  // lookups (`idsToStringAndType`) instead of one by one. These fields are not
+  // allocated with the `allocator`: they are about as large as the `lines` of
+  // this chunk and only exist while this chunk is serialized, so per running
+  // task at most one chunk's worth of fields is not counted.
+  std::vector<std::optional<CsvOrTsvFields>> fieldsPerColumn;
+  fieldsPerColumn.reserve(columns.size());
+  size_t numberOfBytes = 0;
+  for (const auto& column : columns) {
+    if (!column.has_value()) {
+      fieldsPerColumn.emplace_back(std::nullopt);
+      continue;
     }
-    for (const auto& [j, column] : ::ranges::views::enumerate(columns)) {
+    ql::span<const Id> ids = table.idTable()
+                                 .getColumn(column.value().columnIndex_)
+                                 .subspan(firstRow, numberOfRows);
+    CsvOrTsvFields& fields =
+        fieldsPerColumn.emplace_back(std::in_place).value();
+    fields.reserve(numberOfRows);
+    for (size_t begin = 0; begin < numberOfRows;
+         begin += MAX_NUMBER_OF_CELLS_PER_LOOKUP_BATCH) {
+      if (stop.isRequested()) {
+        return lines;
+      }
+      auto batch = ql::exportIds::idsToStringAndType<format == csv>(
+          index,
+          ids.subspan(begin, std::min(MAX_NUMBER_OF_CELLS_PER_LOOKUP_BATCH,
+                                      numberOfRows - begin)),
+          table.localVocab(), csvOrTsvEscapeFunction<format>());
+      cancellationHandle.throwIfCancelled();
+      for (auto& field : batch) {
+        if (field.has_value()) {
+          numberOfBytes += field.value().first.size();
+        }
+        fields.push_back(std::move(field));
+      }
+    }
+  }
+  // One separator per column (or the newline) per row.
+  lines.reserve(numberOfBytes +
+                numberOfRows * std::max(columns.size(), size_t{1}));
+  for (size_t i = 0; i < numberOfRows; ++i) {
+    for (const auto& [j, fields] :
+         ::ranges::views::enumerate(fieldsPerColumn)) {
       if (j > 0) {
         lines.push_back(separator);
       }
-      if (!column.has_value()) {
+      if (!fields.has_value()) {
         continue;
       }
-      auto optionalStringAndType = idToCsvOrTsvField<format>(
-          index, table.idTable()(row, column.value().columnIndex_),
-          table.localVocab());
-      if (optionalStringAndType.has_value()) [[likely]] {
-        lines.append(optionalStringAndType.value().first);
+      const auto& field = fields.value()[i];
+      if (field.has_value()) [[likely]] {
+        lines.append(field.value().first);
       }
     }
     lines.push_back('\n');
-    cancellationHandle.throwIfCancelled();
   }
   return lines;
 }
