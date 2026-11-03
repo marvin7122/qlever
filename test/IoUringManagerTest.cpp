@@ -12,11 +12,14 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 #include <gtest/gtest.h>
+#include <pthread.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <climits>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
@@ -25,6 +28,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -536,6 +540,58 @@ TEST(IoUringPolicyErrors, failureReapedByAddBatchIsThrownByItsOwnBatch) {
                                HasSubstr("read fewer bytes than requested"));
   // The successful read of the failed batch landed in its buffer.
   EXPECT_THAT(bad.result(), ::testing::ElementsAre("AAAA", ::testing::_));
+}
+
+// A signal can end the wait for a wave early: with at least one CQE ready,
+// `io_uring_wait_cqes` then returns success although fewer CQEs than the wave
+// size are ready. `wait()` must reap what is ready and wait again, not fail.
+// The batch reads twice from a pipe. The first read completes during
+// submission, because its bytes are already in the pipe; the second one waits
+// for bytes that a helper thread writes only after it has sent a signal to the
+// thread that is blocked in `wait()`.
+TEST(IoUringPolicyWave, signalDuringWaveWait) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  // A no-op handler, so that the signal interrupts the wait instead of
+  // terminating the process.
+  struct sigaction noOp {};
+  noOp.sa_handler = [](int) {};
+  struct sigaction previous {};
+  ASSERT_EQ(sigaction(SIGUSR1, &noOp, &previous), 0);
+  absl::Cleanup restoreHandler{
+      [&previous] { sigaction(SIGUSR1, &previous, nullptr); }};
+
+  std::array<int, 2> pipeFds{};
+  ASSERT_EQ(pipe(pipeFds.data()), 0);
+  const auto [readFd, writeFd] = pipeFds;
+  absl::Cleanup closePipe{[readFd, writeFd] {
+    close(readFd);
+    close(writeFd);
+  }};
+  ASSERT_EQ(write(writeFd, "AAAA", 4), 4);
+
+  ReadBatchForTesting batch;
+  batch.add({{0, 4}, {0, 4}});
+  // Declared after `batch`, so that its buffers outlive the drain in the
+  // destructor of `IoUringPolicy` if the test unwinds early.
+  ad_utility::BatchManager<ad_utility::IoUringPolicy> manager(64);
+  auto handle = batch.submitTo(manager, readFd);
+
+  // Declared after `manager` and joined before its destruction, so that the
+  // second read has completed by then.
+  const pthread_t waitingThread = pthread_self();
+  std::thread signalThenWrite{[waitingThread, writeFd] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    pthread_kill(waitingThread, SIGUSR1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    ASSERT_EQ(write(writeFd, "BBBB", 4), 4);
+  }};
+  absl::Cleanup join{[&signalThenWrite] { signalThenWrite.join(); }};
+
+  manager.wait(handle);
+  EXPECT_THAT(batch.result(), ::testing::UnorderedElementsAre("AAAA", "BBBB"));
 }
 
 // Drop the manager while reads are still outstanding (submitted but never

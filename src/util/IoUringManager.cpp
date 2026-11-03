@@ -98,11 +98,11 @@ IoUringPolicy::~IoUringPolicy() {
   }
   // Reap the outstanding completions before tearing down the ring, so the
   // kernel is no longer writing into any target buffer once we return. We
-  // deliberately do not call `drainAtLeastCqes` here: it throws if
-  // `io_uring_wait_cqes` fails and on its correctness checks, and a destructor
-  // must not throw. (Failed reads do not throw there; `processCqe` only records
-  // them.) We also stop if `io_uring_wait_cqe` fails, to avoid spinning
-  // forever (it would not decrement the outstanding count).
+  // deliberately do not call `reapWave` here: it throws if `io_uring_wait_cqes`
+  // fails and on its correctness checks, and a destructor must not throw.
+  // (Failed reads do not throw there; `processCqe` only records them.) We also
+  // stop if `io_uring_wait_cqe` fails, to avoid spinning forever (it would not
+  // decrement the outstanding count).
   while (numOutstandingReadRequests_ > 0) {
     io_uring_cqe* cqe = nullptr;
     if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
@@ -140,7 +140,7 @@ void IoUringPolicy::addBatch(int fd,
       // per reaped CQE.
       io_uring_submit(&ring_);
       while (numOutstandingReadRequests_ >= ringSize_) {
-        drainAtLeastCqes(static_cast<unsigned>(
+        reapWave(static_cast<unsigned>(
             std::min<size_t>(REAP_WAVE, numOutstandingReadRequests_)));
       }
     }
@@ -179,15 +179,14 @@ void IoUringPolicy::wait(BatchHandle handle) {
   // outstanding reads. Waiting for up to `REAP_WAVE` CQEs never waits longer
   // than this batch needs: it cannot finish before its own remaining reads
   // complete, and any CQE (also of other batches) counts towards the wave.
-  // The iterator is looked up anew in every round, because `drainAtLeastCqes`
-  // may erase the entry.
+  // The iterator is looked up anew in every round, because `reapWave` may erase
+  // the entry.
   while (true) {
     auto it = numOutstandingReadRequestsPerBatch_.find(handle);
     if (it == numOutstandingReadRequestsPerBatch_.end()) {
       break;
     }
-    drainAtLeastCqes(
-        static_cast<unsigned>(std::min<size_t>(REAP_WAVE, it->second)));
+    reapWave(static_cast<unsigned>(std::min<size_t>(REAP_WAVE, it->second)));
   }
   // Throw only now that every read of the batch is reaped, so the kernel no
   // longer writes into its buffers.
@@ -200,17 +199,20 @@ void IoUringPolicy::wait(BatchHandle handle) {
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::drainAtLeastCqes(unsigned minComplete) {
-  AD_CORRECTNESS_CHECK(minComplete > 0);
-  AD_CORRECTNESS_CHECK(minComplete <= numOutstandingReadRequests_);
+void IoUringPolicy::reapWave(unsigned waveSize) {
+  AD_CORRECTNESS_CHECK(waveSize > 0);
+  AD_CORRECTNESS_CHECK(waveSize <= numOutstandingReadRequests_);
 
-  // Block until at least `minComplete` completion queue entries (CQEs) are
-  // ready. This typically costs one `io_uring_enter` for the whole wave (and
-  // one more after each `EINTR`).
+  // Block until `waveSize` completion queue entries (CQEs) are ready. This
+  // typically costs one `io_uring_enter` for the whole wave. A signal ends the
+  // wait early: with an empty completion queue, `io_uring_wait_cqes` returns
+  // `-EINTR` and we wait again; with at least one ready CQE, it returns 0
+  // although fewer than `waveSize` CQEs may be ready (the kernel then reports
+  // success, see `io_cqring_wait`), and we reap those.
   io_uring_cqe* cqe = nullptr;
   int ret = 0;
   do {
-    ret = io_uring_wait_cqes(&ring_, &cqe, minComplete, nullptr, nullptr);
+    ret = io_uring_wait_cqes(&ring_, &cqe, waveSize, nullptr, nullptr);
   } while (ret == -EINTR);
   if (ret < 0) {
     AD_THROW(absl::StrCat("io_uring_wait_cqes failed in IoUringPolicy: ",
@@ -227,7 +229,7 @@ void IoUringPolicy::drainAtLeastCqes(unsigned minComplete) {
   // queue would be processed a second time by the next drain, and a CQE that
   // left the queue without being applied would leave the outstanding counts
   // too high, so that the next `wait()` or the destructor would block forever.
-  // The first exception is rethrown once the chunk is applied.
+  // The first exception is rethrown once every ready CQE is applied.
   std::array<io_uring_cqe*, REAP_CHUNK> cqes{};
   std::array<std::pair<int, uint64_t>, REAP_CHUNK> resultAndRequestIdPerCqe{};
   size_t numReaped = 0;
@@ -261,9 +263,9 @@ void IoUringPolicy::drainAtLeastCqes(unsigned minComplete) {
   if (firstException) {
     std::rethrow_exception(std::move(firstException));
   }
-  // `io_uring_wait_cqes` returned with at least `minComplete` CQEs ready, and
-  // the loop above reaps every ready CQE.
-  AD_CORRECTNESS_CHECK(numReaped >= minComplete);
+  // `io_uring_wait_cqes` returned 0, so at least one CQE was ready, and the
+  // loop above reaps every ready CQE.
+  AD_CORRECTNESS_CHECK(numReaped > 0);
 }
 
 //______________________________________________________________________________
