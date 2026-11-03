@@ -51,10 +51,9 @@ class BatchManagerBase {
   using BatchHandle = uint64_t;
   virtual ~BatchManagerBase() = default;
 
-  [[nodiscard]] virtual BatchHandle addBatch(int fd,
-                                             ql::span<const size_t> numBytes,
-                                             ql::span<const uint64_t> offsets,
-                                             ql::span<char*> buffers) = 0;
+  [[nodiscard]] virtual BatchHandle addBatch(
+      int fd, ql::span<const size_t> numberOfBytesToReadPerRequest,
+      ql::span<const uint64_t> offsets, ql::span<char*> buffers) = 0;
 
   virtual void wait(BatchHandle handle) = 0;
 
@@ -87,15 +86,16 @@ class BatchManager final : public BatchManagerBase {
   BatchManager(const BatchManager&) = delete;
   BatchManager& operator=(const BatchManager&) = delete;
 
-  [[nodiscard]] BatchHandle addBatch(int fd, ql::span<const size_t> numBytes,
-                                     ql::span<const uint64_t> offsets,
-                                     ql::span<char*> buffers) override {
-    validateSameLength(numBytes, offsets, buffers);
+  [[nodiscard]] BatchHandle addBatch(
+      int fd, ql::span<const size_t> numberOfBytesToReadPerRequest,
+      ql::span<const uint64_t> offsets, ql::span<char*> buffers) override {
+    validateSameLength(numberOfBytesToReadPerRequest, offsets, buffers);
 
     BatchHandle handle = nextBatchHandle_++;
 
     // Delegate the I/O work to the policy.
-    policy_.addBatch(fd, numBytes, offsets, buffers, handle);
+    policy_.addBatch(fd, numberOfBytesToReadPerRequest, offsets, buffers,
+                     handle);
 
     return handle;
   }
@@ -143,12 +143,12 @@ struct SyncIoPolicy {
   SyncIoPolicy& operator=(const SyncIoPolicy&) = delete;
 
   // Immediately execute a batch of reads synchronously. This blocks the calling
-  // thread. Read `i` reads `numBytesToReadPerRequest[i]` bytes from file
+  // thread. Read `i` reads `numberOfBytesToReadPerRequest[i]` bytes from file
   // descriptor `fd`, starting at offset `fileOffsetPerRequest[i]` (from the
   // start of the file), into the buffer starting at
   // `targetBufferPerRequest[i]`. `handle` is unused (the batch completes before
   // `addBatch` returns).
-  void addBatch(int fd, ql::span<const size_t> numBytesToReadPerRequest,
+  void addBatch(int fd, ql::span<const size_t> numberOfBytesToReadPerRequest,
                 ql::span<const uint64_t> fileOffsetPerRequest,
                 ql::span<char*> targetBufferPerRequest,
                 BatchHandle handle) const;
@@ -157,12 +157,12 @@ struct SyncIoPolicy {
     // No-op: `addBatch` already completed all reads synchronously.
   }
 
-  // Read exactly `numBytes` bytes from file descriptor `fd` at `fileOffset`
-  // (from the start of the file) into `targetBuffer`. Throws exception if the
-  // read fails or returns fewer bytes than requested (a partial read or end of
-  // file), since every read must be fully satisfied.
-  static void readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
-                               uint64_t fileOffset);
+  // Read exactly `numberOfBytesToRead` bytes from file descriptor `fd` at
+  // `fileOffset` (from the start of the file) into `targetBuffer`. Throws
+  // exception if the read fails or returns fewer bytes than requested (a
+  // partial read or end of file), since every read must be fully satisfied.
+  static void readFullyOrThrow(int fd, char* targetBuffer,
+                               size_t numberOfBytesToRead, uint64_t fileOffset);
 };
 
 #ifdef QLEVER_HAS_IO_URING
@@ -183,16 +183,16 @@ class IoUringInterface {
 
   virtual ~IoUringInterface() = default;
 
-  // Fill a free SQE with a read of `numBytes` bytes at `offset` of `fd` into
-  // `buffer`, tagged with `requestId`. Return false if no SQE is free. An
-  // implementation must have a free SQE whenever fewer requests than the ring
-  // size are queued or in the kernel: `IoUringPolicy` never exceeds that
-  // bound and treats a `false` as a broken invariant.
-  virtual bool prepareRead(int fd, char* buffer, size_t numBytes,
+  // Fill a free SQE with a read of `numberOfBytesToRead` bytes at `offset` of
+  // `fd` into `buffer`, tagged with `requestId`. Return false if no SQE is
+  // free. An implementation must have a free SQE whenever fewer requests than
+  // the ring size are queued or in the kernel: `IoUringPolicy` never exceeds
+  // that bound and treats a `false` as a broken invariant.
+  virtual bool prepareRead(int fd, char* buffer, size_t numberOfBytesToRead,
                            uint64_t offset, uint64_t requestId) = 0;
 
   // The number of prepared SQEs that the kernel has not taken yet.
-  virtual size_t numQueued() const = 0;
+  virtual size_t numberOfQueuedSqes() const = 0;
 
   // `io_uring_submit`: hand the queued SQEs to the kernel, which takes them in
   // the order in which they were prepared. Return the number of SQEs taken, or
@@ -256,12 +256,12 @@ class IoUringPolicy {
   // least `ringSize` SQEs and `2 * ringSize` CQEs. For tests.
   IoUringPolicy(unsigned ringSize, std::unique_ptr<IoUringInterface> ring);
 
-  // Read the batch: read `i` reads `numBytesToRead[i]` bytes from `fd` at
-  // offset `offsets[i]` into `buffers[i]`; the three spans must have the same
-  // length. `handle` is unused. Returns once every read has completed. Throws
-  // if a read failed or was short, or if its reads could not be submitted, but
-  // only once the kernel holds none of its reads.
-  void addBatch(int fd, ql::span<const size_t> numBytesToRead,
+  // Read the batch: read `i` reads `numberOfBytesToReadPerRequest[i]` bytes
+  // from `fd` at offset `offsets[i]` into `buffers[i]`; the three spans must
+  // have the same length. `handle` is unused. Returns once every read has
+  // completed. Throws if a read failed or was short, or if its reads could not
+  // be submitted, but only once the kernel holds none of its reads.
+  void addBatch(int fd, ql::span<const size_t> numberOfBytesToReadPerRequest,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle);
 
@@ -281,28 +281,32 @@ class IoUringPolicy {
 
   // The batch that `addBatch` is reading. Reads are queued in index order, and
   // the kernel takes queued SQEs in order, so the queued reads are always
-  // `[numTaken, numQueued)`; the reads before `numTaken` are `InKernel` or
-  // `Done`.
+  // `[numberOfTakenReads, numberOfQueuedReads)`; the reads before
+  // `numberOfTakenReads` are `InKernel` or `Done`.
   struct Batch {
-    ql::span<const size_t> numBytes;
+    ql::span<const size_t> numberOfBytesToReadPerRequest;
     std::vector<ReadState> states;
-    size_t numQueued = 0;
-    size_t numTaken = 0;
-    size_t numDone = 0;
+    size_t numberOfQueuedReads = 0;
+    size_t numberOfTakenReads = 0;
+    size_t numberOfDoneReads = 0;
     std::optional<std::string> error;
 
     // The reads that the kernel took and whose completion has not been reaped
     // yet (they may still write into their buffers).
-    size_t numReadsInKernel() const { return numTaken - numDone; }
+    size_t numberOfReadsInKernel() const {
+      return numberOfTakenReads - numberOfDoneReads;
+    }
     // The ring slots that the batch's reads occupy (queued, in the kernel,
     // or completed but not reaped).
-    size_t numSlots() const { return numQueued - numDone; }
+    size_t numberOfOccupiedSlots() const {
+      return numberOfQueuedReads - numberOfDoneReads;
+    }
   };
 
   // The size of a wave: wait for up to this many completions at once (fewer if
   // fewer requests are in the kernel), then reap all ready ones in one pass.
   // This amortizes `io_uring_enter` and the CQ-head update over the wave.
-  static constexpr unsigned REAP_WAVE = 8;
+  static constexpr unsigned REAP_WAVE_SIZE = 8;
 
   // How often in a row an `io_uring_submit` that fails with `EAGAIN` is
   // retried before the queued reads are cancelled.
@@ -313,8 +317,8 @@ class IoUringPolicy {
 
   // No-ops of cancelled reads (of this or an earlier batch) that are queued or
   // in the kernel. They occupy ring slots until their CQE is reaped.
-  size_t numNoOpsQueued_ = 0;
-  size_t numNoOpsInKernel_ = 0;
+  size_t numberOfQueuedNoOps_ = 0;
+  size_t numberOfNoOpsInKernel_ = 0;
 
   // Fill the free ring slots with reads, submit them and reap waves of
   // completions until the batch is done or has failed and left the ring.
@@ -326,8 +330,9 @@ class IoUringPolicy {
   // Terminates on any other error.
   void submit(Batch& batch);
 
-  // The kernel took `numTaken` SQEs: first the queued no-ops, then reads.
-  void onTaken(Batch& batch, size_t numTaken);
+  // The kernel took `numberOfTakenSqes` SQEs: first the queued no-ops, then
+  // reads.
+  void onTaken(Batch& batch, size_t numberOfTakenSqes);
 
   // Rewrite the queued reads into no-ops and fail the batch with
   // `errorMessage`.

@@ -91,7 +91,7 @@ class FakeIoUring final : public IoUringInterface {
 
   // The reads (not no-ops) that are queued, in the kernel, or completed but
   // not reaped. Between two `addBatch` calls this must be zero.
-  size_t numReadsInRing() const {
+  size_t numberOfReadsInRing() const {
     auto isRead = [](const auto& requestOrCompletion) {
       return !requestOrCompletion.isNoOp;
     };
@@ -101,16 +101,18 @@ class FakeIoUring final : public IoUringInterface {
         std::count_if(completions_.begin(), completions_.end(), isRead));
   }
 
-  bool prepareRead([[maybe_unused]] int fd, char* buffer, size_t numBytes,
-                   uint64_t offset, uint64_t requestId) override {
+  bool prepareRead([[maybe_unused]] int fd, char* buffer,
+                   size_t numberOfBytesToRead, uint64_t offset,
+                   uint64_t requestId) override {
     if (queue_.size() >= sqCapacity_) {
       return false;
     }
-    queue_.push_back(Request{false, buffer, numBytes, offset, requestId});
+    queue_.push_back(
+        Request{false, buffer, numberOfBytesToRead, offset, requestId});
     return true;
   }
 
-  size_t numQueued() const override { return queue_.size(); }
+  size_t numberOfQueuedSqes() const override { return queue_.size(); }
 
   int submit() override {
     if (faults_.brokenSubmitErrno != 0) {
@@ -130,14 +132,14 @@ class FakeIoUring final : public IoUringInterface {
       ++faultCounts_.interruptedSubmits;
       return -EINTR;
     }
-    size_t numTaken = queue_.size();
+    size_t numberOfTakenSqes = queue_.size();
     // A partial submit may take nothing, which `IoUringPolicy` retries like
     // `EAGAIN`.
-    if (numTaken > 0 && happens(faults_.partialSubmit)) {
-      numTaken = uniform(0, numTaken - 1);
+    if (numberOfTakenSqes > 0 && happens(faults_.partialSubmit)) {
+      numberOfTakenSqes = uniform(0, numberOfTakenSqes - 1);
       ++faultCounts_.partialSubmits;
     }
-    for (size_t i = 0; i < numTaken; ++i) {
+    for (size_t i = 0; i < numberOfTakenSqes; ++i) {
       kernel_.push_back(queue_.front());
       queue_.pop_front();
     }
@@ -147,7 +149,7 @@ class FakeIoUring final : public IoUringInterface {
     if (faults_.completeOnSubmit) {
       completeRandomRequests(uniform(0, kernel_.size()));
     }
-    return static_cast<int>(numTaken);
+    return static_cast<int>(numberOfTakenSqes);
   }
 
   int waitForCompletions(unsigned minComplete) override {
@@ -169,12 +171,13 @@ class FakeIoUring final : public IoUringInterface {
   }
 
   size_t popCompletions(ql::span<Completion> completions) override {
-    const size_t numPopped = std::min(completions.size(), completions_.size());
-    for (size_t i = 0; i < numPopped; ++i) {
+    const size_t numberOfPoppedCompletions =
+        std::min(completions.size(), completions_.size());
+    for (size_t i = 0; i < numberOfPoppedCompletions; ++i) {
       completions[i] = completions_.front().completion;
       completions_.pop_front();
     }
-    return numPopped;
+    return numberOfPoppedCompletions;
   }
 
   std::vector<uint64_t> cancelQueued(uint64_t noOpRequestId) override {
@@ -196,7 +199,7 @@ class FakeIoUring final : public IoUringInterface {
   struct Request {
     bool isNoOp;
     char* buffer;
-    size_t numBytes;
+    size_t numberOfBytesToRead;
     uint64_t offset;
     uint64_t requestId;
   };
@@ -213,10 +216,11 @@ class FakeIoUring final : public IoUringInterface {
     return std::uniform_int_distribution<size_t>{min, max}(random_);
   }
 
-  // Complete `numToComplete` random requests of the kernel: write a read's
-  // bytes into its buffer and post its completion.
-  void completeRandomRequests(size_t numToComplete) {
-    for (size_t k = 0; k < numToComplete && !kernel_.empty(); ++k) {
+  // Complete `numberOfRequestsToComplete` random requests of the kernel: write
+  // a read's bytes into its buffer and post its completion.
+  void completeRandomRequests(size_t numberOfRequestsToComplete) {
+    for (size_t k = 0; k < numberOfRequestsToComplete && !kernel_.empty();
+         ++k) {
       const size_t i = uniform(0, kernel_.size() - 1);
       const Request request = kernel_[i];
       kernel_.erase(kernel_.begin() + static_cast<ptrdiff_t>(i));
@@ -235,20 +239,21 @@ class FakeIoUring final : public IoUringInterface {
       ++faultCounts_.faultyReads;
       return -EIO;
     }
-    size_t numBytes =
-        std::min(request.numBytes,
+    size_t numberOfBytesRead =
+        std::min(request.numberOfBytesToRead,
                  file_.size() - std::min<size_t>(file_.size(), request.offset));
-    if (numBytes > 0 && happens(faults_.shortRead)) {
-      numBytes = uniform(0, numBytes - 1);
+    if (numberOfBytesRead > 0 && happens(faults_.shortRead)) {
+      numberOfBytesRead = uniform(0, numberOfBytesRead - 1);
     }
-    if (numBytes != request.numBytes) {
+    if (numberOfBytesRead != request.numberOfBytesToRead) {
       injectedReadFault_ = true;
       ++faultCounts_.faultyReads;
     }
-    if (numBytes > 0) {
-      std::memcpy(request.buffer, file_.data() + request.offset, numBytes);
+    if (numberOfBytesRead > 0) {
+      std::memcpy(request.buffer, file_.data() + request.offset,
+                  numberOfBytesRead);
     }
-    return static_cast<int>(numBytes);
+    return static_cast<int>(numberOfBytesRead);
   }
 
   std::string file_;

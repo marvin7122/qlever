@@ -20,12 +20,14 @@ namespace ad_utility {
 
 template <typename T>
 CPP_requires(ReadPolicy_,
-             requires(T& policy, int fd, ql::span<const size_t> numBytes,
+             requires(T& policy, int fd,
+                      ql::span<const size_t> numberOfBytesToReadPerRequest,
                       ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                       typename T::BatchHandle handle)(
                  concepts::constructible_from<T, unsigned>,
                  // Must provide `addBatch` with the following parameters.
-                 policy.addBatch(fd, numBytes, offsets, buffers, handle),
+                 policy.addBatch(fd, numberOfBytesToReadPerRequest, offsets,
+                                 buffers, handle),
                  // Must provide a `wait` method with the following interface.
                  policy.wait(handle)));
 

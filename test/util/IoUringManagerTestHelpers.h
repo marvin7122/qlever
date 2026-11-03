@@ -76,18 +76,20 @@ std::pair<TempFile, int> makeTempFile(std::string_view content) {
 // each read produced, in request order.
 class ReadBatchForTesting {
  public:
-  // Add a read of `numBytes` bytes at `offset`; returns the read's index.
-  size_t add(uint64_t offset, size_t numBytes) {
+  // Add a read of `numberOfBytesToRead` bytes at `offset`; returns the read's
+  // index.
+  size_t add(uint64_t offset, size_t numberOfBytesToRead) {
     offsets_.push_back(offset);
-    numBytes_.push_back(numBytes);
-    targetBuffers_.emplace_back(numBytes, '\0');
+    numberOfBytesToReadPerRequest_.push_back(numberOfBytesToRead);
+    targetBuffers_.emplace_back(numberOfBytesToRead, '\0');
     return targetBuffers_.size() - 1;
   }
 
-  // Add several reads at once from a range of `(offset, numBytes)` pairs.
+  // Add several reads at once from a range of `(offset, numberOfBytesToRead)`
+  // pairs.
   void add(ql::span<const std::pair<uint64_t, size_t>> reads) {
-    for (const auto& [offset, numBytes] : reads) {
-      add(offset, numBytes);
+    for (const auto& [offset, numberOfBytesToRead] : reads) {
+      add(offset, numberOfBytesToRead);
     }
   }
 
@@ -101,7 +103,8 @@ class ReadBatchForTesting {
   template <typename Manager>
   typename Manager::BatchHandle submitTo(Manager& manager, int fd) {
     std::vector<char*> pointers = bufferPointers();
-    return manager.addBatch(fd, numBytes_, offsets_, pointers);
+    return manager.addBatch(fd, numberOfBytesToReadPerRequest_, offsets_,
+                            pointers);
   }
 
   // The bytes read by each read, in request order (valid once the batch has
@@ -121,7 +124,8 @@ class ReadBatchForTesting {
   void submitToPolicy(Policy& policy, int fd,
                       typename Policy::BatchHandle handle) {
     std::vector<char*> pointers = bufferPointers();
-    policy.addBatch(fd, numBytes_, offsets_, pointers, handle);
+    policy.addBatch(fd, numberOfBytesToReadPerRequest_, offsets_, pointers,
+                    handle);
   }
 
  private:
@@ -136,7 +140,7 @@ class ReadBatchForTesting {
                                }));
   }
 
-  std::vector<size_t> numBytes_;
+  std::vector<size_t> numberOfBytesToReadPerRequest_;
   std::vector<uint64_t> offsets_;
   std::vector<std::string> targetBuffers_;
 };

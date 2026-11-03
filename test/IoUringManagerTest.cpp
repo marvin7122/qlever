@@ -164,12 +164,13 @@ TYPED_TEST(IoUringManagerTest, mismatchedSpanLengthsThrow) {
   TypeParam manager(64);
 
   std::string buffer(4, '\0');
-  std::vector<size_t> numBytes{4};            // length 1
-  std::vector<uint64_t> fileOffsets{0, 4};    // length 2 -> mismatch
-  std::vector<char*> buffers{buffer.data()};  // length 1
+  std::vector<size_t> numberOfBytesToReadPerRequest{4};  // length 1
+  std::vector<uint64_t> fileOffsets{0, 4};               // length 2 -> mismatch
+  std::vector<char*> buffers{buffer.data()};             // length 1
 
   AD_EXPECT_THROW_WITH_MESSAGE(
-      std::ignore = manager.addBatch(fd, numBytes, fileOffsets, buffers),
+      std::ignore = manager.addBatch(fd, numberOfBytesToReadPerRequest,
+                                     fileOffsets, buffers),
       HasSubstr("spans must have same length"));
 }
 
@@ -179,10 +180,10 @@ TYPED_TEST(IoUringManagerTest, MultipleBatchesSequential) {
 
   TypeParam manager(64);
 
-  auto makeAndWait = [&](uint64_t offset, size_t numBytes,
+  auto makeAndWait = [&](uint64_t offset, size_t numberOfBytesToRead,
                          std::string_view expected) {
     ReadBatchForTesting batch;
-    batch.add(offset, numBytes);
+    batch.add(offset, numberOfBytesToRead);
     manager.wait(batch.submitTo(manager, fd));
     EXPECT_THAT(batch.result(), ::testing::ElementsAre(expected));
   };
@@ -244,16 +245,16 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
 }
 
 // A batch much larger than the ring completes with every read in its own
-// buffer. Ring 4 is smaller than a `REAP_WAVE`, so the ring-full wait is
+// buffer. Ring 4 is smaller than `REAP_WAVE_SIZE`, so the ring-full wait is
 // clamped to the outstanding reads; ring 8 is exactly one wave; with ring 256,
 // more than 64 CQEs can be ready at once, so a wave is reaped in several
 // chunks.
 TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanRing) {
-  const std::pair<unsigned, size_t> ringSizeAndNumReads[] = {
+  const std::pair<unsigned, size_t> ringSizeAndNumberOfReads[] = {
       {4, 80}, {8, 80}, {256, 600}};
-  for (auto [ringSize, numReads] : ringSizeAndNumReads) {
+  for (auto [ringSize, numberOfReads] : ringSizeAndNumberOfReads) {
     SequentialReadScenarioForTesting scenario;
-    for (size_t i = 0; i < numReads; ++i) {
+    for (size_t i = 0; i < numberOfReads; ++i) {
       // Distinct chunks, so that a completion in the wrong buffer is detected.
       scenario.addRead(absl::StrFormat("%04zu", i));
     }
@@ -277,12 +278,12 @@ TYPED_TEST(IoUringManagerTest, ManySmallBatchesCompletedByAddBatch) {
   std::string fileContent;
   std::vector<std::vector<std::string>> expected(M);
   std::vector<ReadBatchForTesting> batches(M);
-  size_t numChunks = 0;
+  size_t numberOfChunks = 0;
   for (size_t i = 0; i < M; ++i) {
-    const size_t numReads = 2 * (i % 3) + 1;
-    for (size_t j = 0; j < numReads; ++j) {
+    const size_t numberOfReads = 2 * (i % 3) + 1;
+    for (size_t j = 0; j < numberOfReads; ++j) {
       // Distinct chunks, so that a completion in the wrong buffer is detected.
-      std::string chunk = absl::StrFormat("%03zu", numChunks++);
+      std::string chunk = absl::StrFormat("%03zu", numberOfChunks++);
       batches[i].add(fileContent.size(), chunk.size());
       fileContent.append(chunk);
       expected[i].push_back(std::move(chunk));
@@ -580,14 +581,14 @@ TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
 
     for (size_t batchIndex = 0; batchIndex < 10; ++batchIndex) {
       ReadBatchForTesting batch;
-      const size_t numReads =
+      const size_t numberOfReads =
           std::uniform_int_distribution<size_t>{0, 40}(random);
-      for (size_t i = 0; i < numReads; ++i) {
-        const size_t numBytes =
+      for (size_t i = 0; i < numberOfReads; ++i) {
+        const size_t numberOfBytesToRead =
             std::uniform_int_distribution<size_t>{1, 16}(random);
         const size_t offset = std::uniform_int_distribution<size_t>{
-            0, file.size() - numBytes}(random);
-        batch.add(offset, numBytes);
+            0, file.size() - numberOfBytesToRead}(random);
+        batch.add(offset, numberOfBytesToRead);
       }
       fake.resetObservations();
       bool threw = false;
@@ -597,12 +598,12 @@ TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
         threw = true;
         EXPECT_THAT(e.what(), HasSubstr("IoUringPolicy"));
       }
-      ASSERT_EQ(fake.numReadsInRing(), 0u);
+      ASSERT_EQ(fake.numberOfReadsInRing(), 0u);
       EXPECT_EQ(threw, fake.injectedReadFault() || fake.cancelled());
       if (!threw) {
         std::vector<std::string> expected;
-        expected.reserve(numReads);
-        for (size_t i = 0; i < numReads; ++i) {
+        expected.reserve(numberOfReads);
+        for (size_t i = 0; i < numberOfReads; ++i) {
           expected.push_back(
               file.substr(batch.offset(i), batch.result()[i].size()));
         }
@@ -631,13 +632,14 @@ TEST(IoUringPolicyModel, spansOfDifferentLengthsThrow) {
   using ad_utility::testing::FakeIoUring;
   ad_utility::IoUringPolicy policy{
       8, std::make_unique<FakeIoUring>("AAAA", 8, FakeIoUring::Faults{}, 0)};
-  std::vector<size_t> numBytes{4, 4};
+  std::vector<size_t> numberOfBytesToReadPerRequest{4, 4};
   std::vector<uint64_t> offsets{0};
   std::string buffer(8, '-');
   std::vector<char*> buffers{buffer.data(), buffer.data() + 4};
   AD_EXPECT_THROW_WITH_MESSAGE(
-      policy.addBatch(/*fd=*/-1, numBytes, offsets, buffers, 0),
-      HasSubstr("offsets.size() == numBytesToRead.size()"));
+      policy.addBatch(/*fd=*/-1, numberOfBytesToReadPerRequest, offsets,
+                      buffers, 0),
+      HasSubstr("offsets.size() == numberOfBytesToReadPerRequest.size()"));
 }
 
 // A failed wait, and a submit error other than `EINTR` and `EAGAIN` while

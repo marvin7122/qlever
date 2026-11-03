@@ -330,10 +330,10 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
 
 namespace {
 // Count the page-cache reads; none of them finds anything cached.
-size_t numCountedPageCacheReads = 0;
+size_t numberOfCountedPageCacheReads = 0;
 int64_t countedNothingCached(int fd, const ::iovec* iov, int iovcnt,
                              int64_t offset) noexcept {
-  ++numCountedPageCacheReads;
+  ++numberOfCountedPageCacheReads;
   return pageCacheReadTestHelpers::nothingCached(fd, iov, iovcnt, offset);
 }
 }  // namespace
@@ -353,23 +353,23 @@ TEST(VocabularyOnDisk, LookupBatchFollowsThePageCacheFastPathParameter) {
   auto resetParameter = setRuntimeParameterForTest<
       &RuntimeParameters::vocabularyPageCacheFastPath_>(true);
   pageCacheReadTestHelpers::ScopedPageCacheRead inject{&countedNothingCached};
-  numCountedPageCacheReads = 0;
+  numberOfCountedPageCacheReads = 0;
 
   setRuntimeParameter<&RuntimeParameters::vocabularyPageCacheFastPath_>(false);
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
       *vocab, vocab->lookupBatch(indices), indices);
-  EXPECT_EQ(numCountedPageCacheReads, 0u);
+  EXPECT_EQ(numberOfCountedPageCacheReads, 0u);
 
   setRuntimeParameter<&RuntimeParameters::vocabularyPageCacheFastPath_>(true);
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
       *vocab, vocab->lookupBatch(indices), indices);
-  EXPECT_GT(numCountedPageCacheReads, 0u);
+  EXPECT_GT(numberOfCountedPageCacheReads, 0u);
 }
 
 // Every other page-cache read finds nothing cached, starting with the second
-// read after `numEveryOtherReadCalls` was reset.
+// read after `numberOfEveryOtherReadCalls` was reset.
 namespace {
-size_t numEveryOtherReadCalls = 0;
+size_t numberOfEveryOtherReadCalls = 0;
 // Serve the whole run with blocking `pread` (every byte that exists),
 // without involving the real `preadv2(RWF_NOWAIT)`.
 int64_t fullyCached(int fd, const ::iovec* iov, int iovcnt,
@@ -380,20 +380,21 @@ int64_t fullyCached(int fd, const ::iovec* iov, int iovcnt,
     auto* base = static_cast<char*>(iovec.iov_base);
     size_t remaining = iovec.iov_len;
     while (remaining > 0) {
-      const ssize_t numBytesRead = ::pread(fd, base, remaining, offset + total);
-      if (numBytesRead <= 0) {
-        return numBytesRead < 0 ? int64_t{-1} : total;
+      const ssize_t numberOfBytesRead =
+          ::pread(fd, base, remaining, offset + total);
+      if (numberOfBytesRead <= 0) {
+        return numberOfBytesRead < 0 ? int64_t{-1} : total;
       }
-      base += numBytesRead;
-      remaining -= static_cast<size_t>(numBytesRead);
-      total += numBytesRead;
+      base += numberOfBytesRead;
+      remaining -= static_cast<size_t>(numberOfBytesRead);
+      total += numberOfBytesRead;
     }
   }
   return total;
 }
 int64_t everyOtherReadCached(int fd, const ::iovec* iov, int iovcnt,
                              int64_t offset) noexcept {
-  if (numEveryOtherReadCalls++ % 2 == 1) {
+  if (numberOfEveryOtherReadCalls++ % 2 == 1) {
     return pageCacheReadTestHelpers::nothingCached(fd, iov, iovcnt, offset);
   }
   return fullyCached(fd, iov, iovcnt, offset);
@@ -423,7 +424,7 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheMissesGoThroughTheManager) {
     check();
   }
   {
-    numEveryOtherReadCalls = 0;
+    numberOfEveryOtherReadCalls = 0;
     ScopedPageCacheRead inject{&everyOtherReadCached};
     check();
   }

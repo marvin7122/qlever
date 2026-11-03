@@ -309,11 +309,11 @@ std::vector<OffsetRun> splitIntoOffsetRuns(ql::span<const size_t> indices,
   std::vector<OffsetRun> offsetRuns;
   offsetRuns.reserve(runs.size());
   size_t nextOffset = 0;
-  for (auto [firstIndex, numIndices] : runs) {
-    const size_t numOffsets = numIndices + 1;
+  for (auto [firstIndex, numberOfIndicesInRun] : runs) {
+    const size_t numberOfOffsetsInRun = numberOfIndicesInRun + 1;
     offsetRuns.push_back({firstIndex, ql::span<uint64_t>{offsets}.subspan(
-                                          nextOffset, numOffsets)});
-    nextOffset += numOffsets;
+                                          nextOffset, numberOfOffsetsInRun)});
+    nextOffset += numberOfOffsetsInRun;
   }
   return offsetRuns;
 }
