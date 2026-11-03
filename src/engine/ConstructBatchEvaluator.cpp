@@ -90,13 +90,10 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
   // Phase 2: batch-resolve cache misses. `missIds` is deduplicated and sorted
   // (inherited from `sortedIndices`), satisfying the `idsToStringAndType`
   // precondition for sequential VocabIndex I/O. `LocalVocabIndex` Ids are
-  // resolved per block but never inserted into `idCache`: the
-  // `LocalVocabEntry` they point to is owned by the current result block's
-  // `LocalVocab` and would dangle once the export advances to the next block,
-  // making a later hash-colliding lookup compare against freed memory
-  // (heap-use-after-free in `LocalVocabEntry::compareThreeWay`). Resolving
-  // them per block is fine performance-wise: `LocalVocabEntry`s live in RAM,
-  // so there is no disk I/O to amortize across batches.
+  // resolved per block but never inserted into `idCache` (see
+  // `ql::exportIds::canBeCachedForWholeExport` for why). Resolving them per
+  // block is fine performance-wise: `LocalVocabEntry`s live in RAM, so there
+  // is no disk I/O to amortize across batches.
   auto missResolved =
       ql::exportIds::idsToStringAndType(index, missIds, localVocab);
   for (auto&& [id, resolved, rows] :
@@ -106,9 +103,9 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
           std::move(resolved));
     };
     const std::optional<EvaluatedTerm> evaluated =
-        id.getDatatype() == Datatype::LocalVocabIndex
-            ? evaluate(id)
-            : idCache.getOrCompute(id, evaluate);
+        ql::exportIds::canBeCachedForWholeExport(id)
+            ? idCache.getOrCompute(id, evaluate)
+            : evaluate(id);
     for (const size_t row : rows) {
       result[row] = evaluated;
     }
