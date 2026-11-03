@@ -6,6 +6,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/bind_front.h>
+#include <fcntl.h>
 
 #include <algorithm>
 #include <array>
@@ -430,6 +431,16 @@ void VocabularyOnDisk::open(const std::string& filename) {
   id_ = nextId++;
   file_.open(filename, "r");
   offsetsFile_.open(filename + offsetSuffix_, "r");
+  // Switch off the kernel readahead for both files. `lookupBatch` reads
+  // exactly the offsets and words it needs, `operator[]` reads ahead itself
+  // for sequential lookups (see `ReadAheadState`), and `scanAll` reads chunks
+  // of up to `VOCABULARY_SCAN_MAX_WORD_DATA_PER_BATCH`. For scattered lookups,
+  // the kernel readahead mostly reads pages that are never used. The advice
+  // only applies to these two file descriptors. A failure is harmless (the
+  // kernel then keeps reading ahead), so it is ignored.
+  for (int fd : {file_.fd(), offsetsFile_.fd()}) {
+    ::posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM);
+  }
 
   // Read the offset count from the `MmapVectorMetaData` trailer, which is
   // the canonical layout used by both old and new vocabulary files.
