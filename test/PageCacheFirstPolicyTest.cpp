@@ -261,22 +261,22 @@ TEST(ReadPageCacheHits, emptyBatchAndContract) {
 struct RecordingPolicy {
   using BatchHandle = uint64_t;
   // The number of reads of every `addBatch` call.
-  static inline std::vector<size_t> batchSizes;
+  static inline std::vector<size_t> batchSizes_;
   // The file offsets of all reads, in the order of arrival.
-  static inline std::vector<uint64_t> receivedOffsets;
+  static inline std::vector<uint64_t> receivedOffsets_;
   static void reset() {
-    batchSizes.clear();
-    receivedOffsets.clear();
+    batchSizes_.clear();
+    receivedOffsets_.clear();
   }
 
   explicit RecordingPolicy([[maybe_unused]] unsigned ringSize) {}
   void addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 [[maybe_unused]] BatchHandle handle) {
-    batchSizes.push_back(numBytes.size());
+    batchSizes_.push_back(numBytes.size());
     for (auto&& [numberOfBytesToRead, fileOffset, targetBuffer] :
          ::ranges::views::zip(numBytes, offsets, buffers)) {
-      receivedOffsets.push_back(fileOffset);
+      receivedOffsets_.push_back(fileOffset);
       ad_utility::SyncIoPolicy::readFullyOrThrow(
           fd, targetBuffer, numberOfBytesToRead, fileOffset);
     }
@@ -312,8 +312,8 @@ TEST(PageCacheFirstPolicy, onlyTheMissesAreForwarded) {
   batch.add({{0, 4}, {4, 4}, {12, 4}, {8, 4}});
   manager.wait(batch.submitTo(manager, fd));
   EXPECT_THAT(batch.result(), ElementsAre("AAAA", "BBBB", "DDDD", "CCCC"));
-  EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}));
-  EXPECT_THAT(RecordingPolicy::receivedOffsets,
+  EXPECT_THAT(RecordingPolicy::batchSizes_, ElementsAre(size_t{2}));
+  EXPECT_THAT(RecordingPolicy::receivedOffsets_,
               ElementsAre(uint64_t{12}, uint64_t{8}));
   EXPECT_EQ(numPageCacheReads, size_t{3});
 }
@@ -331,8 +331,8 @@ TEST(PageCacheFirstPolicy, aBatchThatIsServedCompletelyHasNothingToWaitFor) {
   batch.add({{0, 4}, {8, 4}});
   manager.wait(batch.submitTo(manager, fd));
   EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
-  EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{0}));
-  EXPECT_TRUE(RecordingPolicy::receivedOffsets.empty());
+  EXPECT_THAT(RecordingPolicy::batchSizes_, ElementsAre(size_t{0}));
+  EXPECT_TRUE(RecordingPolicy::receivedOffsets_.empty());
   EXPECT_EQ(numPageCacheReads, size_t{2});
 }
 
@@ -349,8 +349,8 @@ TEST(PageCacheFirstPolicy, aBatchThatIsNotServedIsPassedOnUnchanged) {
   batch.add({{8, 4}, {0, 4}, {12, 4}});
   manager.wait(batch.submitTo(manager, fd));
   EXPECT_THAT(batch.result(), ElementsAre("CCCC", "AAAA", "DDDD"));
-  EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{3}));
-  EXPECT_THAT(RecordingPolicy::receivedOffsets,
+  EXPECT_THAT(RecordingPolicy::batchSizes_, ElementsAre(size_t{3}));
+  EXPECT_THAT(RecordingPolicy::receivedOffsets_,
               ElementsAre(uint64_t{8}, uint64_t{0}, uint64_t{12}));
   // One page-cache read per run; the three reads are not adjacent.
   EXPECT_EQ(numPageCacheReads, size_t{3});
@@ -373,7 +373,7 @@ TEST(PageCacheFirstPolicy, theFastPathCanBeSwitchedOffAndOn) {
     manager.wait(batch.submitTo(manager, fd));
     EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
     EXPECT_EQ(numPageCacheReads, size_t{0});
-    EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}));
+    EXPECT_THAT(RecordingPolicy::batchSizes_, ElementsAre(size_t{2}));
   }
   base.setPageCacheFastPath(true);
   {
@@ -382,7 +382,8 @@ TEST(PageCacheFirstPolicy, theFastPathCanBeSwitchedOffAndOn) {
     manager.wait(batch.submitTo(manager, fd));
     EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
     EXPECT_EQ(numPageCacheReads, size_t{2});
-    EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}, size_t{0}));
+    EXPECT_THAT(RecordingPolicy::batchSizes_,
+                ElementsAre(size_t{2}, size_t{0}));
   }
 }
 
@@ -403,7 +404,7 @@ TEST(PageCacheFirstPolicy, anUnsupportedFastPathIsLeftAlone) {
     EXPECT_FALSE(ad_utility::pageCacheFastPathIsSupported());
   }
   EXPECT_EQ(numPageCacheReads, size_t{1});
-  EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}, size_t{2}));
+  EXPECT_THAT(RecordingPolicy::batchSizes_, ElementsAre(size_t{2}, size_t{2}));
 }
 
 }  // namespace
