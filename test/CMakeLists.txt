@@ -668,6 +668,8 @@ addLinkAndDiscoverTest(ConstructBatchEvaluatorTest engine)
 
 addLinkAndDiscoverTest(ExportIdsTest engine sparqlParser)
 
+addLinkAndDiscoverTest(IdToStringAndTypeCacheTest engine sparqlParser)
+
 addLinkAndDiscoverTestNoLibs(EnumWithStringsTest Boost::program_options)
 
 addLinkAndDiscoverTest(ConstructTripleGeneratorTest engine)
