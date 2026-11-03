@@ -921,8 +921,8 @@ TEST_F(IoUringPolicyFailureTest, brokenSubmitThrowsAfterReapingTheKernelReads) {
   EXPECT_THAT(batch.result(), Each(Eq(std::string(4, '\0'))));
   EXPECT_EQ(script.numberOfTakenRequests, 0U);
 
-  // A full ring of reads is in the kernel when the submit fails. (A fresh
-  // policy, whose ring holds no no-ops of the first batch.)
+  // 63 reads are in the kernel and one is queued when the submit fails. (A
+  // fresh policy, whose ring holds no no-ops of the first batch.)
   RingScript script2;
   auto policy2 = makePolicy(ringSize, script2);
   ReadBatchForTesting again = batch;

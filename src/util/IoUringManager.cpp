@@ -14,7 +14,6 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <array>
 #include <cerrno>
 #include <chrono>
 #include <exception>
@@ -126,31 +125,17 @@ class LiburingRing final : public IoUringInterface, public NoCopyNoMove {
   }
 
   size_t popCompletions(ql::span<Completion> completions) override {
-    // The common case of a single completion needs no array of CQEs.
-    if (completions.size() == 1) {
-      io_uring_cqe* cqe = nullptr;
-      if (io_uring_peek_cqe(&ring_, &cqe) != 0) {
-        return 0;
-      }
-      completions[0] = Completion{io_uring_cqe_get_data64(cqe), cqe->res};
+    // `io_uring_peek_cqe` does not block. Each completion is copied before
+    // `io_uring_cqe_seen` releases its CQ slot.
+    size_t numberOfPopped = 0;
+    io_uring_cqe* cqe = nullptr;
+    while (numberOfPopped < completions.size() &&
+           io_uring_peek_cqe(&ring_, &cqe) == 0) {
+      completions[numberOfPopped++] =
+          Completion{io_uring_cqe_get_data64(cqe), cqe->res};
       io_uring_cqe_seen(&ring_, cqe);
-      return 1;
     }
-    // `io_uring_peek_batch_cqe` does not block; `io_uring_cq_advance` releases
-    // all of them with one CQ-head update. They are copied first, so nothing
-    // that happens with the results can leave a released CQE unprocessed or a
-    // processed one in the queue. The array is filled by the peek, so it is
-    // not initialized.
-    std::array<io_uring_cqe*, MAX_COMPLETIONS_PER_POP> cqes;
-    const unsigned numberOfReady = io_uring_peek_batch_cqe(
-        &ring_, cqes.data(),
-        static_cast<unsigned>(std::min(cqes.size(), completions.size())));
-    for (unsigned i : ql::views::iota(0u, numberOfReady)) {
-      completions[i] =
-          Completion{io_uring_cqe_get_data64(cqes[i]), cqes[i]->res};
-    }
-    io_uring_cq_advance(&ring_, numberOfReady);
-    return numberOfReady;
+    return numberOfPopped;
   }
 
   std::vector<uint64_t> cancelQueued(uint64_t noOpRequestId) override {
@@ -246,21 +231,20 @@ IoUringPolicy::~IoUringPolicy() {
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::addBatch(int fd,
-                             ql::span<const size_t> numBytesToReadPerRequest,
-                             ql::span<const uint64_t> fileOffsetPerRequest,
-                             ql::span<char*> targetBufferPerRequest,
-                             BatchHandle handle) {
-  const size_t numberOfReads = numBytesToReadPerRequest.size();
+void IoUringPolicy::addBatch(
+    int fd, ql::span<const size_t> numberOfBytesToReadPerRequest,
+    ql::span<const uint64_t> fileOffsetPerRequest,
+    ql::span<char*> targetBufferPerRequest, BatchHandle handle) {
+  const size_t numberOfReads = numberOfBytesToReadPerRequest.size();
 
   if (numberOfReads == 0) {
     return;
   }
   // Allocate before the first read is handed to the kernel, so that running
   // out of memory here throws instead of terminating.
-  batches_[handle] = Batch{numberOfReads};
   inFlightReadsByRequestId_.reserve(inFlightReadsByRequestId_.size() +
                                     numberOfReads);
+  batches_[handle] = Batch{numberOfReads};
 
   std::optional<std::string> submitFailure;
   // Nothing below throws, except if a correctness check fails or memory runs
@@ -270,8 +254,8 @@ void IoUringPolicy::addBatch(int fd,
   ad_utility::terminateIfThrows(
       [&]() {
         size_t numberOfPreparedReads = 0;
-        for (const auto& [numBytesToRead, fileOffset, targetBuf] :
-             ::ranges::views::zip(numBytesToReadPerRequest,
+        for (const auto& [numberOfBytesToRead, fileOffset, targetBuf] :
+             ::ranges::views::zip(numberOfBytesToReadPerRequest,
                                   fileOffsetPerRequest,
                                   targetBufferPerRequest)) {
           // The ring has no free slot, so make room: submit what we have
@@ -296,13 +280,13 @@ void IoUringPolicy::addBatch(int fd,
           // completion, so `drainOneCqe` can recover it.
           const uint64_t requestId = nextRequestIdToAssign_++;
           inFlightReadsByRequestId_[requestId] =
-              InFlightRead{handle, numBytesToRead};
+              InFlightRead{handle, numberOfBytesToRead};
 
           // Prepare the read in the next free SQE (the request is not handed
           // to the kernel until a later submit). The check above guarantees
           // a free SQE.
-          AD_CORRECTNESS_CHECK(ring_->prepareRead(fd, targetBuf, numBytesToRead,
-                                                  fileOffset, requestId));
+          AD_CORRECTNESS_CHECK(ring_->prepareRead(
+              fd, targetBuf, numberOfBytesToRead, fileOffset, requestId));
           ++numberOfInFlightReads_;
           ++numberOfQueuedReads_;
           ++numberOfPreparedReads;
@@ -313,6 +297,10 @@ void IoUringPolicy::addBatch(int fd,
         if (!submitFailure.has_value()) {
           submitFailure = submitQueued();
         }
+        // Between two batches, no read is queued: every read was handed to
+        // the kernel or cancelled. (Only no-ops of cancelled reads may stay.)
+        AD_CORRECTNESS_CHECK(ring_->numberOfQueued() == numberOfNoOpsQueued_,
+                             "addBatch must leave no read queued.");
         if (submitFailure.has_value()) {
           // The reads that were not prepared will never complete. Then reap the
           // reads of the batch that the kernel holds (the cancelled ones were
