@@ -53,6 +53,9 @@ int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
 #ifdef QL_PAGE_CACHE_FAST_PATH
   return preadv2(fd, iov, iovcnt, static_cast<off_t>(offset), RWF_NOWAIT);
 #else
+  // Without `preadv2(RWF_NOWAIT)`, fail like a kernel that does not support
+  // it. `readPageCacheHits` never calls this function then (the fast path is
+  // compiled out), but the hook must have a default on every platform.
   (void)fd;
   (void)iov;
   (void)iovcnt;

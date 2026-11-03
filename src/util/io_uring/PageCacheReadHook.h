@@ -15,32 +15,43 @@
 
 #include <cstdint>
 
-namespace ad_utility {
+// The seam between `readPageCacheHits` (in `PageCacheFirstPolicy.cpp`) and the
+// system call it makes. Whether a read is served from the page cache depends on
+// the kernel, the file system and the state of the page cache, so tests cannot
+// produce `EAGAIN`, short reads or `EOPNOTSUPP` with real files. Instead, they
+// replace the call through this hook (see `ScopedPageCacheRead` in
+// `test/util/PageCacheReadTestHelpers.h`). Production code only includes this
+// header in `PageCacheFirstPolicy.cpp`, which calls the hook and never
+// replaces it.
 
-// In `detail` because only `readPageCacheHits` calls the hook below, and only
-// tests replace it.
-namespace detail {
-// The one page-cache read call per run that
-// `readPageCacheHits` makes, with the same contract (the number of bytes read,
-// or -1 with `errno` set). A replaceable function pointer so that unit tests
-// can inject `EAGAIN`, short reads and `EOPNOTSUPP`; production code never
-// changes it.
+namespace ad_utility::detail {
+// The signature of the one page-cache read per run of adjacent reads that
+// `readPageCacheHits` makes: the arguments and the result of `preadv2` (the
+// number of bytes read, or -1 with `errno` set), without the flags.
 using PageCacheRead = int64_t (*)(int fd, const ::iovec* iov, int iovcnt,
                                   int64_t offset) noexcept;
-// The default: the system call. Where it is not available it fails with
-// `EOPNOTSUPP` (it is never called there).
+
+// Read the file range of `fd` that starts at byte `offset` into the `iovcnt`
+// buffers of `iov` (filled one after the other), but only as far as the range
+// is in the page cache: with `preadv2(RWF_NOWAIT)`, the kernel copies the bytes
+// that it can copy without waiting for the disk. Return the number of bytes
+// read (fewer than requested, possibly 0, if the rest is not cached or the file
+// ends), or -1 with `errno` set (`EAGAIN` if the first byte is not cached,
+// `EOPNOTSUPP` or `ENOSYS` if the kernel or file system does not support the
+// call). Where `preadv2(RWF_NOWAIT)` is not compiled in, fail with
+// `EOPNOTSUPP`.
 int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
                             int64_t offset) noexcept;
+
 // The function `readPageCacheHits` calls (initially `systemPageCacheRead`).
 // Tests replace it by assigning through the returned reference, before any
 // read runs; it must never be `nullptr`, because it is called unconditionally.
 PageCacheRead& pageCacheRead() noexcept;
+
 // Undo the effect of an `EOPNOTSUPP` or `ENOSYS` on
 // `pageCacheFastPathIsSupported()`, for tests that injected one. A no-op where
 // the fast path is not compiled in.
 void resetPageCacheFastPathSupport() noexcept;
-}  // namespace detail
-
-}  // namespace ad_utility
+}  // namespace ad_utility::detail
 
 #endif  // QLEVER_SRC_UTIL_IO_URING_PAGECACHEREADHOOK_H
