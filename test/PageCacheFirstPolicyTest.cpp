@@ -231,6 +231,8 @@ TEST(ReadPageCacheHits, notSupportedDisablesTheFastPath) {
     auto [notServed, buffers] =
         notServedAndBuffers(fd, {{0, 4}, {8, 4}, {12, 2}});
     EXPECT_EQ(notServed, allPositions(3));
+    // The first run fails with `EOPNOTSUPP`, which switches the fast path off,
+    // so the second run is not read.
     EXPECT_EQ(numPageCacheReads, 1u);
     EXPECT_FALSE(ad_utility::pageCacheFastPathIsSupported());
     auto [notServed2, unusedBuffers] = notServedAndBuffers(fd, {{0, 4}});
@@ -421,6 +423,8 @@ TEST(PageCacheFirstPolicy, anUnsupportedFastPathIsLeftAlone) {
     EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
     EXPECT_FALSE(ad_utility::pageCacheFastPathIsSupported());
   }
+  // Only the first read of the first round reaches the page-cache read: its
+  // `EOPNOTSUPP` switches the fast path off for the rest of the test.
   EXPECT_EQ(numPageCacheReads, size_t{1});
   EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}, size_t{2}));
 }
