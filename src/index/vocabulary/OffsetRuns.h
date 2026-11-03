@@ -39,8 +39,7 @@ struct OffsetPair {
   QL_DEFINE_DEFAULTED_EQUALITY_OPERATOR(OffsetPair, offset_, nextOffset_)
 };
 
-// The consecutive indices `firstIndex_, ..., firstIndex_ + numberOfIndices_ -
-// 1`.
+// The `numberOfIndices_` consecutive indices that start at `firstIndex_`.
 struct IndexRun {
   size_t firstIndex_;
   size_t numberOfIndices_;

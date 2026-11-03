@@ -341,7 +341,8 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
 // _____________________________________________________________________________
 // `lookupBatch` reads the runtime parameter for every lookup: with the
 // parameter off, no page-cache read is attempted. The lookups go round the
-// whole pool twice, so every manager is switched off and on again.
+// whole pool with the parameter off and again with it on, so every manager is
+// shown to follow the parameter.
 TEST(VocabularyOnDisk, LookupBatchFollowsThePageCacheFastPathParameter) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   size_t numberOfPageCacheReads = 0;
