@@ -13,18 +13,16 @@
 #include <gmock/gmock.h>
 
 #include <array>
+#include <latch>
 #include <optional>
 #include <random>
-#include <range/v3/range/conversion.hpp>
-#include <range/v3/view/iota.hpp>
-#include <range/v3/view/stride.hpp>
-#include <range/v3/view/transform.hpp>
 #include <vector>
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
+#include "backports/filesystem.h"
 #include "global/Constants.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/File.h"
@@ -324,38 +322,71 @@ TEST(VocabularyOnDisk, LookupBatchOutOfRangeIndexThrows) {
   EXPECT_ANY_THROW(vocab->lookupBatch(indices));
 }
 
-// After a lookup that throws, the vocabulary still serves lookups (the manager
-// that the failed lookup took is given back to the pool).
-TEST(VocabularyOnDisk, LookupBatchWorksAfterAFailedLookup) {
+// A lookup gives its manager back, so sequential lookups share one manager.
+TEST(VocabularyOnDisk, LookupBatchReusesItsManager) {
   auto vocab = createExampleVocabulary();
-  std::array<size_t, 2> invalidIndices{0, 99};
-  EXPECT_ANY_THROW(vocab->lookupBatch(invalidIndices));
+  EXPECT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 0u);
   std::array<size_t, 3> indices{4, 0, 2};
-  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
-      *vocab, vocab->lookupBatch(indices), indices);
+  for ([[maybe_unused]] size_t round : ad_utility::integerRange(size_t{10})) {
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+    EXPECT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 1u);
+  }
 }
 
-// Many threads look up words of the same vocabulary at the same time, so the
-// lookups need more than one manager, and every result is correct.
+// A lookup whose read fails does not give its manager back, because other
+// reads of the failed batch could still be in the kernel. The next lookup
+// creates a new manager.
+TEST(VocabularyOnDisk, LookupBatchDropsTheManagerOfAFailedRead) {
+  const auto words = makeWords(10);
+  auto vocab = createVocabularyFromWords(words);
+  std::array<size_t, 2> firstWords{0, 1};
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, vocab->lookupBatch(firstWords), firstWords);
+  ASSERT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 1u);
+
+  // Cut off the last byte of the words file, so that reading the last word is
+  // a short read.
+  const auto filename = absl::StrCat(gtestCurrentTestName(), ".dat");
+  ql::filesystem::resize_file(filename,
+                              ql::filesystem::file_size(filename) - 1);
+  std::array<size_t, 1> lastWord{words.size() - 1};
+  EXPECT_ANY_THROW(vocab->lookupBatch(lastWord));
+  EXPECT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 0u);
+
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, vocab->lookupBatch(firstWords), firstWords);
+  EXPECT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 1u);
+}
+
+// Many threads look up words of the same vocabulary at the same time. Every
+// result is correct, and the pool holds at most one manager per thread.
 TEST(VocabularyOnDisk, LookupBatchFromManyThreadsAtOnce) {
+  constexpr size_t numberOfWords = 200;
   constexpr size_t numberOfThreads = 32;
   constexpr size_t numberOfRoundsPerThread = 20;
-  auto vocab = createVocabularyFromWords(makeWords(200));
+  auto vocab = createVocabularyFromWords(makeWords(numberOfWords));
   // Every seventh word, in descending order.
-  auto indices = ::ranges::to_vector(
-      ::ranges::views::iota(size_t{0}, size_t{200}) |
-      ::ranges::views::stride(7) |
-      ::ranges::views::transform([](size_t i) { return 199 - i; }));
-  std::vector<ad_utility::JThread> threads;
-  for ([[maybe_unused]] size_t t : ad_utility::integerRange(numberOfThreads)) {
-    threads.emplace_back([&vocab, &indices]() {
-      for ([[maybe_unused]] size_t round :
-           ad_utility::integerRange(numberOfRoundsPerThread)) {
-        vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
-            *vocab, vocab->lookupBatch(indices), indices);
-      }
-    });
+  auto indices = stridedIndices(0, numberOfWords, 7);
+  ql::ranges::reverse(indices);
+  // All threads start their lookups at the same time.
+  std::latch start{numberOfThreads};
+  {
+    std::vector<ad_utility::JThread> threads;
+    for ([[maybe_unused]] size_t t :
+         ad_utility::integerRange(numberOfThreads)) {
+      threads.emplace_back([&vocab, &indices, &start]() {
+        start.arrive_and_wait();
+        for ([[maybe_unused]] size_t round :
+             ad_utility::integerRange(numberOfRoundsPerThread)) {
+          vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+              *vocab, vocab->lookupBatch(indices), indices);
+        }
+      });
+    }
   }
+  EXPECT_GE(vocab->numberOfIdleBatchManagersForTesting(), 1u);
+  EXPECT_LE(vocab->numberOfIdleBatchManagersForTesting(), numberOfThreads);
 }
 
 // Test that `lookupBatch` on a vocabulary that was never opened fails with a
