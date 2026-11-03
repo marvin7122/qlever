@@ -784,6 +784,257 @@ class AlreadyAppliedTest(unittest.TestCase):
         self.assertEqual(posted, [{"state": "applied", "via": "already on the branch"}, "resolved"])
 
 
+A_BASE = "".join(f"int f{i}() {{ return {i}; }}\n" for i in range(1, 31))
+
+
+def a_with(*changes):
+    lines = A_BASE.splitlines(True)
+    for i in changes:
+        lines[i - 1] = f"int f{i}() {{ return {i} * 10; }}\n"
+    return "".join(lines)
+
+
+class SplitTest(unittest.TestCase):
+    """`/split`: a PR (branch `feature`, PR #7 against `master`) changes
+    src/a.cpp at two far-apart places (two hunks) and renames
+    src/old_name.h to src/new_name.h without changing it, the IDM059 case of
+    #323. A local bare repository stands in for marvin7122/qlever."""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        top = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, top)
+        self.origin, self.dir = os.path.join(top, "origin.git"), os.path.join(top, "work")
+        a.git(top, "init", "-q", "--bare", "-b", "master", self.origin)
+        a.git(top, "clone", "-q", f"file://{self.origin}", self.dir)
+        for args in (["config", "user.email", "t@t"], ["config", "user.name", "t"], ["switch", "-q", "-c", "master"]):
+            a.git(self.dir, *args)
+        shutil.copy(os.path.join(REPO_ROOT, ".clang-format"), self.dir)
+        self.write("src/a.cpp", A_BASE)
+        self.write("src/old_name.h", "#pragma once\nint g();\n")
+        self.commit("base")
+        a.git(self.dir, "push", "-q", "origin", "master")
+        a.git(self.dir, "switch", "-q", "-c", "feature")
+        self.write("src/a.cpp", a_with(3, 27))
+        a.git(self.dir, "mv", "src/old_name.h", "src/new_name.h")
+        self.commit("feature")
+        a.git(self.dir, "push", "-q", "origin", "feature")
+        self.files = self.pr_files()
+        self.run_ = a.Run.__new__(a.Run)
+        self.run_.repo, self.run_.number, self.run_.repo_dir, self.run_.results = "o/r", 7, self.dir, []
+        self.run_.applied, self.run_.proposals, self.run_.splits = [], [], []
+        self.run_.kinds, self.run_.statements, self.run_.spend = a.load_kinds(), {}, a.Spend(1.0)
+        self.run_.head_ref = "feature"
+        self.run_.pr = {"base": {"ref": "master", "repo": {"full_name": "o/r"}}}
+        self.run_.fetch_pr_files = lambda: self.files
+        self.opened = []
+        self.run_.open_split_pr = lambda branch, title, body: self.opened.append((branch, title, body)) or (
+            8, "https://github.com/o/r/pull/8")
+        self.task = a.Task(thread(rule="IDM059", path="src/new_name.h", line=1), a.Action.SPLIT,
+                           a.Signal(a.Action.SPLIT, "", "/split", "t"), "IDM059")
+        self.posted = []
+        self.saved = a.reply, a.resolve, a.chat, os.environ.get("CLANG_FORMAT")
+        a.reply = lambda repo, number, thread, text, state: self.posted.append((text, state))
+        a.resolve = lambda thread: self.posted.append("resolved")
+        os.environ["CLANG_FORMAT"] = "clang-format"
+
+    def tearDown(self):
+        a.reply, a.resolve, a.chat, clang_format = self.saved
+        if clang_format is None:
+            os.environ.pop("CLANG_FORMAT", None)
+        else:
+            os.environ["CLANG_FORMAT"] = clang_format
+
+    def write(self, path, content):
+        os.makedirs(os.path.join(self.dir, os.path.dirname(path)), exist_ok=True)
+        with open(os.path.join(self.dir, path), "w") as f:
+            f.write(content)
+
+    def read(self, path):
+        full = os.path.join(self.dir, path)
+        if not os.path.exists(full):
+            return None
+        with open(full) as f:
+            return f.read()
+
+    def commit(self, message):
+        a.git(self.dir, "add", "-A")
+        a.git(self.dir, "commit", "-q", "-m", message)
+
+    def pr_files(self):
+        """The PR's files as GitHub's API lists them (`patch` from the first `@@`)."""
+        def patch(path):
+            diff = a.git(self.dir, "diff", "master...feature", "--", path) + "\n"
+            return diff[diff.index("@@"):].rstrip("\n")
+        return [{"filename": "src/a.cpp", "status": "modified", "changes": 4, "patch": patch("src/a.cpp")},
+                {"filename": "src/new_name.h", "previous_filename": "src/old_name.h", "status": "renamed",
+                 "changes": 0}]
+
+    def plan(self, files):
+        a.chat = lambda messages, spend: {"files": files, "title": "Rename old_name.h", "summary": "An unrelated rename."}
+
+    def apply_to(self, branch, patch, reverse=False):
+        a.git(self.dir, "switch", "-q", "-f", branch)
+        self.run_.git_apply(patch, reverse=reverse)
+
+    # Extraction and validation.
+    def test_hunks_of_a_patch(self):
+        hunks = a.split_hunks(self.files[0]["patch"])
+        self.assertEqual(len(hunks), 2)
+        self.assertIn("return 3 * 10;", hunks[0])
+        self.assertIn("return 27 * 10;", hunks[1])
+        listing = a.describe_pr_files(self.files)
+        self.assertIn("- renamed src/new_name.h (renamed from src/old_name.h)", listing)
+        self.assertIn("hunk 2: @@", listing)
+
+    def test_rename_is_extracted_and_applies_to_the_base(self):
+        selected, problems = a.validate_split_plan({"files": [{"path": "src/new_name.h", "hunks": "all"}]}, self.files)
+        self.assertEqual(problems, [])
+        patch = a.build_split_patch(selected)
+        self.assertIn("rename from src/old_name.h\nrename to src/new_name.h\n", patch)
+        self.apply_to("master", patch)
+        self.assertIsNone(self.read("src/old_name.h"))
+        self.assertEqual(self.read("src/new_name.h"), "#pragma once\nint g();\n")
+        self.assertEqual(self.read("src/a.cpp"), A_BASE, "only the rename")
+        # The previous name finds the file as well.
+        self.assertEqual(a.validate_split_plan({"files": [{"path": "src/old_name.h"}]}, self.files)[1], [])
+
+    def test_partial_file_hunk(self):
+        selected, problems = a.validate_split_plan({"files": [{"path": "src/a.cpp", "hunks": [2]}]}, self.files)
+        self.assertEqual(problems, [])
+        patch = a.build_split_patch(selected)
+        self.apply_to("master", patch)
+        self.assertEqual(self.read("src/a.cpp"), a_with(27), "the base plus the second hunk only")
+        a.git(self.dir, "reset", "-q", "--hard")
+        self.apply_to("feature", patch, reverse=True)
+        self.assertEqual(self.read("src/a.cpp"), a_with(3), "the PR keeps the first hunk only")
+        self.assertEqual(self.read("src/new_name.h"), "#pragma once\nint g();\n", "and the rename")
+
+    def test_all_hunks_count_as_the_whole_file(self):
+        selected, _ = a.validate_split_plan({"files": [{"path": "src/a.cpp", "hunks": [2, 1]}]}, self.files)
+        self.assertEqual(selected[0][1], "all")
+
+    def test_invalid_plans(self):
+        def problems(*files):
+            return a.validate_split_plan({"files": list(files)}, self.files)[1]
+        self.assertIn("not a file of this pull request", problems({"path": "src/other.cpp"})[0])
+        self.assertIn("not among its hunks 1-2", problems({"path": "src/a.cpp", "hunks": [3]})[0])
+        self.assertIn("not among its hunks", problems({"path": "src/a.cpp", "hunks": []})[0])
+        self.assertIn("only the whole file", problems({"path": "src/new_name.h", "hunks": [1]})[0])
+        self.assertIn("chosen twice", problems({"path": "src/a.cpp"}, {"path": "src/a.cpp", "hunks": [1]})[0])
+        self.assertEqual(problems(), ["the plan chooses no change"])
+        large = [{"filename": "big.cpp", "status": "modified", "changes": 9000}]
+        self.assertIn("not available", a.validate_split_plan({"files": [{"path": "big.cpp"}]}, large)[1][0])
+
+    def test_plan_is_retried_once_then_refused(self):
+        answers = [{"files": [{"path": "nope.cpp"}]}, {"files": [{"path": "src/new_name.h"}], "title": "t"}]
+        a.chat = lambda messages, spend: answers.pop(0)
+        _, selected = self.run_.plan_split(a.SplitRequest(self.task, "", False), self.files)
+        self.assertEqual(selected[0][0]["filename"], "src/new_name.h")
+        a.chat = lambda messages, spend: {"files": [{"path": "nope.cpp"}]}
+        with self.assertRaisesRegex(RuntimeError, "does not fit the PR's diff"):
+            self.run_.plan_split(a.SplitRequest(self.task, "", False), self.files)
+
+    # The two steps and their sign-off.
+    def test_split_keyword_and_signoff(self):
+        def request(text):
+            run = a.Run.__new__(a.Run)
+            run.splits = []
+            run.handle(a.Task(self.task.thread, a.Action.SPLIT, a.Signal(a.Action.SPLIT, text, "/split", "t"), "IDM059"))
+            return run.splits[0]
+        self.assertEqual((request("").title, request("").remove_now), ("", False))
+        self.assertEqual((request("Rename the header").title, request("Rename the header").remove_now),
+                         ("Rename the header", False))
+        both = request("Rename the header /approve")
+        self.assertEqual((both.title, both.remove_now), ("Rename the header", True))
+        self.assertFalse(a.removal_approved("/approved later"))
+        self.assertIs(a.reply_signal("/split Rename it", "t").action, a.Action.SPLIT)
+
+    def test_free_text_split_request(self):
+        # IDM059 on #323: "Please split this off into its own PR, open the PR, and link it here".
+        original_harness = a.harness
+        a.harness = lambda: (lambda task, content, statement, spend: a.EditResult(
+            [], "behavior", "", {"split_request": True, "remove_requested": False}), None)
+        self.run_.outdated = lambda task: False
+        task = a.Task(self.task.thread, a.Action.IMPLEMENT, a.Signal(
+            a.Action.IMPLEMENT, "Please split this off into its own PR, open the PR, and link it here", "reply", "t"),
+            "IDM059")
+        try:
+            self.run_.implement(task)
+        finally:
+            a.harness = original_harness
+        self.assertEqual([(s.task, s.title, s.remove_now) for s in self.run_.splits], [(task, "", False)])
+        self.assertEqual(self.posted, [], "no 'no change' reply")
+
+    def test_split_opens_the_pr_and_waits_for_approve(self):
+        self.plan([{"path": "src/new_name.h", "hunks": "all"}])
+        head = a.git(self.dir, "rev-parse", "HEAD")
+        self.run_.split(a.SplitRequest(self.task, "", False))
+        # The new PR's branch: the base plus exactly the rename.
+        branch, title, body = self.opened[0]
+        self.assertEqual((branch, title), ("split/7-1", "Rename old_name.h"))
+        a.git(self.dir, "fetch", "-q", "origin")
+        self.assertEqual(a.git(self.dir, "diff", "--name-status", "-M", "origin/master", "origin/split/7-1"),
+                         "R100\tsrc/old_name.h\tsrc/new_name.h")
+        # This PR is unchanged; the removal waits on its own branch.
+        self.assertEqual(a.git(self.dir, "rev-parse", "origin/feature"), head)
+        self.assertEqual(a.git(self.dir, "rev-parse", "HEAD"), head)
+        text, state = self.posted[0]
+        self.assertEqual(len(self.posted), 1, "not resolved yet")
+        self.assertEqual(state["state"], "proposed")
+        self.assertEqual(state["split"]["pr"], 8)
+        self.assertIn("reply `/approve`", text)
+        self.assertEqual(self.run_.results[0][0], "split: #8 (opened), removed from this PR: awaiting /approve")
+        # `/approve`: the removal is cherry-picked like any approved proposal.
+        task = a.Task(self.task.thread, a.Action.APPROVE, a.Signal(a.Action.APPROVE, "", "/approve", "t"), "IDM059",
+                      proposal=state)
+        self.run_.approve(task)
+        self.assertEqual(self.read("src/old_name.h"), "#pragma once\nint g();\n")
+        self.assertIsNone(self.read("src/new_name.h"))
+        self.assertEqual(self.run_.applied[0].outcome, "split: #8 (opened), removed from this PR: yes")
+        self.assertIn("the change is in #8", self.run_.applied[0].body("0" * 40))
+
+    def test_split_with_approve_removes_at_once(self):
+        self.plan([{"path": "src/a.cpp", "hunks": [2]}])
+        self.run_.split(a.SplitRequest(self.task, "Scale f27", True))
+        self.assertEqual(self.opened[0][1], "Scale f27", "the owner's title wins")
+        a.git(self.dir, "fetch", "-q", "origin")
+        self.assertEqual(a.git(self.dir, "show", "origin/split/7-1:src/a.cpp") + "\n", a_with(27))
+        self.assertEqual(a.git(self.dir, "show", "origin/feature:src/a.cpp") + "\n", a_with(3))
+        text, state = self.posted[0]
+        self.assertEqual((state["state"], self.posted[1]), ("applied", "resolved"))
+        self.assertEqual(self.run_.results[0][0], "split: #8 (opened), removed from this PR: yes")
+
+    def test_change_that_does_not_apply_to_the_base(self):
+        # The base moved on: the split branch is not created, nothing is opened.
+        a.git(self.dir, "switch", "-q", "master")
+        self.write("src/a.cpp", A_BASE.replace("return 27;", "return 270;"))
+        self.commit("base moved")
+        a.git(self.dir, "push", "-q", "origin", "master")
+        a.git(self.dir, "switch", "-q", "feature")
+        self.plan([{"path": "src/a.cpp", "hunks": [2]}])
+        with self.assertRaisesRegex(RuntimeError, "does not apply to `master`"):
+            self.run_.split(a.SplitRequest(self.task, "", False))
+        self.assertEqual(self.opened, [])
+        self.assertNotIn("split/7-1", a.git(self.dir, "branch", "--list"))
+        self.assertEqual(a.git(self.dir, "rev-parse", "--abbrev-ref", "HEAD"), "feature")
+
+    def test_pr_body(self):
+        selected, _ = a.validate_split_plan({"files": [{"path": "src/new_name.h"}, {"path": "src/a.cpp", "hunks": [2]}]},
+                                            self.files)
+        body = a.split_pr_body("o/r", 7, "https://github.com/o/r/pull/7#discussion_r1", "IDM059",
+                               "An unrelated rename.", selected)
+        self.assertEqual(body, (
+            "Split off from #7 at the owner's request in [this review thread]"
+            "(https://github.com/o/r/pull/7#discussion_r1) (IDM059).\n\nAn unrelated rename.\n\n"
+            "Contains, taken unchanged from #7:\n"
+            "- `src/new_name.h` (renamed from `src/old_name.h`)\n"
+            "- `src/a.cpp`, hunk 2\n\n"
+            "Opened by the apply-replies flow of marvin7122/qlever; #7 keeps the change until its owner approves "
+            "removing it there.\n"))
+
+
 class ConfigTest(unittest.TestCase):
     def test_backend_override(self):
         env = {"OCR_LLM_URL": "u", "OCR_LLM_MODEL": "m", "OCR_LLM_AUTH_TOKEN": "t", "OCR_APPLY_LLM_MODEL": "m2"}

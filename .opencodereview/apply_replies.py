@@ -26,6 +26,11 @@ summary lists every thread with an owner signal, skipped ones with the reason):
                                   without a link: the one finding anchored on
                                   overlapping lines; if that is ambiguous, ask)
   🚀                                            already fixed: resolve
+  `/split [title]`, or a reply asking to split  move the change into a PR of
+                                  its own (see `Run.split`): a draft PR against
+                                  the same base from `split/<pr>-<thread>`; its
+                                  removal from this PR waits for `/approve`
+                                  unless the same reply says `/approve`
 
 Code changes are split by kind. A mechanical change (rule listed in
 apply_kinds.json, or a free-text instruction the model classifies as
@@ -55,7 +60,8 @@ before its first model call if the account cannot pay OCR_APPLY_BUDGET_USD
 Usage: apply_replies.py --mode replies|decisions|approve-all --repo-dir <checkout>
 Environment: GH_TOKEN, REPO (owner/name), PR_NUMBER, optional OCR_APPLY_OWNER,
 OCR_APPLY_ALLOWED_REPO (default marvin7122/qlever), OCR_APPLY_FINDING_AUTHORS,
-CLANG_FORMAT, the prices OCR_PRICE_INPUT_PER_M / _CACHE_HIT_PER_M / _OUTPUT_PER_M.
+CLANG_FORMAT, the prices OCR_PRICE_INPUT_PER_M / _CACHE_HIT_PER_M / _OUTPUT_PER_M,
+OCR_APPLY_PR_TOKEN (opens split-off PRs as the fan-out app instead of as Actions).
 """
 import argparse
 import dataclasses
@@ -66,6 +72,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -98,6 +105,7 @@ class Action(enum.Enum):
     RESOLVE = "resolve"
     APPROVE = "approve"
     REJECT = "reject"
+    SPLIT = "split"  # move the finding's change into a separate PR
     COMMITTED = "committed"  # the owner committed a proposal's suggestions with GitHub's button
 
 
@@ -134,6 +142,7 @@ KEYWORD_ACTIONS = {
     "/wrong": Action.ACKNOWLEDGE,
     "/skip": Action.ACKNOWLEDGE,
     "/duplicate": Action.DUPLICATE,
+    "/split": Action.SPLIT,
 }
 # Keywords that are PR comments, not thread replies; ignored inside threads.
 PR_KEYWORDS = {"/apply-replies", "/approve-all"}
@@ -695,8 +704,12 @@ Finding:
 Answer with JSON only:
 {{"edits": [{{"start": <first line>, "end": <last line>, "replacement": "<the new text of exactly those lines>"}}],
   "kind": "mechanical" or "behavior",
-  "summary": "<one sentence: what the change does>"}}
-{edit_rules}"""
+  "summary": "<one sentence: what the change does>",
+  "split_request": false,
+  "remove_requested": false}}
+{edit_rules} If the owner asks to move this change out of this pull request into a separate pull request (for
+example "split this off into its own PR"), give no edits and set "split_request": true; set "remove_requested": true
+only if the owner also explicitly asks to remove the change from this pull request."""
 
 REWRITE_PROMPT = """You rewrite one code review finding on a C++ repository so the reader can act on it at once.
 
@@ -1133,6 +1146,163 @@ class AlreadyApplied(Exception):
 
 
 # _____________________________________________________________________________
+# Splitting a change off into a PR of its own.
+
+SPLIT_PROMPT = """The owner of pull request #{number} asks to move the change of a code review finding out of it,
+into a separate pull request against the same base branch.
+
+Finding (rule {rule}, at {path}:{line}):
+{finding}
+
+Owner's request: {request}
+
+The files of the pull request's diff, with their hunks numbered (each hunk: its header and its first changed lines):
+{files}
+
+Choose exactly the change to move: whole files, or single hunks of modified files. Only whole files can be chosen
+for added, removed or renamed files. Answer with JSON only:
+{{"files": [{{"path": "<path as listed>", "hunks": "all" or [<hunk numbers>]}}],
+  "title": "<title of the new pull request, imperative, at most 70 characters>",
+  "summary": "<one or two sentences: what the new pull request contains and why it is separate>"}}"""
+
+
+@dataclasses.dataclass
+class SplitRequest:
+    """An owner's request to move a finding's change into a PR of its own.
+    `title` is the one given with `/split <title>` (or empty); `remove_now`
+    is true only if the owner explicitly asked to also remove the change
+    from this PR, which otherwise waits for `/approve`."""
+    task: Task
+    title: str
+    remove_now: bool
+
+
+def removal_approved(text):
+    """True if a `/split` request also approves removing the change from this
+    PR: the owner wrote `/approve` in the same reply."""
+    return bool(re.search(r"(^|\s)/approve(\s|$)", text or ""))
+
+
+def split_hunks(patch):
+    """The hunks of a file's patch (from the PR's file list), each from its
+    `@@` header up to the next one, with their newlines."""
+    hunks = []
+    for line in (patch or "").splitlines(True):
+        if line.startswith("@@"):
+            hunks.append(line)
+        elif hunks:
+            hunks[-1] += line
+    return [h if h.endswith("\n") else h + "\n" for h in hunks]
+
+
+def describe_pr_files(files, limit=30000):
+    """The PR's files and numbered hunks for the split prompt."""
+    out = []
+    for f in files:
+        rename = f" (renamed from {f['previous_filename']})" if f.get("previous_filename") else ""
+        out.append(f"- {f['status']} {f['filename']}{rename}")
+        for i, hunk in enumerate(split_hunks(f.get("patch")), 1):
+            lines = hunk.splitlines()
+            changed = [l for l in lines[1:] if l.startswith(("+", "-"))][:3]
+            out.append(f"  hunk {i}: {lines[0]}" + "".join(f"\n      {l[:120]}" for l in changed))
+    text = "\n".join(out)
+    return text if len(text) <= limit else text[:limit] + "\n[file list truncated]"
+
+
+def validate_split_plan(plan, files):
+    """([(file, "all" or [hunk numbers])], problems) for the model's plan:
+    every path is a file of the PR's diff, every hunk number exists, and
+    added, removed and renamed files are only moved whole."""
+    by_path = {f["filename"]: f for f in files}
+    by_path.update({f["previous_filename"]: f for f in files if f.get("previous_filename")})
+    selected, problems = [], []
+    for item in plan.get("files") or []:
+        path = item.get("path") if isinstance(item, dict) else None
+        file = by_path.get(path)
+        if file is None:
+            problems.append(f"`{path}` is not a file of this pull request's diff")
+            continue
+        hunks = item.get("hunks", "all")
+        count = len(split_hunks(file.get("patch")))
+        if file.get("changes") and not file.get("patch"):
+            problems.append(f"the diff of `{file['filename']}` is not available (binary or too large)")
+            continue
+        if hunks != "all":
+            if file["status"] != "modified":
+                problems.append(f"`{file['filename']}` is {file['status']}: only the whole file can be moved")
+                continue
+            if (not isinstance(hunks, list) or not hunks
+                    or not all(isinstance(h, int) and 1 <= h <= count for h in hunks) or len(set(hunks)) != len(hunks)):
+                problems.append(f"the hunks {hunks} of `{file['filename']}` are not among its hunks 1-{count}")
+                continue
+            if len(hunks) == count:
+                hunks = "all"
+        if any(f is file for f, _ in selected):
+            problems.append(f"`{file['filename']}` is chosen twice")
+            continue
+        selected.append((file, hunks if hunks == "all" else sorted(hunks)))
+    if not selected and not problems:
+        problems.append("the plan chooses no change")
+    return selected, problems
+
+
+def build_split_patch(selected):
+    """A patch (for `git apply --recount`) of exactly the selected files and
+    hunks of the PR's diff, relative to its base."""
+    parts = []
+    for file, hunks in selected:
+        path, status = file["filename"], file["status"]
+        old = file.get("previous_filename") or path
+        header = [f"diff --git a/{old} b/{path}"]
+        if status == "added":
+            header += ["new file mode 100644", "--- /dev/null", f"+++ b/{path}"]
+        elif status == "removed":
+            header += ["deleted file mode 100644", f"--- a/{path}", "+++ /dev/null"]
+        else:
+            if status == "renamed":
+                header += [f"rename from {old}", f"rename to {path}"]
+            if file.get("patch"):
+                header += [f"--- a/{old}", f"+++ b/{path}"]
+        chosen = split_hunks(file.get("patch"))
+        if hunks != "all":
+            chosen = [chosen[i - 1] for i in hunks]
+        parts.append("\n".join(header) + "\n" + "".join(chosen))
+    return "".join(parts)
+
+
+HUNK_RANGE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.M)
+
+
+def changed_lines_of_diff(diff):
+    """{path: the changed new-side lines} of a unified diff with `-U0`."""
+    lines, path = {}, None
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            path = line[6:] if line.startswith("+++ b/") else None
+        elif line.startswith("@@") and path:
+            match = HUNK_RANGE.match(line)
+            start, count = int(match[1]), int(match[2]) if match[2] is not None else 1
+            lines.setdefault(path, []).extend(range(start, start + count))
+    return {p: l for p, l in lines.items() if l}
+
+
+def describe_selection(selected):
+    return [f"`{f['filename']}`" + (f" (renamed from `{f['previous_filename']}`)" if f.get("previous_filename") else "")
+            + ("" if hunks == "all" else f", hunk{'s' if len(hunks) > 1 else ''} {', '.join(map(str, hunks))}")
+            for f, hunks in selected]
+
+
+def split_pr_body(repo, number, thread_url, rule, summary, selected):
+    """The body of a split-off PR: why it exists, where it comes from, and
+    exactly what it contains."""
+    return (f"Split off from #{number} at the owner's request in [this review thread]({thread_url}) ({rule}).\n\n"
+            f"{summary}\n\nContains, taken unchanged from #{number}:\n"
+            + "".join(f"- {line}\n" for line in describe_selection(selected))
+            + f"\nOpened by the apply-replies flow of marvin7122/qlever; #{number} keeps the change until its owner "
+            f"approves removing it there.\n")
+
+
+# _____________________________________________________________________________
 # The run.
 
 @dataclasses.dataclass
@@ -1143,6 +1313,7 @@ class Applied:
     sha: str
     body: object
     state: dict
+    outcome: str = "applied"
 
 
 @dataclasses.dataclass
@@ -1170,6 +1341,7 @@ class Run:
         self.handled_earlier = []  # owner signals an earlier run handled, listed collapsed
         self.applied = []
         self.proposals = []
+        self.splits = []
         self.one_click = [0, 0]  # proposals posted as one-click suggestions, proposals posted
         self.thread_of_comment = {}  # first comment id -> review thread, for resolving suggestion threads
         pr = json.loads(gh("api", f"repos/{self.repo}/pulls/{self.number}"))
@@ -1310,6 +1482,9 @@ class Run:
             self.record("duplicate", task, f"of {first['url']}")
         elif action is Action.IMPLEMENT:
             self.implement(task)
+        elif action is Action.SPLIT:
+            self.splits.append(SplitRequest(task, title=re.sub(r"(^|\s)/approve(?=\s|$)", " ", task.signal.text).strip(),
+                                            remove_now=removal_approved(task.signal.text)))
         elif action is Action.REWRITE:
             self.rewrite(task)
         elif action is Action.APPROVE:
@@ -1376,6 +1551,10 @@ class Run:
         thread = task.thread
         old = self.file_content(thread["path"])
         result = harness()[0](task, old, self.statements.get(task.rule, ""), self.spend)
+        if result.extra.get("split_request") and task.signal.text:
+            # The owner's instruction asks for a separate PR (see `split`).
+            self.splits.append(SplitRequest(task, title="", remove_now=bool(result.extra.get("remove_requested"))))
+            return
         if not result.edits:
             reply(self.repo, self.number, thread, f"No change made: {result.summary}", {"state": "no-change"})
             self.record("no change", task, result.summary)
@@ -1433,10 +1612,151 @@ class Run:
             time.sleep(2)
         return local
 
+    def fetch_pr_files(self):
+        """The PR's files with their patches (the diff against its base)."""
+        pages = json.loads(gh("api", "--paginate", "--slurp", f"repos/{self.repo}/pulls/{self.number}/files?per_page=100"))
+        return [f for page in pages for f in page]
+
     def fetch_hunks(self):
         """{path: the right-side line ranges of its hunks in the PR's diff}."""
-        pages = json.loads(gh("api", "--paginate", "--slurp", f"repos/{self.repo}/pulls/{self.number}/files?per_page=100"))
-        return {f["filename"]: diff_hunks(f.get("patch")) for page in pages for f in page}
+        return {f["filename"]: diff_hunks(f.get("patch")) for f in self.fetch_pr_files()}
+
+    # Splits, after the proposals.
+    def git_apply(self, patch, reverse=False):
+        """Apply `patch` to the working tree and the index (reversed if asked),
+        then clang-format the changed lines and stage them."""
+        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+            f.write(patch)
+            name = f.name
+        try:
+            git(self.repo_dir, "apply", "--index", "--recount", *(["-R"] if reverse else []), name)
+        finally:
+            os.unlink(name)
+        for path, lines in changed_lines_of_diff(git(self.repo_dir, "diff", "--cached", "-U0", "--no-color")).items():
+            clang_format_lines(self.repo_dir, path, lines)
+            git(self.repo_dir, "add", "--", path)
+
+    def plan_split(self, request, files):
+        """The validated selection of the PR's change to move (one retry if
+        the model's plan does not fit the PR's diff)."""
+        thread = request.task.thread
+        request_text = request.title or request.task.signal.text or "split this change off into its own PR"
+        messages = [{"role": "user", "content": SPLIT_PROMPT.format(
+            number=self.number, rule=request.task.rule, path=thread["path"], line=thread["line"],
+            finding=finding_text(thread["comments"][0]["body"]), request=request_text,
+            files=describe_pr_files(files))}]
+        for _ in range(2):
+            plan = chat(messages, self.spend)
+            selected, problems = validate_split_plan(plan, files)
+            if not problems:
+                return plan, selected
+            messages += [{"role": "assistant", "content": json.dumps(plan)},
+                         {"role": "user", "content": "This plan does not fit the pull request's diff: "
+                          + json.dumps(problems) + ". Answer again with paths and hunks as listed."}]
+        raise RuntimeError(f"the split plan does not fit the PR's diff: {'; '.join(problems)}")
+
+    def open_split_pr(self, branch, title, body):
+        """Open the split-off PR as a draft; returns (number, url). With
+        OCR_APPLY_PR_TOKEN (the fan-out app's token) it opens it as the app."""
+        env = dict(os.environ)
+        if os.environ.get("OCR_APPLY_PR_TOKEN"):
+            env["GH_TOKEN"] = os.environ["OCR_APPLY_PR_TOKEN"]
+        result = subprocess.run(["gh", "pr", "create", "-R", self.repo, "--draft", "--base", self.pr["base"]["ref"],
+                                 "--head", branch, "--title", title, "--body", body],
+                                capture_output=True, text=True, env=env)
+        if result.returncode != 0:
+            error = (result.stderr or result.stdout).strip()
+            if "not permitted to create or approve pull requests" in error:
+                raise RuntimeError("GitHub Actions may not open pull requests in this repository: allow it under "
+                                   "Settings > Actions > General > Workflow permissions (\"Allow GitHub Actions to "
+                                   "create and approve pull requests\"), or set OCR_APPLY_PUSH_TOKEN=app to open it "
+                                   f"as the fan-out app; branch `{branch}` is pushed")
+            raise RuntimeError(f"opening the pull request failed: {error[:300]}")
+        url = result.stdout.strip().splitlines()[-1]
+        return int(url.rstrip("/").rsplit("/", 1)[-1]), url
+
+    def post_splits(self):
+        for request in self.splits:
+            try:
+                self.split(request)
+            except BudgetExhausted:
+                self.record("skipped", request.task, "the budget is used up")
+            except Exception as error:  # noqa: BLE001 - one failed thread must not stop the others
+                log(f"split {request.task.thread['path']}:{request.task.thread['line']}: {error!r}")
+                reply(self.repo, self.number, request.task.thread, f"Could not split this change off: {error}",
+                      {"state": "failed"})
+                self.record("failed", request.task, f"split: {str(error)[:200]}")
+
+    def split(self, request):
+        """Move the finding's change into a new draft PR against the same
+        base, and prepare its removal from this PR: committed at once only
+        if the owner asked for that too, else proposed for `/approve`."""
+        task, thread = request.task, request.task.thread
+        if (self.pr["base"]["repo"] or {}).get("full_name") != self.repo:
+            raise RuntimeError("the pull request's base is in another repository")
+        plan, selected = self.plan_split(request, self.fetch_pr_files())
+        patch = build_split_patch(selected)
+        title = (request.title or plan.get("title") or f"Split off from #{self.number}")[:100]
+        head = git(self.repo_dir, "rev-parse", "HEAD")
+        # 1. The new PR: the change, applied to the base branch.
+        base = self.pr["base"]["ref"]
+        git(self.repo_dir, "fetch", "-q", "--depth=1", "origin", base)
+        split_branch = self.new_branch(f"split/{self.number}-{thread['comments'][0]['id']}")
+        git(self.repo_dir, "switch", "-q", "-c", split_branch, "FETCH_HEAD")
+        pushed = False
+        try:
+            try:
+                self.git_apply(patch)
+            except RuntimeError as error:
+                raise RuntimeError(f"the change does not apply to `{base}`: {error}") from None
+            git(self.repo_dir, "commit", "-q", "-m",
+                f"{title}\n\nSplit off from #{self.number}: {thread['comments'][0]['url']}")
+            git(self.repo_dir, "push", "-q", "origin", f"{split_branch}:{split_branch}")
+            pushed = True
+        finally:
+            git(self.repo_dir, "switch", "-q", "-f", self.head_ref)
+            git(self.repo_dir, "reset", "-q", "--hard", head)
+            if not pushed:
+                git(self.repo_dir, "branch", "-q", "-D", split_branch)
+        number, url = self.open_split_pr(split_branch, title, split_pr_body(
+            self.repo, self.number, thread["comments"][0]["url"], task.rule, plan.get("summary", ""), selected))
+        # 2. Its removal from this PR: the same change, reversed.
+        try:
+            self.git_apply(patch, reverse=True)
+        except RuntimeError as error:
+            git(self.repo_dir, "reset", "-q", "--hard", head)
+            raise RuntimeError(f"opened #{number} ({url}), but the change cannot be removed here: {error}") from None
+        moved = describe_selection(selected)
+        info = {"pr": number, "url": url, "branch": split_branch, "files": moved}
+        message = f"Remove the change split off into #{number}\n\nFinding: {thread['comments'][0]['url']}"
+        intro = (f"Split off into #{number} ({url}), a draft against `{base}`, with:\n"
+                 + "".join(f"- {line}\n" for line in moved))
+        if request.remove_now:
+            git(self.repo_dir, "commit", "-q", "-m", message)
+            git(self.repo_dir, "push", "-q", "origin", f"HEAD:{self.head_ref}")
+            sha = git(self.repo_dir, "rev-parse", "HEAD")
+            reply(self.repo, self.number, thread, intro + f"\nRemoved from this PR in [{sha[:9]}]({self.commit_url(sha)}).",
+                  {"state": "applied", "commit": sha, "split": info})
+            if not thread["isResolved"]:
+                resolve(thread)
+            self.record(f"split: #{number} (opened), removed from this PR: yes", task, url)
+            return
+        removal = self.new_branch(f"apply/{self.number}-{thread['comments'][0]['id']}")
+        git(self.repo_dir, "switch", "-q", "-c", removal)
+        try:
+            git(self.repo_dir, "commit", "-q", "-m", message)
+            git(self.repo_dir, "push", "-q", "origin", f"{removal}:{removal}")
+            sha = git(self.repo_dir, "rev-parse", "HEAD")
+        finally:
+            git(self.repo_dir, "switch", "-q", "-f", self.head_ref)
+            git(self.repo_dir, "reset", "-q", "--hard", head)
+        reply(self.repo, self.number, thread,
+              intro + f"\nRemoving it from this PR is a change of this PR and waits for your sign-off: reply "
+              f"`/approve` to apply commit [{sha[:9]}]({self.commit_url(sha)}) on `{removal}`, or `/reject` to keep "
+              f"the change here as well.",
+              {"state": "proposed", "branch": removal, "commit": sha, "base": head, "one_click": False,
+               "suggestions": [], "split": info})
+        self.record(f"split: #{number} (opened), removed from this PR: awaiting /approve", task, url)
 
     def post_suggestion_comment(self, suggestion, head_sha, thread, rule):
         """A review comment of its own for a suggestion outside the thread's
@@ -1526,6 +1846,14 @@ class Run:
             self.record("failed", task, "conflict")
             return
         sha = git(self.repo_dir, "rev-parse", "HEAD")
+        split = proposal.get("split")
+        if split:
+            # The removal of a change split off into its own PR (see `split`).
+            self.applied.append(Applied(task, sha, lambda s: f"Removed from this PR in [{s[:9]}]({self.commit_url(s)}); "
+                                        f"the change is in #{split['pr']} ({split['url']}).",
+                                        {"state": "applied", "split": split},
+                                        f"split: #{split['pr']} (opened), removed from this PR: yes"))
+            return
         self.applied.append(Applied(task, sha, lambda s: f"Applied in [{s[:9]}]({self.commit_url(s)}) "
                                     f"(approved proposal {proposal['commit'][:9]}).", {"state": "applied"}))
 
@@ -1547,7 +1875,7 @@ class Run:
             if item.task.proposal:
                 self.delete_branch(item.task.proposal["branch"])
                 self.resolve_suggestion_threads(item.task.proposal)
-            self.record("applied", item.task, item.sha[:9])
+            self.record(item.outcome, item.task, item.sha[:9])
 
     def summary(self):
         counts = {}
@@ -1588,7 +1916,7 @@ class Run:
         tasks.sort(key=lambda t: t.action is not Action.DUPLICATE)
         log(f"{len(tasks)} task(s): " + ", ".join(f"{t.action.value}@{t.thread['path']}:{t.thread['line']}"
                                                    for t in tasks))
-        needs_model = (Action.IMPLEMENT, Action.REWRITE)
+        needs_model = (Action.IMPLEMENT, Action.REWRITE, Action.SPLIT)
         if any(t.action in needs_model for t in tasks):
             url, _, token = backend()
             ok, reason = check_balance(url, token, self.spend.budget)
@@ -1608,6 +1936,7 @@ class Run:
                 self.record("failed", task, str(error)[:200])
         self.push_and_report_applied()
         self.post_proposals()
+        self.post_splits()
         if self.results or self.handled_earlier:
             gh("pr", "comment", str(self.number), "-R", self.repo, "--body", self.summary())
 
