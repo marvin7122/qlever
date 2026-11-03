@@ -134,9 +134,11 @@ auto transform(Range&& input, F unaryOp) {
   return out;
 }
 
-// Throw an exception unless all the given ranges have the same length.
-// Intended for validating parallel spans or ranges that are meant to be
-// consumed element by element (see `zipVectors` below).
+// Throw an `ad_utility::Exception` (a contract violation) unless all the given
+// ranges have the same `ql::ranges::size`, so that parallel ranges can be
+// consumed element by element without an out-of-range access (see `zipVectors`
+// below). All arguments must be sized ranges. A single range has nothing to be
+// compared with, so it always passes.
 template <typename Range0, typename... Ranges>
 void validateSameLength(const Range0& first, const Ranges&... rest) {
   const auto n = ql::ranges::size(first);

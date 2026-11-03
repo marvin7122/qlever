@@ -199,6 +199,26 @@ TEST(AlgorithmTest, removeDuplicates) {
 };
 
 // _____________________________________________________________________________
+TEST(AlgorithmTest, validateSameLength) {
+  std::vector<int> three{1, 2, 3};
+  std::vector<char> alsoThree{'a', 'b', 'c'};
+  std::vector<double> two{1.0, 2.0};
+  // Equal lengths pass, and so does a single range or a range of length 0.
+  EXPECT_NO_THROW(validateSameLength(three, alsoThree, three));
+  EXPECT_NO_THROW(validateSameLength(three));
+  EXPECT_NO_THROW(validateSameLength(std::vector<int>{}, std::string{}));
+  // Any mismatch throws, wherever it is.
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      validateSameLength(three, two),
+      ::testing::HasSubstr("The ranges must have the same length"),
+      ad_utility::Exception);
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      validateSameLength(three, alsoThree, two),
+      ::testing::HasSubstr("The ranges must have the same length"),
+      ad_utility::Exception);
+}
+
+// _____________________________________________________________________________
 TEST(AlgorithmTest, ZipVectors) {
   // Vectors of different size are not allowed.
   ASSERT_ANY_THROW(
