@@ -565,7 +565,8 @@ TEST(IoUringPolicyWave, signalDuringWaveWait) {
 
   std::array<int, 2> pipeFds{};
   ASSERT_EQ(pipe(pipeFds.data()), 0);
-  const auto [readFd, writeFd] = pipeFds;
+  const int readFd = pipeFds[0];
+  const int writeFd = pipeFds[1];
   absl::Cleanup closePipe{[readFd, writeFd] {
     close(readFd);
     close(writeFd);
