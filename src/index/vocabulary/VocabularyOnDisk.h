@@ -5,7 +5,6 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
-#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
