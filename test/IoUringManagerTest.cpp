@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <climits>
 #include <csignal>
@@ -544,6 +545,48 @@ TEST_F(IoUringPolicyTest, failureReapedByAddBatchIsThrownByItsOwnBatch) {
                                HasSubstr("read fewer bytes than requested"));
   // The successful read of the failed batch landed in its buffer.
   EXPECT_THAT(bad.result(), ::testing::ElementsAre("AAAA", ::testing::_));
+}
+
+// A read that the kernel fails (here with `EBADF`, because the descriptor is
+// the write end of a pipe) is thrown by the `wait()` of its batch, with the
+// request id and the `errno` text.
+TEST_F(IoUringPolicyTest, ioErrorIsThrownByItsOwnBatch) {
+  std::array<int, 2> pipeFds{};
+  ASSERT_EQ(pipe(pipeFds.data()), 0);
+  absl::Cleanup closePipe{[&pipeFds] {
+    close(pipeFds[0]);
+    close(pipeFds[1]);
+  }};
+  ReadBatchForTesting batch;
+  batch.add(0, 4);
+  ad_utility::BatchManager<ad_utility::IoUringPolicy> manager(64);
+  auto handle = batch.submitTo(manager, pipeFds[1]);
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      manager.wait(handle),
+      AllOf(HasSubstr("I/O error in IoUringPolicy read operation for request"),
+            HasSubstr(std::strerror(EBADF))));
+}
+
+// A failed batch that is never waited for is reported by the destructor, so
+// that its error does not get lost.
+TEST_F(IoUringPolicyTest, unwaitedFailureIsLoggedByTheDestructor) {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
+  auto [restoreLog, logStream] = setGlobalLoggingStreamToStringStream();
+  ReadBatchForTesting bad;
+  bad.add(8, 16);  // past EOF: short read
+  ReadBatchForTesting good;
+  good.add(0, 4);
+  {
+    // A ring of 1 slot, which `bad` fills, so submitting `good` reaps the
+    // failed read of `bad` in `addBatch`.
+    ad_utility::BatchManager<ad_utility::IoUringPolicy> manager(1);
+    bad.submitTo(manager, fd);
+    manager.wait(good.submitTo(manager, fd));
+  }
+  EXPECT_THAT(logStream.str(),
+              ifLogLevelIsCompiledIn<LogLevel::Enum::WARN>(
+                  AllOf(HasSubstr("1 failed batch(es) that were never"),
+                        HasSubstr("read fewer bytes than requested"))));
 }
 
 // A signal can end the wait for a wave early: with at least one CQE ready,
