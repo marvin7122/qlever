@@ -44,5 +44,5 @@ endif()
 if (NOT EMSCRIPTEN)
     add_library(server Server.cpp ResponseJson.cpp HttpApiHelpers.cpp)
     qlever_target_link_libraries(server engine qlever_util index sparqlParser global http
-    qlever metrics)
+    qlever metrics parallelCompressorStream)
 endif ()

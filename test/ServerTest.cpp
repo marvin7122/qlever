@@ -5,6 +5,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <boost/asio/thread_pool.hpp>
 #include <boost/beast/http.hpp>
 #include <future>
 #include <optional>
@@ -21,9 +22,11 @@
 #include "engine/Server.h"
 #include "engine/UpdateMetadata.h"
 #include "parser/SparqlParser.h"
+#include "util/CompressorStream.h"
 #include "util/GTestHelpers.h"
 #include "util/HttpRequestHelpers.h"
 #include "util/IndexTestHelpers.h"
+#include "util/ParallelCompressorStream.h"
 #include "util/http/HttpUtils.h"
 #include "util/http/UrlParser.h"
 #include "util/json.h"
@@ -82,6 +85,55 @@ TEST(ServerTest, chooseBestFittingMediaType) {
 }
 
 // _____________________________________________________________________________
+// _____________________________________________________________________________
+namespace {
+// Yield the `text` in pieces of 1000 bytes.
+cppcoro::generator<std::string> inPiecesOf1000(std::string text) {
+  for (size_t i = 0; i < text.size(); i += 1000) {
+    co_yield text.substr(i, 1000);
+  }
+}
+
+std::string concatenate(cppcoro::generator<std::string> generator) {
+  std::string result;
+  for (const std::string& piece : generator) {
+    result += piece;
+  }
+  return result;
+}
+}  // namespace
+
+// The results of queries are compressed sequentially by default, and with
+// `parallel-response-compression` by `compressStreamInParallel` on the given
+// executor. The two outputs differ for a body of several blocks (even though
+// both decompress to the body), so the test can tell them apart.
+TEST(ServerTest, compressBodyForQuery) {
+  using ad_utility::content_encoding::CompressionMethod;
+  boost::asio::thread_pool pool{2};
+  std::string text;
+  for (size_t i = 0;
+       text.size() <
+       3 * ad_utility::streams::MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK;
+       ++i) {
+    absl::StrAppend(&text, "\"row\",", i, "\n");
+  }
+  for (auto method : {CompressionMethod::DEFLATE, CompressionMethod::GZIP}) {
+    auto sequential = concatenate(
+        ad_utility::streams::compressStream(inPiecesOf1000(text), method));
+    auto parallel = concatenate(ad_utility::streams::compressStreamInParallel(
+        inPiecesOf1000(text), method, pool.get_executor(), 1));
+    ASSERT_NE(sequential, parallel);
+    EXPECT_EQ(concatenate(Server::compressBodyForQuery(pool.get_executor())(
+                  inPiecesOf1000(text), method)),
+              sequential);
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::parallelResponseCompression_>(true);
+    EXPECT_EQ(concatenate(Server::compressBodyForQuery(pool.get_executor())(
+                  inPiecesOf1000(text), method)),
+              parallel);
+  }
+}
+
 TEST(ServerTest, getQueryId) {
   using namespace ad_utility::websocket;
 
