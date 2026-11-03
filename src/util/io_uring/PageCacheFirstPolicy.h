@@ -11,8 +11,12 @@
 #ifndef QLEVER_SRC_UTIL_IO_URING_PAGECACHEFIRSTPOLICY_H
 #define QLEVER_SRC_UTIL_IO_URING_PAGECACHEFIRSTPOLICY_H
 
+#include <sys/uio.h>
+
 #include <cstdint>
+#include <functional>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -24,8 +28,31 @@
 
 namespace ad_utility {
 
-// The reads of a batch that `readPageCacheHits` did not serve, and that the
-// caller therefore still has to issue through its regular path.
+// The one read per run of adjacent reads that `PageCacheReader` makes: the
+// arguments and the result of `preadv2` without its flags. Read the file range
+// of `fd` that starts at byte `offset` into the `iovcnt` buffers of `iov`
+// (filled one after the other), and return the number of bytes read, or -1
+// with `errno` set.
+using PageCacheRead = std::function<int64_t(int fd, const ::iovec* iov,
+                                            int iovcnt, int64_t offset)>;
+
+// The `PageCacheRead` of production code: `preadv2(RWF_NOWAIT)`, which copies
+// only the bytes that the kernel can copy without waiting for the disk. It
+// returns fewer bytes than requested (possibly 0) if the rest is not cached or
+// the file ends, and fails with `EAGAIN` if the first byte is not cached, and
+// with `EOPNOTSUPP`, `ENOSYS` or `EPERM` if the kernel, the file system or a
+// seccomp filter does not allow the call. Where `preadv2(RWF_NOWAIT)` is not
+// compiled in, it fails with `EOPNOTSUPP`.
+int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
+                            int64_t offset) noexcept;
+
+// Return whether `preadv2(RWF_NOWAIT)` is compiled in (Linux only). Without
+// it, `PageCacheReader` never serves a read.
+bool pageCacheFastPathIsCompiledIn() noexcept;
+
+// The reads of a batch that `PageCacheReader::readPageCacheHits` did not
+// serve, and that the caller therefore still has to issue through its regular
+// path.
 struct UnservedReads {
   // No read was served (none was in the page cache, the fast path is not
   // supported, or the batch is empty): the caller issues the batch unchanged.
@@ -39,23 +66,38 @@ struct UnservedReads {
   std::variant<NothingRead, RemainingPositions> reads_;
 };
 
-// Serve the reads of a batch that are completely in the page cache with
-// non-blocking `preadv2(RWF_NOWAIT)` calls, one call per run of adjacent file
-// ranges (split into chunks of at most `IOV_MAX` reads), and return the reads
-// that were not served. The caller issues those through its regular path,
-// which also reports errors. A call that fails with `EOPNOTSUPP` or `ENOSYS`
-// switches the fast path off for the whole process (see
-// `pageCacheFastPathIsSupported`). The three spans describe the same reads, so
-// they must have the same length.
-[[nodiscard]] UnservedReads readPageCacheHits(int fd,
-                                              ql::span<const size_t> numBytes,
-                                              ql::span<const uint64_t> offsets,
-                                              ql::span<char*> buffers);
+// Serves the reads of a batch that are completely in the page cache with one
+// `PageCacheRead` per run of adjacent file ranges (split into chunks of at most
+// `IOV_MAX` reads). If a read fails with `EOPNOTSUPP`, `ENOSYS` or `EPERM`, the
+// reader switches itself off for good: these errors do not go away, so
+// retrying them would only add a failing system call per run. Each reader has
+// its own switch (every batch manager has its own reader), so a vocabulary on a
+// file system without `RWF_NOWAIT` does not switch the fast path off for the
+// vocabularies on other file systems. Single-threaded use only.
+class PageCacheReader {
+ public:
+  // `read` is `systemPageCacheRead` in production; tests inject a fake one.
+  explicit PageCacheReader(PageCacheRead read = &systemPageCacheRead)
+      : read_{std::move(read)} {}
 
-// Return whether `readPageCacheHits` may use `preadv2(RWF_NOWAIT)`: false if it
-// is not compiled in, or once a call has failed with `EOPNOTSUPP` or `ENOSYS`.
-// That latch is process-wide.
-bool pageCacheFastPathIsSupported() noexcept;
+  // Serve the reads of the batch that are in the page cache and return those
+  // that were not served. The caller issues those through its regular path,
+  // which also reports errors (`EAGAIN`, a short read and any other error leave
+  // the reads of their run unserved). Read `i` reads `numBytes[i]` bytes at
+  // file offset `offsets[i]` of `fd` into `buffers[i]`, so the three spans must
+  // have the same length.
+  [[nodiscard]] UnservedReads readPageCacheHits(
+      int fd, ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
+      ql::span<char*> buffers);
+
+  // False if the fast path is not compiled in, or once a read of this reader
+  // has failed with `EOPNOTSUPP`, `ENOSYS` or `EPERM`.
+  bool isSupported() const noexcept { return supported_; }
+
+ private:
+  PageCacheRead read_;
+  bool supported_ = pageCacheFastPathIsCompiledIn();
+};
 
 namespace detail {
 // The reads of a batch at the indices `positions` into the three equally long
@@ -87,7 +129,7 @@ struct SelectedReads {
 }  // namespace detail
 
 // A `ReadPolicy` that serves the reads of a batch that are in the page cache
-// with `readPageCacheHits` and passes only the others on to `Policy`.
+// with a `PageCacheReader` and passes only the others on to `Policy`.
 template <typename Policy>
 class PageCacheFirstPolicy : public NoCopyNoMove {
   static_assert(
@@ -97,8 +139,11 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
  public:
   using BatchHandle = typename Policy::BatchHandle;
 
-  // `ringSize` is forwarded to the constructor of the wrapped `Policy`.
-  explicit PageCacheFirstPolicy(unsigned ringSize) : policy_(ringSize) {}
+  // `ringSize` is forwarded to the constructor of the wrapped `Policy`, `read`
+  // to the `PageCacheReader`.
+  explicit PageCacheFirstPolicy(unsigned ringSize,
+                                PageCacheRead read = &systemPageCacheRead)
+      : policy_(ringSize), reader_{std::move(read)} {}
 
   // Switch the fast path on (the default) or off for the batches that are added
   // afterwards.
@@ -109,8 +154,8 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
   // gets an empty batch, so `Policy` must accept `addBatch` with no reads
   // (`ReadPolicyConcept` cannot express that; the test
   // `IoUringManagerTest.emptyBatchHasNothingToWaitFor` checks it for
-  // `SyncIoPolicy` and `IoUringPolicy`). The arguments have the
-  // contract of `readPageCacheHits` and `Policy::addBatch`.
+  // `SyncIoPolicy` and `IoUringPolicy`). The arguments have the contract of
+  // `PageCacheReader::readPageCacheHits` and `Policy::addBatch`.
   void addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle) {
@@ -125,7 +170,7 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
                            missed.buffers_, handle);
         };
     const UnservedReads unserved =
-        enabled_ ? readPageCacheHits(fd, numBytes, offsets, buffers)
+        enabled_ ? reader_.readPageCacheHits(fd, numBytes, offsets, buffers)
                  : UnservedReads{UnservedReads::NothingRead{}};
     std::visit(OverloadCallOperator{forwardAll, forwardRemaining},
                unserved.reads_);
@@ -138,6 +183,7 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
 
  private:
   Policy policy_;
+  PageCacheReader reader_;
   bool enabled_ = true;
 };
 

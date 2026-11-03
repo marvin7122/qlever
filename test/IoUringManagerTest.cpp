@@ -464,14 +464,11 @@ void expectManagerWorks(ad_utility::BatchManagerBase& manager) {
 }
 
 // True if `manager` is a `BatchManager` for `Policy`, decorated with
-// `PageCacheFirstPolicy` exactly where the page-cache fast path is supported.
+// `PageCacheFirstPolicy`.
 template <typename Policy>
 bool usesPolicy(ad_utility::BatchManagerBase& manager) {
-  if (ad_utility::pageCacheFastPathIsSupported()) {
-    return dynamic_cast<ad_utility::BatchManager<
-               ad_utility::PageCacheFirstPolicy<Policy>>*>(&manager) != nullptr;
-  }
-  return dynamic_cast<ad_utility::BatchManager<Policy>*>(&manager) != nullptr;
+  return dynamic_cast<ad_utility::BatchManager<
+             ad_utility::PageCacheFirstPolicy<Policy>>*>(&manager) != nullptr;
 }
 
 // With `preferIoUring == false`, `makeBatchManager` must return a
@@ -510,20 +507,4 @@ TEST(MakeBatchManager, backendMatchesFlagWhenIoUringPreferred) {
   expectManagerWorks(*manager);
 }
 
-// The manager from `makeBatchManager` is decorated with the page-cache fast
-// path where it is supported, and works with the fast path switched on and
-// off. (`PageCacheFirstPolicy.theFastPathCanBeSwitchedOffAndOn` checks the
-// effect of the switch itself.)
-TEST(MakeBatchManager, worksWithTheFastPathOnAndOff) {
-  if (!ad_utility::pageCacheFastPathIsSupported()) {
-    GTEST_SKIP() << "preadv2(RWF_NOWAIT) is not supported here";
-  }
-  bool preferIoUring = false;
-  auto manager = ad_utility::makeBatchManager(preferIoUring);
-  ASSERT_NE(manager, nullptr);
-  EXPECT_TRUE(usesPolicy<ad_utility::SyncIoPolicy>(*manager));
-  expectManagerWorks(*manager);
-  manager->setPageCacheFastPath(false);
-  expectManagerWorks(*manager);
-}
 }  // namespace

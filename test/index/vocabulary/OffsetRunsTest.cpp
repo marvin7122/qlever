@@ -16,6 +16,7 @@
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/IoUringManagerTestHelpers.h"
+#include "../../util/PageCacheReadTestHelpers.h"
 #include "backports/algorithm.h"
 #include "index/vocabulary/OffsetRuns.h"
 #include "util/io_uring/IoUringManager.h"
@@ -100,6 +101,30 @@ TEST(ReadOffsetPairs, pairsInTheOrderOfTheIndicesWithOneReadPerRun) {
       manager.batches_,
       ElementsAre(ElementsAre(Read{3 * entry, 3 * entry}, Read{0, 4 * entry},
                               Read{1 * entry, 2 * entry})));
+}
+
+// _____________________________________________________________________________
+TEST(ReadOffsetPairs, pageCacheHitsAndMissesGiveTheSamePairs) {
+  // Like `pairsInTheOrderOfTheIndicesWithOneReadPerRun`, but through the
+  // page-cache fast path, with the runs that start at the given file offsets
+  // cached: none, only the run `3, 4` (some reads go on to the ring), and all
+  // three runs (none does).
+  SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
+  auto [tmp, fd] = ioUringManagerTestHelpers::makeTempFile(
+      offsetsFileContent({1, 2, 3, 4, 5}));
+  std::vector<size_t> indices{3, 4, 0, 1, 2, 1};
+  constexpr int64_t entry = sizeof(uint64_t);
+  for (std::vector<int64_t> cachedOffsets :
+       {std::vector<int64_t>{}, std::vector<int64_t>{3 * entry},
+        std::vector<int64_t>{3 * entry, 0, entry}}) {
+    ad_utility::BatchManager<
+        ad_utility::PageCacheFirstPolicy<ad_utility::SyncIoPolicy>>
+        manager(64, pageCacheReadTestHelpers::cachedAt(cachedOffsets));
+    EXPECT_THAT(
+        readOffsetPairs(manager, fd, indices, 5),
+        ElementsAre(OffsetPair{6, 10}, OffsetPair{10, 15}, OffsetPair{0, 1},
+                    OffsetPair{1, 3}, OffsetPair{3, 6}, OffsetPair{1, 3}));
+  }
 }
 
 // _____________________________________________________________________________
