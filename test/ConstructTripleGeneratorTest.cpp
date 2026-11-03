@@ -202,23 +202,23 @@ TEST_F(ConstructTripleGeneratorTest, multipleTemplateTriples) {
                           matchTriple("<o>", "<q>", "<o2>")));
 }
 
-// Blank-node row IDs combine rowOffset (accumulated over prior tables),
-// firstRow (view start), and the in-batch row index:
-//   blankNodeRowId = rowOffset + firstRow + rowInBatch
+// Blank-node row IDs combine rowOffset (accumulated over prior tables) and
+// the index of the row in the view of its table:
+//   blankNodeRowId = rowOffset + (row - firstRow of the view)
 TEST_F(ConstructTripleGeneratorTest, blankNodeUsesCorrectRowId) {
   auto result = makeResult(makeIdTableFromVector({{U}, {U}, {U}}));
 
   // View starts at absolute row 1 of the `IdTable`: firstRow=1, numRows=2.
   auto table = makeTableWithRange(*result, 1, 3);
   // Template: _:u<rowId>_node <p> <o>  (rowOffset=0)
-  // row 0 of batch -> blankNodeRowId = 0 + 1 + 0 = 1
-  // row 1 of batch -> blankNodeRowId = 0 + 1 + 1 = 2
+  // row 1 of the table -> blankNodeRowId = 0 + (1 - 1) = 0
+  // row 2 of the table -> blankNodeRowId = 0 + (2 - 1) = 1
   auto templateTriples =
       oneTriple(BlankNode{false, "node"}, iriV("<p>"), iriV("<o>"));
 
   EXPECT_THAT(run(templateTriples, {}, table),
-              ElementsAre(matchTriple("_:u1_node", "<p>", "<o>"),
-                          matchTriple("_:u2_node", "<p>", "<o>")));
+              ElementsAre(matchTriple("_:u0_node", "<p>", "<o>"),
+                          matchTriple("_:u1_node", "<p>", "<o>")));
 }
 
 // rowOffset accumulates across multiple tables: blank node IDs from the second
@@ -245,18 +245,40 @@ TEST_F(ConstructTripleGeneratorTest, rowOffsetAccumulatesAcrossTables) {
       templateTriples, {}, std::move(tableRange), 0, makeConfig());
 
   // Table 1: rowOffset=0, firstRow=0
-  //   row 0: rowId = 0+0+0 = 0
-  //   row 1: rowId = 0+0+1 = 1
-  //   row 2: rowId = 0+0+2 = 2
+  //   row 0: rowId = 0+(0-0) = 0
+  //   row 1: rowId = 0+(1-0) = 1
+  //   row 2: rowId = 0+(2-0) = 2
   // Table 2: rowOffset=3 (3 rows processed from table1), firstRow=5
-  //   row 0: rowId = 3+5+0 = 8
-  //   row 1: rowId = 3+5+1 = 9
+  //   row 5: rowId = 3+(5-5) = 3
+  //   row 6: rowId = 3+(6-5) = 4
   EXPECT_THAT(::ranges::to_vector(std::move(range)),
               ElementsAre(matchTriple("_:u0_x", "<p>", "<o>"),
                           matchTriple("_:u1_x", "<p>", "<o>"),
                           matchTriple("_:u2_x", "<p>", "<o>"),
-                          matchTriple("_:u8_x", "<p>", "<o>"),
-                          matchTriple("_:u9_x", "<p>", "<o>")));
+                          matchTriple("_:u3_x", "<p>", "<o>"),
+                          matchTriple("_:u4_x", "<p>", "<o>")));
+}
+
+// An OFFSET of 2 that ends inside the first table, as `getRowIndices` produces
+// it: the view of the first table starts at row 2, and the `rowOffset` is the
+// OFFSET. The rows get the consecutive ids 2, 3 and 4, so that the blank nodes
+// of different rows are different. (The ids used to be `rowOffset + row`,
+// which gave 4 for the first row and then 3 and 4 for the second table.)
+TEST_F(ConstructTripleGeneratorTest, blankNodeRowIdsWithOffsetInsideTable) {
+  auto result1 = makeResult(makeIdTableFromVector({{U}, {U}, {U}}));
+  auto result2 = makeResult(makeIdTableFromVector({{U}, {U}}));
+  std::vector<TableWithRange> tables{makeTableWithRange(*result1, 2, 3),
+                                     makeTableWithRange(*result2, 0, 2)};
+  auto templateTriples =
+      oneTriple(BlankNode{false, "x"}, iriV("<p>"), iriV("<o>"));
+  auto range = ConstructTripleGenerator::evaluateTables(
+      templateTriples, {},
+      ad_utility::InputRangeTypeErased<TableWithRange>{std::move(tables)}, 2,
+      makeConfig());
+  EXPECT_THAT(::ranges::to_vector(std::move(range)),
+              ElementsAre(matchTriple("_:u2_x", "<p>", "<o>"),
+                          matchTriple("_:u3_x", "<p>", "<o>"),
+                          matchTriple("_:u4_x", "<p>", "<o>")));
 }
 
 // A view starting at a non-zero index reads the correct rows from the
