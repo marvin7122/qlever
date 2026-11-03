@@ -269,12 +269,19 @@ TEST(AsyncTransformView, destructionWithPendingElements) {
 }
 
 // _____________________________________________________________________________
-TEST(AsyncTransformView, stopFlagIsSetOnDestruction) {
+TEST(AsyncTransformView, stopIsRequestedOnDestruction) {
   boost::asio::thread_pool pool{2};
-  // A transformation that takes the stop flag gets `false` while the view is
-  // consumed to the end.
-  auto doubleUnlessStopped = [](int i, const std::atomic<bool>& stop) {
-    return stop ? -1 : 2 * i;
+  // Only a transformation that asks for an `AsyncTransformStopFlag` gets one;
+  // a second parameter of another type (like `bool`) does not.
+  static_assert(ad_utility::detail::asyncTransformView::takesStopFlag<
+                decltype([](int, ad_utility::AsyncTransformStopFlag) {}), int>);
+  static_assert(!ad_utility::detail::asyncTransformView::takesStopFlag<
+                decltype([](int, bool) {}), int>);
+
+  // The stop is not requested while the view is consumed to the end.
+  auto doubleUnlessStopped = [](int i,
+                                ad_utility::AsyncTransformStopFlag stop) {
+    return stop.isRequested() ? -1 : 2 * i;
   };
   {
     AsyncTransformView view{ql::views::iota(0, 4), doubleUnlessStopped, 2,
@@ -283,20 +290,20 @@ TEST(AsyncTransformView, stopFlagIsSetOnDestruction) {
   }
 
   // Element 1 is still pending when the view is destroyed. It waits for the
-  // stop flag, which the destructor sets before it waits for the element. (If
-  // the flag were never set, the element would give up after the `timeout`
+  // stop flag, which the destructor requests before it waits for the element.
+  // (If the flag were never set, the element would give up after the `timeout`
   // and the test would fail instead of hanging.)
   std::atomic<size_t> numberOfStopsSeen = 0;
-  auto waitForStop = [&numberOfStopsSeen](int i,
-                                          const std::atomic<bool>& stop) {
+  auto waitForStop = [&numberOfStopsSeen](
+                         int i, ad_utility::AsyncTransformStopFlag stop) {
     if (i == 0) {
       return i;
     }
     auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (!stop && std::chrono::steady_clock::now() < deadline) {
+    while (!stop.isRequested() && std::chrono::steady_clock::now() < deadline) {
       std::this_thread::sleep_for(1ms);
     }
-    if (stop) {
+    if (stop.isRequested()) {
       ++numberOfStopsSeen;
     }
     return i;

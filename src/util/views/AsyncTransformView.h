@@ -24,8 +24,25 @@
 #include "util/Iterators.h"
 #include "util/NoCopyNoMove.h"
 #include "util/TaskQueueOnExecutor.h"
+#include "util/views/AsyncTransformStopFlag.h"
 
 namespace ad_utility {
+
+namespace detail::asyncTransformView {
+// True iff the `Transformation` takes the stop flag of the view (see NOTE 5
+// below) as its second argument.
+template <typename Transformation, typename Element>
+constexpr bool takesStopFlag =
+    std::is_invocable_v<const Transformation&, Element, AsyncTransformStopFlag>;
+
+// The result type of the `Transformation` for an `Element`, with or without the
+// stop flag.
+template <typename Transformation, typename Element>
+using Result = std::decay_t<typename std::conditional_t<
+    takesStopFlag<Transformation, Element>,
+    std::invoke_result<const Transformation&, Element, AsyncTransformStopFlag>,
+    std::invoke_result<const Transformation&, Element>>::type>;
+}  // namespace detail::asyncTransformView
 
 // An input range that yields `transformation(element)` for each `element` of
 // the `Range`, in the original order of the elements, like
@@ -67,29 +84,11 @@ namespace ad_utility {
 // returns a reference to its argument (like `std::identity`) is fine, because
 // the result is moved out of the element before the element is destroyed.
 //
-// NOTE 5: A `transformation` may take a `const std::atomic<bool>&` as its
-// second argument. It is set when the view is destroyed, before the destructor
-// waits for the pending elements, whose results are then no longer needed
-// (for example, because the consumer stopped early). A long `transformation`
-// can check it and return early.
-namespace detail::asyncTransformView {
-// True iff the `Transformation` takes the stop flag of the view (see NOTE 5
-// above) as its second argument.
-template <typename Transformation, typename Element>
-constexpr bool takesStopFlag =
-    std::is_invocable_v<const Transformation&, Element,
-                        const std::atomic<bool>&>;
-
-// The result type of the `Transformation` for an `Element`, with or without the
-// stop flag.
-template <typename Transformation, typename Element>
-using Result = std::decay_t<typename std::conditional_t<
-    takesStopFlag<Transformation, Element>,
-    std::invoke_result<const Transformation&, Element,
-                       const std::atomic<bool>&>,
-    std::invoke_result<const Transformation&, Element>>::type>;
-}  // namespace detail::asyncTransformView
-
+// NOTE 5: A `transformation` may take an `AsyncTransformStopFlag` as its
+// second argument. It is requested when the view is destroyed, before the
+// destructor waits for the pending elements, whose results are then no longer
+// needed (for example, because the consumer stopped early). A long
+// `transformation` can check it and return early.
 template <typename Range, typename Transformation>
 class AsyncTransformView
     : public InputRangeFromGet<detail::asyncTransformView::Result<
@@ -182,7 +181,7 @@ class AsyncTransformView
             if constexpr (detail::asyncTransformView::takesStopFlag<
                               Transformation, Element>) {
               return std::invoke(transformation, std::move(element),
-                                 stopRequested);
+                                 AsyncTransformStopFlag{stopRequested});
             } else {
               return std::invoke(transformation, std::move(element));
             }
