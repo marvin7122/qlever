@@ -185,7 +185,9 @@ class IoUringPolicy {
   // completed), or completed but not yet reaped via a completion queue entry
   // (CQE). `addBatch` keeps it at most `ringSize_`, so that a free SQE is
   // always available and the completion queue (twice as large as the
-  // submission queue) cannot overflow.
+  // submission queue) cannot overflow. Invariant: it equals the sum of the
+  // counts in `numOutstandingReadRequestsPerBatch_` and the size of
+  // `outstandingReadsByRequestId_`.
   size_t numOutstandingReadRequests_ = 0;
 
   // The same outstanding reads as `numOutstandingReadRequests_`, but broken
@@ -197,7 +199,10 @@ class IoUringPolicy {
 
   // Batches with a failed or short read, mapped to the message of their first
   // failure. `addBatch` and the `wait()` of another batch also reap CQEs, so a
-  // failure is kept here until the `wait()` of its own batch throws it.
+  // failure is kept here until the `wait()` of its own batch throws it (and
+  // erases it). A batch may still have outstanding reads while its failure is
+  // recorded here; the entry of a batch that is never waited for stays until
+  // the policy is destroyed.
   ad_utility::HashMap<BatchHandle, std::string> failedBatches_;
 
   // Per-read metadata needed when a completion is reaped: which batch the read
@@ -229,6 +234,10 @@ class IoUringPolicy {
   // CQE. `minComplete` must be > 0 and at most the number of submitted reads
   // that are not yet reaped: a read that is only prepared (SQE filled in, not
   // yet submitted) never completes, so both callers submit before they drain.
+  // The function can only check the weaker bound `numOutstandingReadRequests_`,
+  // which also counts prepared reads. Throws if `io_uring_wait_cqes` fails. If
+  // `processCqe` throws for a CQE, the remaining CQEs of the chunk are still
+  // applied to the bookkeeping and the first exception is rethrown afterwards.
   void drainAtLeastCqes(unsigned minComplete);
 
   // Apply one completion to the bookkeeping of the outstanding reads. Always
@@ -262,7 +271,8 @@ class IoUringPolicy {
   // of its reads are reaped; the failure is reported only once, so a later
   // `wait()` for the same handle returns normally. Also throws, possibly
   // before all reads of the batch are reaped, if waiting for completions fails
-  // (see `drainAtLeastCqes`).
+  // (see `drainAtLeastCqes`). A `wait()` for a handle without outstanding reads
+  // (a batch that is already reaped, was empty, or is unknown) returns at once.
   void wait(BatchHandle handle);
 };
 
