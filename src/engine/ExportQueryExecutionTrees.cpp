@@ -17,6 +17,7 @@
 #include <absl/strings/str_replace.h>
 
 #include <optional>
+#include <range/v3/range/conversion.hpp>
 #include <range/v3/view/enumerate.hpp>
 #include <string_view>
 
@@ -118,6 +119,19 @@ auto idToCsvOrTsvField(const Index& index, Id id,
   return ql::exportIds::idToStringAndType<format == csv>(index, id, localVocab,
                                                          escapeFunction);
 }
+
+// Batch variant of `idToCsvOrTsvField` for the `ids` of one column of a chunk:
+// the vocabulary words are read in one batched lookup (`idsToStringAndType`)
+// instead of one by one.
+template <ad_utility::MediaType format>
+auto idsToCsvOrTsvFields(const Index& index, ql::span<const Id> ids,
+                         const LocalVocab& localVocab) {
+  using enum ad_utility::MediaType;
+  constexpr auto& escapeFunction =
+      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
+  return ql::exportIds::idsToStringAndType<format == csv>(
+      index, ids, localVocab, escapeFunction);
+}
 }  // namespace
 
 // _____________________________________________________________________________
@@ -134,10 +148,28 @@ ExportQueryExecutionTrees::csvOrTsvRows(
     ad_utility::AsyncTransformStopFlag stop) {
   static constexpr char separator = format == tsv ? '\t' : ',';
   CsvOrTsvChunk lines{allocator};
-  for (uint64_t row : rows) {
+  // The fields of each column (empty for a `std::nullopt` column), in the
+  // order of the `rows`, each converted with one batched lookup.
+  std::vector<std::vector<std::optional<std::pair<std::string, const char*>>>>
+      fieldsPerColumn;
+  fieldsPerColumn.reserve(columns.size());
+  for (const auto& column : columns) {
     if (stop.isRequested()) {
       return lines;
     }
+    if (!column.has_value()) {
+      fieldsPerColumn.emplace_back();
+      continue;
+    }
+    const auto ids = ::ranges::to<std::vector<Id>>(
+        rows | ql::views::transform([&table, &column](uint64_t row) -> Id {
+          return table.idTable()(row, column.value().columnIndex_);
+        }));
+    fieldsPerColumn.push_back(
+        idsToCsvOrTsvFields<format>(index, ids, table.localVocab()));
+    cancellationHandle.throwIfCancelled();
+  }
+  for (size_t i = 0; i < rows.size(); ++i) {
     for (const auto& [j, column] : ::ranges::views::enumerate(columns)) {
       if (j > 0) {
         lines.push_back(separator);
@@ -145,15 +177,12 @@ ExportQueryExecutionTrees::csvOrTsvRows(
       if (!column.has_value()) {
         continue;
       }
-      auto optionalStringAndType = idToCsvOrTsvField<format>(
-          index, table.idTable()(row, column.value().columnIndex_),
-          table.localVocab());
-      if (optionalStringAndType.has_value()) [[likely]] {
-        lines.append(optionalStringAndType.value().first);
+      const auto& field = fieldsPerColumn[j][i];
+      if (field.has_value()) [[likely]] {
+        lines.append(field.value().first);
       }
     }
     lines.push_back('\n');
-    cancellationHandle.throwIfCancelled();
   }
   return lines;
 }
