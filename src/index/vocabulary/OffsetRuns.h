@@ -39,11 +39,12 @@ struct OffsetPair {
   QL_DEFINE_DEFAULTED_EQUALITY_OPERATOR(OffsetPair, offset_, nextOffset_)
 };
 
-// The consecutive indices `firstIndex_, ..., firstIndex_ + numIndices_ - 1`.
+// The consecutive indices `firstIndex_, ..., firstIndex_ + numberOfIndices_ -
+// 1`.
 struct IndexRun {
   size_t firstIndex_;
-  size_t numIndices_;
-  QL_DEFINE_DEFAULTED_EQUALITY_OPERATOR(IndexRun, firstIndex_, numIndices_)
+  size_t numberOfIndices_;
+  QL_DEFINE_DEFAULTED_EQUALITY_OPERATOR(IndexRun, firstIndex_, numberOfIndices_)
 };
 
 // Split `indices` into maximal runs of consecutive indices (each index is one
