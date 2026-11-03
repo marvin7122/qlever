@@ -130,7 +130,7 @@ class IoUringPolicy : NoCopyNoMove {
   explicit IoUringPolicy(RingSize ringSize);
 
   // Run on `ring` instead of a liburing ring. For tests. Throws unless `ring`
-  // has room for at least `ringSize` SQEs and `2 * ringSize` CQEs.
+  // has room for at least `ringSize` SQEs and `ringSize` CQEs.
   IoUringPolicy(RingSize ringSize, std::unique_ptr<IoUringInterface> ring);
 
   // Read the batch: read `i` reads `numBytesToRead[i]` bytes from `fd` at

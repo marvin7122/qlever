@@ -219,16 +219,15 @@ IoUringPolicy::IoUringPolicy(RingSize ringSize,
     : ring_{std::move(ring)}, ringSize_{ringSize} {
   AD_CONTRACT_CHECK(ring_ != nullptr,
                     "An IoUringPolicy needs a ring to run on.");
-  // `run` keeps at most `ringSize` requests in the ring, and relies on a free
-  // SQE for each of them and on a completion queue that cannot overflow: the
-  // kernel may hold `ringSize` requests while `ringSize` completions are not
-  // reaped yet.
+  // `run` keeps at most `ringSize` requests in the ring, counting those that
+  // are queued, in the kernel, or completed but not reaped. So it needs a free
+  // SQE for each of them, and at most `ringSize` completions are ever pending.
   AD_CONTRACT_CHECK(ring_->sqCapacity() >= ringSize_.value(),
                     "The ring of an IoUringPolicy needs room for `ringSize` "
                     "SQEs.");
-  AD_CONTRACT_CHECK(ring_->cqCapacity() >= 2 * size_t{ringSize_.value()},
-                    "The ring of an IoUringPolicy needs room for `2 * "
-                    "ringSize` CQEs.");
+  AD_CONTRACT_CHECK(ring_->cqCapacity() >= ringSize_.value(),
+                    "The ring of an IoUringPolicy needs room for `ringSize` "
+                    "CQEs, or completions could be dropped.");
 }
 
 //______________________________________________________________________________
@@ -262,7 +261,8 @@ void IoUringPolicy::run(int fd, ql::span<const uint64_t> offsets,
     // Fill the free ring slots with the next reads, unless the batch has
     // failed (then `addBatch` throws anyway). At most `ringSize_` requests are
     // in the ring, so a free SQE is always available and the completion queue
-    // (twice as large as the submission queue) cannot overflow.
+    // (checked by the constructor to have room for `ringSize_` CQEs) cannot
+    // overflow.
     while (!batch.error.has_value() && batch.numQueued < numReads &&
            batch.numSlots() + numNoOpsQueued_ + numNoOpsInKernel_ <
                ringSize_.value()) {
