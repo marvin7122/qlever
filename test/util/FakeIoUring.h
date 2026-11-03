@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <optional>
 #include <random>
 #include <string>
 #include <utility>
@@ -35,8 +36,8 @@ namespace ad_utility::testing {
 // short or fail. It checks the contract of `IoUringInterface`: a free SQE for
 // every prepared read, no wait for more completions than requests in the
 // kernel, and (in `submit`) that the requests in the simulated kernel plus
-// the unreaped completions never exceed twice the SQ capacity - the bound
-// that keeps a real completion queue from overflowing.
+// the unreaped completions never exceed the CQ capacity - the bound that keeps
+// a real completion queue from overflowing.
 class FakeIoUring final : public IoUringInterface {
  public:
   // Probabilities of the faults, per call.
@@ -57,9 +58,13 @@ class FakeIoUring final : public IoUringInterface {
     bool completeOnSubmit = true;
   };
 
-  FakeIoUring(std::string file, size_t sqCapacity, Faults faults, uint32_t seed)
+  // A ring with room for `sqCapacity` SQEs and `cqCapacity` CQEs (by default
+  // twice as many, like a liburing ring).
+  FakeIoUring(std::string file, size_t sqCapacity, Faults faults, uint32_t seed,
+              std::optional<size_t> cqCapacity = std::nullopt)
       : file_{std::move(file)},
         sqCapacity_{sqCapacity},
+        cqCapacity_{cqCapacity.value_or(2 * sqCapacity)},
         faults_{faults},
         random_{seed} {
     // `submit` draws the length of an `EAGAIN` burst from
@@ -111,6 +116,8 @@ class FakeIoUring final : public IoUringInterface {
   }
 
   size_t numQueued() const override { return queue_.size(); }
+  size_t sqCapacity() const override { return sqCapacity_; }
+  size_t cqCapacity() const override { return cqCapacity_; }
 
   int submit() override {
     if (faults_.brokenSubmitErrno != 0) {
@@ -141,8 +148,7 @@ class FakeIoUring final : public IoUringInterface {
       kernel_.push_back(queue_.front());
       queue_.pop_front();
     }
-    AD_CORRECTNESS_CHECK(kernel_.size() + completions_.size() <=
-                         2 * sqCapacity_);
+    AD_CORRECTNESS_CHECK(kernel_.size() + completions_.size() <= cqCapacity_);
     // The kernel may already have completed some of the requests.
     if (faults_.completeOnSubmit) {
       completeRandomRequests(uniform(0, kernel_.size()));
@@ -253,6 +259,7 @@ class FakeIoUring final : public IoUringInterface {
 
   std::string file_;
   size_t sqCapacity_;
+  size_t cqCapacity_;
   Faults faults_;
   std::mt19937 random_;
   std::deque<Request> queue_;

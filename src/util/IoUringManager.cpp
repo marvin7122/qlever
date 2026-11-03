@@ -128,6 +128,11 @@ class LiburingRing final : public IoUringInterface {
 
   size_t numQueued() const override { return io_uring_sq_ready(&ring_); }
 
+  // `*kring_entries` exists in every liburing version, `ring_entries` only
+  // since 2.3.
+  size_t sqCapacity() const override { return *ring_.sq.kring_entries; }
+  size_t cqCapacity() const override { return *ring_.cq.kring_entries; }
+
   int submit() override { return io_uring_submit(&ring_); }
 
   int waitForCompletions(unsigned minComplete) override {
@@ -205,6 +210,16 @@ IoUringPolicy::IoUringPolicy(RingSize ringSize,
     : ring_{std::move(ring)}, ringSize_{ringSize} {
   AD_CONTRACT_CHECK(ring_ != nullptr,
                     "An IoUringPolicy needs a ring to run on.");
+  // `run` keeps at most `ringSize` requests in the ring, and relies on a free
+  // SQE for each of them and on a completion queue that cannot overflow: the
+  // kernel may hold `ringSize` requests while `ringSize` completions are not
+  // reaped yet.
+  AD_CONTRACT_CHECK(ring_->sqCapacity() >= ringSize_.value(),
+                    "The ring of an IoUringPolicy needs room for `ringSize` "
+                    "SQEs.");
+  AD_CONTRACT_CHECK(ring_->cqCapacity() >= 2 * size_t{ringSize_.value()},
+                    "The ring of an IoUringPolicy needs room for `2 * "
+                    "ringSize` CQEs.");
 }
 
 //______________________________________________________________________________

@@ -65,6 +65,10 @@ class IoUringInterface {
   // The number of prepared SQEs that the kernel has not taken yet.
   virtual size_t numQueued() const = 0;
 
+  // The number of SQEs and of CQEs that the ring has room for.
+  virtual size_t sqCapacity() const = 0;
+  virtual size_t cqCapacity() const = 0;
+
   // `io_uring_submit`: hand the queued SQEs to the kernel, which takes them in
   // the order in which they were prepared. Return the number of SQEs taken, or
   // `-errno`.
@@ -121,8 +125,8 @@ class IoUringPolicy : NoCopyNoMove {
   // Set up a liburing ring with `ringSize` SQEs.
   explicit IoUringPolicy(RingSize ringSize);
 
-  // Run on `ring` instead of a liburing ring. `ring` must have room for at
-  // least `ringSize` SQEs and `2 * ringSize` CQEs. For tests.
+  // Run on `ring` instead of a liburing ring. For tests. Throws unless `ring`
+  // has room for at least `ringSize` SQEs and `2 * ringSize` CQEs.
   IoUringPolicy(RingSize ringSize, std::unique_ptr<IoUringInterface> ring);
 
   // Read the batch: read `i` reads `numBytesToRead[i]` bytes from `fd` at

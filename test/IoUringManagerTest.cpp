@@ -683,12 +683,37 @@ TEST(IoUringPolicyModel, aBrokenRingTerminates) {
                             "io_uring_wait_cqes failed in IoUringPolicy");
 }
 
-// `IoUringPolicy` needs a ring. (A ring size of 0 cannot even be constructed,
-// see the `RingSize` test.)
+// `IoUringPolicy` needs a ring with room for `ringSize` SQEs and twice as many
+// CQEs. (A ring size of 0 cannot even be constructed, see the `RingSize` test.)
 TEST(IoUringPolicyModel, invalidConstructionThrows) {
+  using ad_utility::RingSize;
+  using ad_utility::testing::FakeIoUring;
+  auto makeFake = [](size_t sqCapacity, size_t cqCapacity) {
+    return std::make_unique<FakeIoUring>("AAAA", sqCapacity,
+                                         FakeIoUring::Faults{}, 0, cqCapacity);
+  };
   AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
-      ad_utility::IoUringPolicy(ad_utility::RingSize{8}, nullptr),
+      ad_utility::IoUringPolicy(RingSize{8}, nullptr),
       HasSubstr("a ring to run on"), ad_utility::Exception);
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      ad_utility::IoUringPolicy(RingSize{8}, makeFake(4, 16)),
+      HasSubstr("room for `ringSize` SQEs"), ad_utility::Exception);
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      ad_utility::IoUringPolicy(RingSize{8}, makeFake(8, 15)),
+      HasSubstr("room for `2 * ringSize` CQEs"), ad_utility::Exception);
+  EXPECT_NO_THROW(ad_utility::IoUringPolicy(RingSize{8}, makeFake(8, 16)));
+}
+
+// A liburing ring of a given `RingSize` has exactly that many SQEs and twice
+// as many CQEs, which `IoUringPolicy` relies on.
+TEST(LiburingRing, capacitiesMatchTheRingSize) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  auto ring = ad_utility::makeLiburingRing(ad_utility::RingSize{8});
+  EXPECT_EQ(ring->sqCapacity(), 8u);
+  EXPECT_EQ(ring->cqCapacity(), 16u);
 }
 #endif
 
