@@ -337,7 +337,7 @@ void readOffsetRuns(ad_utility::BatchManagerBase& manager, int fd,
       runs | ::ranges::views::transform([](const OffsetRun& run) {
         return reinterpret_cast<char*>(run.offsets_.data());
       }));
-  manager.wait(manager.addBatch(fd, sizes, fileOffsets, targets));
+  manager.readBatch(fd, sizes, fileOffsets, targets);
 }
 }  // namespace
 
@@ -393,7 +393,7 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
     bufferOffset += size;
   }
 
-  manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targets));
+  manager.readBatch(file_.fd(), sizes, fileOffsets, targets);
   return VocabBatchLookupData::asResult(std::move(data));
 }
 

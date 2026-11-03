@@ -1,0 +1,309 @@
+// Copyright 2026, The QLever Authors, in particular:
+//
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
+
+#ifndef QLEVER_TEST_UTIL_FAKEIOURING_H
+#define QLEVER_TEST_UTIL_FAKEIOURING_H
+
+#include <algorithm>
+#include <cerrno>
+#include <cstdint>
+#include <cstring>
+#include <deque>
+#include <iterator>
+#include <optional>
+#include <random>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "backports/algorithm.h"
+#include "util/Exception.h"
+#include "util/io_uring/IoUringPolicy.h"
+
+#ifdef QLEVER_HAS_IO_URING
+
+namespace ad_utility::testing {
+
+// A simulated io_uring for tests of `IoUringPolicy`. The "kernel" reads from
+// `file` (the read's `fd` is ignored) and writes into the target buffer only
+// when it completes a read. Driven by a seeded random generator, it takes only
+// some of the queued SQEs, fails submits with `EINTR` and with bursts of
+// `EAGAIN`, interrupts waits, completes requests in any order, and makes reads
+// short or fail. It checks the contract of `IoUringInterface`: a free SQE for
+// every prepared read, no wait for more completions than requests in the
+// kernel, and (in `submit`) that the requests in the simulated kernel plus
+// the unreaped completions never exceed the CQ capacity - the bound that keeps
+// a real completion queue from overflowing.
+class FakeIoUring final : public IoUringInterface {
+ public:
+  // The faults to inject: probabilities per call, and a script for the first
+  // submits.
+  struct Faults {
+    double partialSubmit = 0;
+    double submitInterrupted = 0;
+    // A burst makes 1 to `maxEagainBurst` submits in a row fail. Bursts longer
+    // than `IoUringPolicy`'s retries make it cancel the queued reads.
+    double submitOutOfMemory = 0;
+    size_t maxEagainBurst = 1;
+    double waitInterrupted = 0;
+    double shortRead = 0;
+    double readError = 0;
+    // The results of the first submits, one per call: a negative value fails
+    // the submit with that `-errno`; a value `n >= 0` makes the kernel take
+    // (at most) `n` of the queued SQEs. The probabilistic submit faults above
+    // apply only once the script is used up.
+    std::vector<int> scriptedSubmits;
+    // If nonzero, every wait fails with this `errno`.
+    int brokenWaitErrno = 0;
+    // Whether a submit may already complete some of the requests it took.
+    bool completeOnSubmit = true;
+  };
+
+  // A ring with room for `sqCapacity` SQEs and `cqCapacity` CQEs (by default
+  // twice as many, like a liburing ring).
+  FakeIoUring(std::string file, size_t sqCapacity, Faults faults, uint32_t seed,
+              std::optional<size_t> cqCapacity = std::nullopt)
+      : file_{std::move(file)},
+        sqCapacity_{sqCapacity},
+        cqCapacity_{cqCapacity.value_or(2 * sqCapacity)},
+        faults_{faults},
+        random_{seed} {
+    // `submit` draws the length of an `EAGAIN` burst from
+    // [1, `maxEagainBurst`].
+    AD_CONTRACT_CHECK(faults_.maxEagainBurst >= 1,
+                      "An EAGAIN burst fails at least one submit.");
+  }
+
+  // Whether, since the last `resetObservations`, a read was made short or
+  // failed. Whether `cancelQueued` was called is reported by `cancelled()`.
+  bool injectedReadFault() const { return injectedReadFault_; }
+
+  // How often each fault was injected over the lifetime of the ring, so that
+  // tests can check that their faults actually occur.
+  struct FaultCounts {
+    size_t partialSubmits = 0;
+    size_t interruptedSubmits = 0;
+    size_t outOfMemorySubmits = 0;
+    size_t interruptedWaits = 0;
+    size_t faultyReads = 0;
+    size_t cancelledReads = 0;
+  };
+  const FaultCounts& faultCounts() const { return faultCounts_; }
+  // Whether `cancelQueued` was called since the last `resetObservations`.
+  bool cancelled() const { return cancelled_; }
+  void resetObservations() {
+    injectedReadFault_ = false;
+    cancelled_ = false;
+  }
+
+  // The reads (not no-ops) that are queued, in the kernel, or completed but
+  // not reaped. Between two `readBatch` calls this must be zero.
+  size_t numberOfReadsInRing() const {
+    auto isRead = [](const auto& requestOrCompletion) {
+      return !requestOrCompletion.isNoOp;
+    };
+    return static_cast<size_t>(
+        std::count_if(queue_.begin(), queue_.end(), isRead) +
+        std::count_if(kernel_.begin(), kernel_.end(), isRead) +
+        std::count_if(completions_.begin(), completions_.end(), isRead));
+  }
+
+  bool prepareRead([[maybe_unused]] int fd, char* buffer, size_t numberOfBytes,
+                   uint64_t offset, uint64_t requestId) override {
+    if (queue_.size() >= sqCapacity_) {
+      return false;
+    }
+    queue_.push_back(Request{false, buffer, numberOfBytes, offset, requestId});
+    return true;
+  }
+
+  size_t numberOfQueued() const override { return queue_.size(); }
+  size_t sqCapacity() const override { return sqCapacity_; }
+  size_t cqCapacity() const override { return cqCapacity_; }
+
+  int submit() override {
+    const size_t submitIndex = numberOfSubmits_++;
+    if (submitIndex < faults_.scriptedSubmits.size()) {
+      const int scripted = faults_.scriptedSubmits[submitIndex];
+      if (scripted < 0) {
+        return scripted;
+      }
+      return take(std::min(queue_.size(), static_cast<size_t>(scripted)));
+    }
+    if (eagainBurstLeft_ > 0) {
+      --eagainBurstLeft_;
+      ++faultCounts_.outOfMemorySubmits;
+      return -EAGAIN;
+    }
+    if (happens(faults_.submitOutOfMemory)) {
+      eagainBurstLeft_ = uniform(1, faults_.maxEagainBurst) - 1;
+      ++faultCounts_.outOfMemorySubmits;
+      return -EAGAIN;
+    }
+    if (happens(faults_.submitInterrupted)) {
+      ++faultCounts_.interruptedSubmits;
+      return -EINTR;
+    }
+    size_t numberOfTakenSqes = queue_.size();
+    // A partial submit may take nothing, which `IoUringPolicy` retries like
+    // `EAGAIN`.
+    if (numberOfTakenSqes > 0 && happens(faults_.partialSubmit)) {
+      numberOfTakenSqes = uniform(0, numberOfTakenSqes - 1);
+      ++faultCounts_.partialSubmits;
+    }
+    return take(numberOfTakenSqes);
+  }
+
+  int waitForCompletions(unsigned minComplete) override {
+    if (faults_.brokenWaitErrno != 0) {
+      return -faults_.brokenWaitErrno;
+    }
+    if (happens(faults_.waitInterrupted)) {
+      ++faultCounts_.interruptedWaits;
+      return -EINTR;
+    }
+    // Like `io_uring_wait_cqes`, the wait counts the completions that are
+    // already ready. A real wait for more completions than those plus the
+    // requests in the kernel would block forever.
+    AD_CORRECTNESS_CHECK(minComplete <= kernel_.size() + completions_.size(),
+                         "A real ring would block forever on this wait.");
+    while (completions_.size() < minComplete) {
+      completeRandomRequests(1);
+    }
+    return 0;
+  }
+
+  size_t popCompletions(ql::span<Completion> completions) override {
+    const size_t numberOfPopped =
+        std::min(completions.size(), completions_.size());
+    ql::ranges::transform(completions_ | ql::views::take(numberOfPopped),
+                          completions.begin(), &PendingCompletion::completion);
+    completions_.erase(
+        completions_.begin(),
+        completions_.begin() + static_cast<ptrdiff_t>(numberOfPopped));
+    return numberOfPopped;
+  }
+
+  std::vector<uint64_t> cancelQueued(uint64_t noOpRequestId) override {
+    cancelled_ = true;
+    std::vector<uint64_t> cancelledIds;
+    for (Request& request : queue_) {
+      if (!request.isNoOp) {
+        cancelledIds.push_back(request.requestId);
+        ++faultCounts_.cancelledReads;
+      }
+      request = Request{true, nullptr, 0, 0, noOpRequestId};
+    }
+    return cancelledIds;
+  }
+
+  void backOff() override {}
+
+ private:
+  struct Request {
+    bool isNoOp;
+    char* buffer;
+    size_t numberOfBytes;
+    uint64_t offset;
+    uint64_t requestId;
+  };
+
+  struct PendingCompletion {
+    Completion completion;
+    bool isNoOp;
+  };
+
+  // The kernel takes the first `numberOfTakenSqes` queued SQEs, in queue
+  // order, and may complete some of them right away. Return the result of the
+  // submit.
+  int take(size_t numberOfTakenSqes) {
+    ql::ranges::copy(queue_ | ql::views::take(numberOfTakenSqes),
+                     std::back_inserter(kernel_));
+    queue_.erase(queue_.begin(),
+                 queue_.begin() + static_cast<ptrdiff_t>(numberOfTakenSqes));
+    AD_CORRECTNESS_CHECK(kernel_.size() + completions_.size() <= cqCapacity_,
+                         "The requests in the kernel and the unreaped "
+                         "completions must fit into the completion queue, "
+                         "or a real ring would drop completions.");
+    // The kernel may already have completed some of the requests.
+    if (faults_.completeOnSubmit) {
+      completeRandomRequests(uniform(0, kernel_.size()));
+    }
+    return static_cast<int>(numberOfTakenSqes);
+  }
+
+  bool happens(double probability) {
+    return std::bernoulli_distribution{probability}(random_);
+  }
+  size_t uniform(size_t min, size_t max) {
+    return std::uniform_int_distribution<size_t>{min, max}(random_);
+  }
+
+  // Complete `numberOfRequestsToComplete` random requests of the kernel: write
+  // a read's bytes into its buffer and post its completion.
+  void completeRandomRequests(size_t numberOfRequestsToComplete) {
+    const size_t numberOfCompleted =
+        std::min(numberOfRequestsToComplete, kernel_.size());
+    for ([[maybe_unused]] size_t completed :
+         ql::views::iota(size_t{0}, numberOfCompleted)) {
+      const size_t i = uniform(0, kernel_.size() - 1);
+      const Request request = kernel_[i];
+      kernel_.erase(kernel_.begin() + static_cast<ptrdiff_t>(i));
+      completions_.push_back(PendingCompletion{
+          Completion{request.requestId, perform(request)}, request.isNoOp});
+    }
+  }
+
+  // The result (`res`) of `request`.
+  int perform(const Request& request) {
+    if (request.isNoOp) {
+      return 0;
+    }
+    if (happens(faults_.readError)) {
+      injectedReadFault_ = true;
+      ++faultCounts_.faultyReads;
+      return -EIO;
+    }
+    size_t numberOfBytes =
+        std::min(request.numberOfBytes,
+                 file_.size() - std::min<size_t>(file_.size(), request.offset));
+    if (numberOfBytes > 0 && happens(faults_.shortRead)) {
+      numberOfBytes = uniform(0, numberOfBytes - 1);
+    }
+    if (numberOfBytes != request.numberOfBytes) {
+      injectedReadFault_ = true;
+      ++faultCounts_.faultyReads;
+    }
+    if (numberOfBytes > 0) {
+      std::memcpy(request.buffer, file_.data() + request.offset, numberOfBytes);
+    }
+    return static_cast<int>(numberOfBytes);
+  }
+
+  std::string file_;
+  size_t sqCapacity_;
+  size_t cqCapacity_;
+  Faults faults_;
+  std::mt19937 random_;
+  std::deque<Request> queue_;
+  std::vector<Request> kernel_;
+  std::deque<PendingCompletion> completions_;
+  size_t eagainBurstLeft_ = 0;
+  // The number of calls of `submit` so far.
+  size_t numberOfSubmits_ = 0;
+  bool injectedReadFault_ = false;
+  bool cancelled_ = false;
+  FaultCounts faultCounts_;
+};
+
+}  // namespace ad_utility::testing
+
+#endif  // QLEVER_HAS_IO_URING
+
+#endif  // QLEVER_TEST_UTIL_FAKEIOURING_H
