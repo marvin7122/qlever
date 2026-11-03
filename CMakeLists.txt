@@ -435,6 +435,16 @@ include_directories(${Boost_INCLUDE_DIR})
 ######################################
 find_package(OpenSSL REQUIRED)
 
+######################################
+# ZLIB
+######################################
+# Used directly by the parallel compression of HTTP responses in the server
+# (`ParallelCompressorStream`), which is not built for Emscripten. The
+# sequential compression uses zlib through `Boost::iostreams`.
+if (NOT EMSCRIPTEN)
+  find_package(ZLIB REQUIRED)
+endif ()
+
 ##############################################
 # Define a set of common third-party and self made libraries that are used almost
 # as frequently as the standard library or as a  drop-in replacement for some of
