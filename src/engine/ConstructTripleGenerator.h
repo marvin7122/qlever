@@ -10,8 +10,6 @@
 
 #include <gtest/gtest_prod.h>
 
-#include <string>
-
 #include "engine/ConstructBatchEvaluator.h"
 #include "engine/ConstructTypes.h"
 #include "engine/QueryExecutionTree.h"
@@ -24,9 +22,12 @@
 #include "util/ConstructDeduplicationMode.h"
 #include "util/Iterators.h"
 #include "util/http/MediaTypes.h"
-#include "util/views/AsyncTransformStopFlag.h"
 
 namespace qlever::constructExport {
+
+namespace detail {
+struct ChunkFormatter;
+}
 
 using ad_utility::InputRangeTypeErased;
 using CancellationHandle = ad_utility::SharedCancellationHandle;
@@ -44,37 +45,27 @@ struct EvaluationConfig {
   ad_utility::DeduplicationMode mode_ = ad_utility::DeduplicationMode::none();
 };
 
-// Rows of one block of the result of the WHERE clause, copied, so that they
-// stay valid when the export has moved on to later blocks.
-struct CopiedRows {
-  // All columns of the rows.
-  IdTable idTable_;
-  // A clone of the `LocalVocab` of the block, which keeps the entries that the
-  // `idTable_` refers to alive.
-  LocalVocab localVocab_;
-  // The row id from which the blank nodes of the first row are generated (the
-  // ids of the following rows are consecutive).
-  size_t blankNodeRowIdOfFirstRow_;
-};
-
-// The unit of work of a parallel CONSTRUCT export: consecutive rows of the
-// result, which may come from several blocks.
-struct RowChunk {
-  std::vector<CopiedRows> parts_;
-};
-
-// The formatted triples of one `RowChunk`. The memory is allocated with the
+// The formatted triples of one chunk of rows of a parallel export (see
+// `generateFormattedChunksInParallel`). The memory is allocated with the
 // allocator of the query, so it counts towards the `memory-for-queries` budget
 // that all queries share. An allocation that does not fit first evicts
 // unpinned entries of the query cache and then fails the export.
 using FormattedChunk = std::basic_string<char, std::char_traits<char>,
                                          ad_utility::AllocatorWithLimit<char>>;
 
+// How long the tables of the `rowIndices` of a parallel export stay valid:
+// until the export is done (the tables of a fully materialized result, which
+// the export keeps alive), or only until the next table is requested (the
+// blocks of a lazy result).
+enum class TableLifetime { WholeExport, UntilNextTable };
+
 // Generates triples from the CONSTRUCT query results by instantiating the
 // template triple patterns with the values from the result table produced by
 // the WHERE clause of the CONSTRUCT query.
 class ConstructTripleGenerator {
   friend class ConstructTripleGeneratorTest;
+  // For `makeIdCache`.
+  friend struct detail::ChunkFormatter;
 
  public:
   // the number of `IdTable` rows that one batch consists of.
@@ -82,7 +73,7 @@ class ConstructTripleGenerator {
   // the number of entries in the `IdCache` for each variable in the construct
   // clause template.
   static constexpr size_t CACHE_ENTRIES_PER_VARIABLE = 2048;
-  // The maximal number of rows of a `RowChunk` of a parallel export (see
+  // The maximal number of rows of a chunk of a parallel export (see
   // `generateFormattedChunksInParallel`). A chunk has to be large enough that
   // scheduling a task costs little compared to its formatting. This value has
   // not been tuned yet.
@@ -97,23 +88,31 @@ class ConstructTripleGenerator {
       InputRangeTypeErased<TableWithRange> rowIndices, size_t rowOffset,
       ad_utility::MediaType mediaType, const EvaluationConfig& config);
 
-  // Like `generateFormattedTriples`, but the rows of `rowIndices` are copied
-  // into chunks of `MAX_NUMBER_OF_ROWS_PER_CHUNK` rows (the last one may be
+  // Like `generateFormattedTriples`, but the rows of `rowIndices` are cut into
+  // chunks of `MAX_NUMBER_OF_ROWS_PER_CHUNK` rows (the last one may be
   // smaller), across the boundaries of the tables, and the triples of these
   // chunks are instantiated and formatted concurrently on the executor of
   // `config.qec_`. The result has one element per chunk, in the order of the
   // rows, and their concatenation is the same as that of the elements of
-  // `generateFormattedTriples`. At most `maxNumberOfChunksInFlight` chunks
-  // are in flight (copied, but not yet yielded). Destroying the result stops
-  // the chunks in flight and waits for them. This must not be consumed from a
-  // thread of the executor (see `TaskQueueOnExecutor`).
+  // `generateFormattedTriples`. If reading `rowIndices` throws, the chunks
+  // before the exception are yielded first. With `TableLifetime::WholeExport`,
+  // the chunks refer to the rows of the tables; otherwise, the columns of the
+  // tables that the template uses are copied.
+  //
+  // Memory: at most `maxNumberOfChunksInFlight` chunks are submitted but not
+  // yet yielded (each with its rows and its formatted triples), plus the rows
+  // of the next chunk, which are read (and, for a lazy result, computed) one
+  // chunk ahead, plus the chunk that is being yielded. Destroying the result
+  // stops the chunks in flight and waits for them. This must not be consumed
+  // from a thread of the executor (see `TaskQueueOnExecutor`).
   //
   // Precondition: `config.mode_` is `DeduplicationMode::None` (the
   // deduplication depends on the order in which the triples are seen).
   static InputRangeTypeErased<FormattedChunk> generateFormattedChunksInParallel(
       const Triples& templateTriples,
       const VariableToColumnMap& variableColumns,
-      InputRangeTypeErased<TableWithRange> rowIndices, size_t rowOffset,
+      InputRangeTypeErased<TableWithRange> rowIndices,
+      TableLifetime tableLifetime, size_t rowOffset,
       ad_utility::MediaType mediaType, const EvaluationConfig& config,
       size_t maxNumberOfChunksInFlight);
 
@@ -142,30 +141,6 @@ class ConstructTripleGenerator {
       ad_utility::InputRangeTypeErased<TableWithRange> rowIndices,
       size_t rowOffset, const EvaluationConfig& config);
 
-  // Copy the rows of `rowIndices` into chunks of `maxNumberOfRowsPerChunk`
-  // rows (only the last chunk may have fewer), with the blank node row ids of
-  // `evaluateTables` (which start at `rowOffset`). A table is only requested
-  // from `rowIndices` when its rows are needed for a chunk.
-  static InputRangeTypeErased<RowChunk> makeRowChunks(
-      InputRangeTypeErased<TableWithRange> rowIndices, size_t rowOffset,
-      size_t maxNumberOfRowsPerChunk,
-      ad_utility::AllocatorWithLimit<Id> allocator);
-
-  // Instantiate the `preprocessedTemplate` for all rows of the `chunk` and
-  // return the triples formatted as `mediaType`, allocated with the
-  // `allocator`. This is the unit of work of
-  // `generateFormattedChunksInParallel`, so it only reads its arguments and
-  // may be called concurrently for different chunks. Throw a
-  // `CancellationException` if the `cancellationHandle` is cancelled. Stop
-  // early and return the triples so far as soon as `stop` is requested (the
-  // export then no longer needs them).
-  static FormattedChunk formatRowChunk(
-      const PreprocessedConstructTemplate& preprocessedTemplate,
-      const RowChunk& chunk, ad_utility::MediaType mediaType,
-      const Index& index, const CancellationHandle& cancellationHandle,
-      const ad_utility::AllocatorWithLimit<char>& allocator,
-      ad_utility::AsyncTransformStopFlag stop);
-
   FRIEND_TEST(MakeIdCache, emptyTemplate);
   FRIEND_TEST(MakeIdCache, singleVariable);
   FRIEND_TEST(MakeIdCache, multipleVariables);
@@ -174,8 +149,6 @@ class ConstructTripleGenerator {
               blankNodeRowIdsWithOffsetInsideTable);
   FRIEND_TEST(ConstructTripleGeneratorTest, cannotCancelDuringBatch);
   FRIEND_TEST(ConstructTripleGeneratorTest, cancellationThrowsBetweenBatches);
-  FRIEND_TEST(ConstructTripleGeneratorTest, makeRowChunks);
-  FRIEND_TEST(ConstructTripleGeneratorTest, formatRowChunk);
 };
 
 }  // namespace qlever::constructExport

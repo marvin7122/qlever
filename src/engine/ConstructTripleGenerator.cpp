@@ -11,8 +11,10 @@
 
 #include "engine/ConstructBatchEvaluator.h"
 #include "engine/ConstructDeduplicator.h"
+#include "engine/ConstructRowChunks.h"
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleInstantiator.h"
+#include "util/OverloadCallOperator.h"
 #include "util/views/AsyncTransformView.h"
 
 namespace qlever::constructExport {
@@ -111,106 +113,210 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
          ql::views::join;
 }
 
-// The range of `ConstructTripleGenerator::makeRowChunks`.
-class RowChunker : public ad_utility::InputRangeFromGet<RowChunk> {
+using namespace detail;
+
+// The range of `detail::makeRowChunks`.
+class RowChunker : public ad_utility::InputRangeFromGet<RowChunkOrInputError> {
+  // The table of which some rows are not yet in a chunk.
+  struct CurrentTable {
+    // The rows that are not yet in a chunk.
+    TableWithRange rows_;
+    // The blank node row id of the first of these rows.
+    size_t blankNodeRowIdOfFirstRow_;
+    // The clone of the `LocalVocab` for the copies of the rows (only with
+    // `CopyColumns`), created on the first copy.
+    std::shared_ptr<const LocalVocab> localVocab_;
+  };
+  // Reading the tables, the exception that reading them threw (the last
+  // element that is still to be returned), or done.
+  struct Reading {
+    std::optional<CurrentTable> currentTable_;
+  };
+  struct Failed {
+    InputError error_;
+  };
+  struct Done {};
+
   InputRangeTypeErased<TableWithRange> tables_;
-  // The rows of the current table that are not yet in a chunk, or
-  // `std::nullopt` before the first table has been requested.
-  std::optional<TableWithRange> currentTable_;
-  // The blank node row id of row 0 of the `currentTable_`, and that of the next
-  // table (see `rowOffsetAccumulatesAcrossTables` in the test).
-  size_t tableRowOffset_ = 0;
-  size_t nextTableRowOffset_;
-  size_t maxNumberOfRowsPerChunk_;
-  ad_utility::AllocatorWithLimit<Id> allocator_;
+  RowChunkingConfig config_;
+  std::variant<Reading, Failed, Done> state_ = Reading{};
+  size_t blankNodeRowIdOfNextTable_;
 
  public:
-  RowChunker(InputRangeTypeErased<TableWithRange> tables, size_t rowOffset,
-             size_t maxNumberOfRowsPerChunk,
-             ad_utility::AllocatorWithLimit<Id> allocator)
+  RowChunker(InputRangeTypeErased<TableWithRange> tables,
+             RowChunkingConfig config)
       : tables_{std::move(tables)},
-        nextTableRowOffset_{rowOffset},
-        maxNumberOfRowsPerChunk_{maxNumberOfRowsPerChunk},
-        allocator_{std::move(allocator)} {
-    AD_CONTRACT_CHECK(maxNumberOfRowsPerChunk > 0);
+        config_{std::move(config)},
+        blankNodeRowIdOfNextTable_{config_.blankNodeRowIdOfFirstRow_} {
+    AD_CONTRACT_CHECK(config_.maxNumberOfRowsPerChunk_ > 0);
   }
 
-  std::optional<RowChunk> get() override {
+  std::optional<RowChunkOrInputError> get() override {
     RowChunk chunk;
+    if (auto* reading = std::get_if<Reading>(&state_)) {
+      try {
+        fill(chunk, *reading);
+      } catch (...) {
+        // `tables_` is not read again after it threw.
+        state_ = Failed{InputError{std::current_exception()}};
+      }
+    }
+    if (!chunk.parts_.empty()) {
+      return chunk;
+    }
+    if (auto* failed = std::get_if<Failed>(&state_)) {
+      InputError error = std::move(failed->error_);
+      state_ = Done{};
+      return error;
+    }
+    return std::nullopt;
+  }
+
+ private:
+  // Add rows to the `chunk` until it is full or the tables are exhausted (then
+  // the `state_` becomes `Done`).
+  void fill(RowChunk& chunk, Reading& reading) {
     size_t numberOfRows = 0;
-    while (numberOfRows < maxNumberOfRowsPerChunk_) {
+    while (numberOfRows < config_.maxNumberOfRowsPerChunk_) {
+      auto& current = reading.currentTable_;
       // Only request the next table (which may invalidate the current one)
       // when all rows of the current table are in a chunk.
-      if (!currentTable_.has_value() || currentTable_->view_.empty()) {
-        currentTable_ = tables_.get();
-        if (!currentTable_.has_value()) {
-          break;
+      if (!current.has_value() || current->rows_.view_.empty()) {
+        current.reset();
+        auto next = tables_.get();
+        if (!next.has_value()) {
+          state_ = Done{};
+          return;
         }
-        tableRowOffset_ = nextTableRowOffset_;
-        nextTableRowOffset_ += currentTable_->view_.size();
+        const size_t numberOfRowsOfTable = next->view_.size();
+        current.emplace(CurrentTable{std::move(next.value()),
+                                     blankNodeRowIdOfNextTable_, nullptr});
+        blankNodeRowIdOfNextTable_ += numberOfRowsOfTable;
         continue;
       }
-      auto& [tableWithVocab, rows] = currentTable_.value();
-      const uint64_t begin = *rows.begin();
-      const uint64_t tableEnd = begin + rows.size();
-      const uint64_t end =
-          std::min(tableEnd, begin + (maxNumberOfRowsPerChunk_ - numberOfRows));
-      IdTable idTable{tableWithVocab.idTable().numColumns(), allocator_};
-      idTable.insertAtEnd(tableWithVocab.idTable(), begin, end);
-      chunk.parts_.push_back(CopiedRows{std::move(idTable),
-                                        tableWithVocab.localVocab().clone(),
-                                        tableRowOffset_ + begin});
-      numberOfRows += end - begin;
-      rows = ql::views::iota(end, tableEnd);
+      numberOfRows += takeRows(chunk, current.value(),
+                               config_.maxNumberOfRowsPerChunk_ - numberOfRows);
     }
-    if (chunk.parts_.empty()) {
-      return std::nullopt;
-    }
-    return chunk;
+  }
+
+  // Move at most `maxNumberOfRows` (but at least one) rows of the `current`
+  // table into a new part of the `chunk`, and return their number.
+  size_t takeRows(RowChunk& chunk, CurrentTable& current,
+                  size_t maxNumberOfRows) {
+    auto& [tableWithVocab, rows] = current.rows_;
+    const uint64_t begin = *rows.begin();
+    const uint64_t tableEnd = begin + rows.size();
+    const uint64_t end =
+        std::min(tableEnd, begin + static_cast<uint64_t>(maxNumberOfRows));
+    auto part = std::visit(
+        ad_utility::OverloadCallOperator{
+            [&](const BorrowRows&) -> std::variant<TableWithRange, CopiedRows> {
+              return TableWithRange{tableWithVocab,
+                                    ql::views::iota(begin, end)};
+            },
+            [&](const CopyColumns& copy)
+                -> std::variant<TableWithRange, CopiedRows> {
+              if (current.localVocab_ == nullptr) {
+                current.localVocab_ = std::make_shared<const LocalVocab>(
+                    tableWithVocab.localVocab().clone());
+              }
+              IdTable idTable{copy.columns_.size(), config_.allocator_};
+              idTable.insertAtEnd(tableWithVocab.idTable(), begin, end,
+                                  copy.columns_);
+              return CopiedRows{std::move(idTable), current.localVocab_};
+            }},
+        config_.storage_);
+    chunk.parts_.push_back(
+        ChunkPart{std::move(part), current.blankNodeRowIdOfFirstRow_});
+    current.blankNodeRowIdOfFirstRow_ += end - begin;
+    rows = ql::views::iota(end, tableEnd);
+    return end - begin;
   }
 };
 }  // namespace
 
+namespace detail {
 //______________________________________________________________________________
-InputRangeTypeErased<RowChunk> ConstructTripleGenerator::makeRowChunks(
-    InputRangeTypeErased<TableWithRange> rowIndices, size_t rowOffset,
-    size_t maxNumberOfRowsPerChunk,
-    ad_utility::AllocatorWithLimit<Id> allocator) {
-  return InputRangeTypeErased<RowChunk>{
-      RowChunker{std::move(rowIndices), rowOffset, maxNumberOfRowsPerChunk,
-                 std::move(allocator)}};
+InputRangeTypeErased<RowChunkOrInputError> makeRowChunks(
+    InputRangeTypeErased<TableWithRange> tables, RowChunkingConfig config) {
+  return InputRangeTypeErased<RowChunkOrInputError>{
+      RowChunker{std::move(tables), std::move(config)}};
 }
 
 //______________________________________________________________________________
-FormattedChunk ConstructTripleGenerator::formatRowChunk(
-    const PreprocessedConstructTemplate& preprocessedTemplate,
-    const RowChunk& chunk, ad_utility::MediaType mediaType, const Index& index,
-    const CancellationHandle& cancellationHandle,
-    const ad_utility::AllocatorWithLimit<char>& allocator,
-    ad_utility::AsyncTransformStopFlag stop) {
+FormattedChunk ChunkFormatter::format(
+    const RowChunk& chunk, ad_utility::AsyncTransformStopFlag stop) const {
+  const PreprocessedConstructTemplate& preprocessedTemplate =
+      *preprocessedTemplate_;
   // Each chunk has a cache of its own, because the cache is not thread-safe.
-  IdCache cache = makeIdCache(preprocessedTemplate);
-  const BatchEvalContext context{preprocessedTemplate, index, cache,
-                                 cancellationHandle, nullptr};
-  FormattedChunk formatted{allocator};
-  for (const CopiedRows& part : chunk.parts_) {
-    const TableConstRefWithVocab table{part.idTable_.asStaticView<0>(),
-                                       part.localVocab_};
-    // The rows are numbered from zero in the copy, so the blank node row id of
-    // row `i` is `part.blankNodeRowIdOfFirstRow_ + i`, as in `computeBatch`.
-    for (auto batch : ranges::views::chunk(
-             ql::views::iota(size_t{0}, part.idTable_.numRows()), BATCH_SIZE)) {
+  IdCache cache = ConstructTripleGenerator::makeIdCache(preprocessedTemplate);
+  const BatchEvalContext context{preprocessedTemplate, index_, cache,
+                                 cancellationHandle_, nullptr};
+  size_t numberOfRowsOfChunk = 0;
+  for (const ChunkPart& part : chunk.parts_) {
+    numberOfRowsOfChunk += std::visit(
+        ad_utility::OverloadCallOperator{
+            [](const TableWithRange& rows) -> size_t {
+              return rows.view_.size();
+            },
+            [](const CopiedRows& rows) { return rows.idTable_.numRows(); }},
+        part.rows_);
+  }
+  FormattedChunk formatted{allocator_};
+  size_t numberOfFormattedRows = 0;
+  for (const ChunkPart& part : chunk.parts_) {
+    // The table and the rows of the part.
+    auto [table, rows] = std::visit(
+        ad_utility::OverloadCallOperator{
+            [](const TableWithRange& borrowed) {
+              return std::pair{borrowed.tableWithVocab_, borrowed.view_};
+            },
+            [](const CopiedRows& copied) {
+              return std::pair{
+                  TableConstRefWithVocab{copied.idTable_.asStaticView<0>(),
+                                         *copied.localVocab_},
+                  ql::views::iota(uint64_t{0}, static_cast<uint64_t>(
+                                                   copied.idTable_.numRows()))};
+            }},
+        part.rows_);
+    const uint64_t firstRow = *rows.begin();
+    for (auto batch :
+         ranges::views::chunk(rows, ConstructTripleGenerator::BATCH_SIZE)) {
       if (stop.isRequested()) {
         return formatted;
       }
+      const uint64_t batchBegin = *ql::ranges::begin(batch);
       for (const EvaluatedTriple& triple : computeBatch(
-               table, batch, context, part.blankNodeRowIdOfFirstRow_)) {
-        formatted.append(formatTriple(triple, mediaType));
+               table, batch, context,
+               part.blankNodeRowIdOfFirstRow_ + (batchBegin - firstRow))) {
+        formatted.append(formatTriple(triple, mediaType_));
       }
+      // After the first batch, reserve the memory for the whole chunk,
+      // estimated from the size of that batch.
+      if (numberOfFormattedRows == 0) {
+        const size_t numberOfRowsOfBatch = ql::ranges::size(batch);
+        formatted.reserve(formatted.size() * numberOfRowsOfChunk /
+                          numberOfRowsOfBatch);
+      }
+      numberOfFormattedRows += ql::ranges::size(batch);
     }
   }
   return formatted;
 }
+
+//______________________________________________________________________________
+FormattedChunk ChunkFormatter::operator()(
+    RowChunkOrInputError chunkOrError,
+    ad_utility::AsyncTransformStopFlag stop) const {
+  return std::visit(
+      ad_utility::OverloadCallOperator{
+          [this, stop](const RowChunk& chunk) { return format(chunk, stop); },
+          [](const InputError& error) -> FormattedChunk {
+            std::rethrow_exception(error.exception_);
+          }},
+      chunkOrError);
+}
+}  // namespace detail
 
 //______________________________________________________________________________
 InputRangeTypeErased<EvaluatedTriple> ConstructTripleGenerator::evaluateTables(
@@ -274,31 +380,48 @@ ConstructTripleGenerator::generateFormattedTriples(
 InputRangeTypeErased<FormattedChunk>
 ConstructTripleGenerator::generateFormattedChunksInParallel(
     const Triples& templateTriples, const VariableToColumnMap& variableColumns,
-    InputRangeTypeErased<TableWithRange> rowIndices, size_t rowOffset,
+    InputRangeTypeErased<TableWithRange> rowIndices,
+    TableLifetime tableLifetime, size_t rowOffset,
     ad_utility::MediaType mediaType, const EvaluationConfig& config,
     size_t maxNumberOfChunksInFlight) {
+  using namespace detail;
   AD_CONTRACT_CHECK(
       std::holds_alternative<DeduplicationMode::None>(config.mode_.value_));
   const QueryExecutionContext& qec = config.qec_;
-  auto preprocessedTemplate =
+  auto preprocessedTemplate = ConstructTemplatePreprocessor::preprocess(
+      templateTriples, variableColumns, config.index_);
+  RowStorage storage = BorrowRows{};
+  if (tableLifetime == TableLifetime::UntilNextTable) {
+    // Copy only the columns of the template, and preprocess the template
+    // again for the columns of the copies.
+    std::vector<ColumnIndex> columns =
+        preprocessedTemplate.uniqueVariableColumns_;
+    VariableToColumnMap columnsOfCopies;
+    for (const auto& [variable, columnInfo] : variableColumns) {
+      auto it = ql::ranges::find(columns, columnInfo.columnIndex_);
+      if (it != columns.end()) {
+        auto columnInfoOfCopy = columnInfo;
+        columnInfoOfCopy.columnIndex_ =
+            static_cast<ColumnIndex>(it - columns.begin());
+        columnsOfCopies.emplace(variable, columnInfoOfCopy);
+      }
+    }
+    preprocessedTemplate = ConstructTemplatePreprocessor::preprocess(
+        templateTriples, columnsOfCopies, config.index_);
+    storage = CopyColumns{std::move(columns)};
+  }
+  auto chunks =
+      makeRowChunks(std::move(rowIndices),
+                    RowChunkingConfig{rowOffset, MAX_NUMBER_OF_ROWS_PER_CHUNK,
+                                      std::move(storage), qec.getAllocator()});
+  ChunkFormatter formatter{
       qec.makeShared<const PreprocessedConstructTemplate>(
-          ConstructTemplatePreprocessor::preprocess(
-              templateTriples, variableColumns, config.index_));
-  auto chunks = makeRowChunks(std::move(rowIndices), rowOffset,
-                              MAX_NUMBER_OF_ROWS_PER_CHUNK, qec.getAllocator());
-  // The tasks only read what the lambda captures by value.
-  auto formatChunk =
-      [preprocessedTemplate = std::move(preprocessedTemplate), mediaType,
-       index = config.index_, cancellationHandle = config.cancellationHandle_,
-       allocator = ad_utility::AllocatorWithLimit<char>{qec.getAllocator()}](
-          RowChunk chunk, ad_utility::AsyncTransformStopFlag stop) {
-        return formatRowChunk(*preprocessedTemplate, chunk, mediaType, index,
-                              cancellationHandle, allocator, stop);
-      };
-  using View =
-      ad_utility::AsyncTransformView<decltype(chunks), decltype(formatChunk)>;
+          std::move(preprocessedTemplate)),
+      mediaType, config.index_, config.cancellationHandle_,
+      ad_utility::AllocatorWithLimit<char>{qec.getAllocator()}};
+  using View = ad_utility::AsyncTransformView<decltype(chunks), ChunkFormatter>;
   return InputRangeTypeErased<FormattedChunk>{
-      std::make_unique<View>(std::move(chunks), std::move(formatChunk),
+      std::make_unique<View>(std::move(chunks), std::move(formatter),
                              maxNumberOfChunksInFlight, qec.executor())};
 }
 

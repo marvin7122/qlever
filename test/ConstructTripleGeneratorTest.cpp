@@ -10,13 +10,16 @@
 
 #include "./util/IdTableHelpers.h"
 #include "./util/TripleComponentTestHelpers.h"
+#include "engine/ConstructRowChunks.h"
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleGenerator.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/Result.h"
 #include "util/AllocatorTestHelpers.h"
 #include "util/CancellationHandle.h"
+#include "util/GTestHelpers.h"
 #include "util/IdTestHelpers.h"
+#include "util/OverloadCallOperator.h"
 
 namespace {
 
@@ -537,162 +540,310 @@ TEST_F(ConstructTripleGeneratorTest,
 }
 
 // _____________________________________________________________________________
-// The rows of all tables are copied into chunks of the maximal number of rows
+// Helpers for the tests of the parallel export.
+namespace {
+using detail::BorrowRows;
+using detail::ChunkPart;
+using detail::CopiedRows;
+using detail::CopyColumns;
+using detail::InputError;
+using detail::RowChunk;
+using detail::RowChunkOrInputError;
+
+// A range of the `tables` that throws a `std::runtime_error` with the message
+// "table failed" when the table after them is requested, if `throwAtEnd`.
+ad_utility::InputRangeTypeErased<TableWithRange> tablesThatMayThrow(
+    std::vector<TableWithRange> tables, bool throwAtEnd,
+    size_t* numberOfRequestedTables = nullptr) {
+  return ad_utility::InputRangeTypeErased<TableWithRange>{
+      ad_utility::InputRangeFromGetCallable{
+          [tables = std::move(tables), throwAtEnd, numberOfRequestedTables,
+           i = size_t{0}]() mutable -> std::optional<TableWithRange> {
+            if (numberOfRequestedTables != nullptr) {
+              ++*numberOfRequestedTables;
+            }
+            if (i < tables.size()) {
+              return tables.at(i++);
+            }
+            if (throwAtEnd) {
+              throw std::runtime_error{"table failed"};
+            }
+            return std::nullopt;
+          }}};
+}
+
+// The values of column 0 of the rows of a `ChunkPart` (which must be
+// `IntId`s), and their blank node row id.
+using PartValues = std::pair<std::vector<int64_t>, size_t>;
+PartValues partValues(const ChunkPart& part) {
+  std::vector<int64_t> values;
+  std::visit(
+      ad_utility::OverloadCallOperator{
+          [&values](const TableWithRange& rows) {
+            for (uint64_t row : rows.view_) {
+              values.push_back(rows.tableWithVocab_.idTable()(row, 0).getInt());
+            }
+          },
+          [&values](const CopiedRows& rows) {
+            EXPECT_EQ(rows.idTable_.numColumns(), 1);
+            for (Id id : rows.idTable_.getColumn(0)) {
+              values.push_back(id.getInt());
+            }
+          }},
+      part.rows_);
+  return {std::move(values), part.blankNodeRowIdOfFirstRow_};
+}
+
+// The `PartValues` of each part of the `RowChunk` of `element`.
+std::vector<PartValues> chunkValues(
+    const std::optional<RowChunkOrInputError>& element) {
+  std::vector<PartValues> result;
+  EXPECT_TRUE(element.has_value());
+  if (!element.has_value() ||
+      !std::holds_alternative<RowChunk>(element.value())) {
+    ADD_FAILURE() << "Expected a `RowChunk`";
+    return result;
+  }
+  for (const ChunkPart& part : std::get<RowChunk>(element.value()).parts_) {
+    result.push_back(partValues(part));
+  }
+  return result;
+}
+}  // namespace
+
+// _____________________________________________________________________________
+// The rows of all tables are cut into chunks of the maximal number of rows
 // (only the last one is smaller), across table boundaries, with the blank node
-// row ids of `evaluateTables` and a clone of the `LocalVocab` of each table. A
-// table is only requested when its rows are needed.
+// row ids of `evaluateTables`. The rows are borrowed, or only the requested
+// column is copied, with a clone of the `LocalVocab` that is shared by the
+// copies of a table. A table is only requested when its rows are needed.
 TEST_F(ConstructTripleGeneratorTest, makeRowChunks) {
   using ad_utility::testing::IntId;
-  // Table `a` contributes its rows 0..3, `b` its rows 2..7, and `c` its rows
-  // 0..2, so there are 3 + 5 + 2 = 10 rows, and chunks of at most 4 rows.
-  auto a = makeResult(makeIdTableFromVector({{0}, {1}, {2}}, IntId));
-  auto b = makeResult(
-      makeIdTableFromVector({{10}, {11}, {12}, {13}, {14}, {15}, {16}}, IntId));
+  // Table `a` contributes its rows [0, 3), `b` its rows [2, 7), and `c` its
+  // rows [0, 2), so there are 3 + 5 + 2 = 10 rows, and chunks of at most 4
+  // rows. Column 0 has the values that the test checks; with `CopyColumns`, it
+  // is the copy of column 1.
+  auto a = makeResult(makeIdTableFromVector({{0, 0}, {-1, 1}, {-2, 2}}, IntId));
+  auto b = makeResult(makeIdTableFromVector({{-10, 10},
+                                             {-11, 11},
+                                             {-12, 12},
+                                             {-13, 13},
+                                             {-14, 14},
+                                             {-15, 15},
+                                             {-16, 16}},
+                                            IntId));
   LocalVocab localVocabOfC;
   Id localId =
       Id::makeFromLocalVocabIndex(localVocabOfC.getIndexAndAddIfNotContained(
           LocalVocabEntry::literalWithoutQuotes("local",
                                                 qec_->getLocalVocabContext())));
   auto c = std::make_shared<const Result>(
-      makeIdTableFromVector({{20}, {21}}, IntId), std::vector<ColumnIndex>{},
-      std::move(localVocabOfC));
-  std::vector<TableWithRange> tables{makeTableWithRange(*a, 0, 3),
-                                     makeTableWithRange(*b, 2, 7),
-                                     makeTableWithRange(*c, 0, 2)};
-  size_t numberOfRequestedTables = 0;
-  auto rowIndices = ad_utility::InputRangeTypeErased<TableWithRange>{
-      ad_utility::InputRangeFromGetCallable{
-          [&tables,
-           &numberOfRequestedTables]() -> std::optional<TableWithRange> {
-            if (numberOfRequestedTables == tables.size()) {
-              return std::nullopt;
-            }
-            return tables.at(numberOfRequestedTables++);
-          }}};
-  auto chunks = ConstructTripleGenerator::makeRowChunks(
-      std::move(rowIndices), 100, 4, ad_utility::testing::makeAllocator());
-
-  // The rows of the parts of a chunk, and their blank node row ids.
-  using Part = std::pair<std::vector<int64_t>, size_t>;
-  auto parts = [](const RowChunk& chunk) {
-    std::vector<Part> result;
-    for (const CopiedRows& part : chunk.parts_) {
-      EXPECT_EQ(part.idTable_.numColumns(), 1);
-      std::vector<int64_t> rows;
-      for (Id id : part.idTable_.getColumn(0)) {
-        rows.push_back(id.getInt());
-      }
-      result.emplace_back(std::move(rows), part.blankNodeRowIdOfFirstRow_);
-    }
-    return result;
+      makeIdTableFromVector({{-20, 20}, {-21, 21}}, IntId),
+      std::vector<ColumnIndex>{}, std::move(localVocabOfC));
+  auto tables = [&]() {
+    return std::vector<TableWithRange>{makeTableWithRange(*a, 0, 3),
+                                       makeTableWithRange(*b, 2, 7),
+                                       makeTableWithRange(*c, 0, 2)};
   };
-  // `a` starts at the `rowOffset` 100. `b` starts at 100 + 3, and its first row
-  // is row 2. `c` starts at 103 + 5.
-  auto first = chunks.get();
-  ASSERT_TRUE(first.has_value());
-  EXPECT_THAT(parts(first.value()),
-              ElementsAre(Part{{0, 1, 2}, 100}, Part{{12}, 105}));
-  EXPECT_EQ(numberOfRequestedTables, 2);
-  auto second = chunks.get();
-  ASSERT_TRUE(second.has_value());
-  EXPECT_THAT(parts(second.value()), ElementsAre(Part{{13, 14, 15, 16}, 106}));
-  EXPECT_EQ(numberOfRequestedTables, 2);
-  auto third = chunks.get();
-  ASSERT_TRUE(third.has_value());
-  EXPECT_THAT(parts(third.value()), ElementsAre(Part{{20, 21}, 108}));
-  EXPECT_FALSE(chunks.get().has_value());
+  // `a` starts at the row offset 100, `b` at 100 + 3, and `c` at 103 + 5.
+  auto check = [&](detail::RowStorage storage,
+                   std::vector<int64_t> (*values)(std::vector<int64_t>)) {
+    size_t numberOfRequestedTables = 0;
+    auto chunks = detail::makeRowChunks(
+        tablesThatMayThrow(tables(), false, &numberOfRequestedTables),
+        {.blankNodeRowIdOfFirstRow_ = 100,
+         .maxNumberOfRowsPerChunk_ = 4,
+         .storage_ = std::move(storage),
+         .allocator_ = ad_utility::testing::makeAllocator()});
+    std::vector<std::optional<RowChunkOrInputError>> elements;
+    elements.push_back(chunks.get());
+    EXPECT_THAT(chunkValues(elements.back()),
+                ElementsAre(PartValues{values({0, 1, 2}), 100},
+                            PartValues{values({12}), 103}));
+    EXPECT_EQ(numberOfRequestedTables, 2);
+    elements.push_back(chunks.get());
+    EXPECT_THAT(chunkValues(elements.back()),
+                ElementsAre(PartValues{values({13, 14, 15, 16}), 104}));
+    EXPECT_EQ(numberOfRequestedTables, 2);
+    elements.push_back(chunks.get());
+    EXPECT_THAT(chunkValues(elements.back()),
+                ElementsAre(PartValues{values({20, 21}), 108}));
+    EXPECT_FALSE(chunks.get().has_value());
+    return elements;
+  };
+  // Borrowed rows are read from column 0, so their values are negative.
+  auto negate = +[](std::vector<int64_t> values) {
+    for (auto& value : values) {
+      value = -value;
+    }
+    return values;
+  };
+  auto unchanged = +[](std::vector<int64_t> values) { return values; };
+  check(BorrowRows{}, negate);
+  auto copies = check(CopyColumns{{1}}, unchanged);
 
-  // The copy of the `LocalVocab` keeps its entries alive after the result of
-  // the table is gone.
-  tables.clear();
+  // The copies of `b` in the first and second chunk share one clone of its
+  // `LocalVocab`, and the clone of `c` keeps its entries alive after the result
+  // of `c` is gone.
+  auto copiedPart = [&copies](size_t chunk, size_t part) -> const CopiedRows& {
+    return std::get<CopiedRows>(
+        std::get<RowChunk>(copies.at(chunk).value()).parts_.at(part).rows_);
+  };
+  EXPECT_EQ(copiedPart(0, 1).localVocab_, copiedPart(1, 0).localVocab_);
+  EXPECT_NE(copiedPart(0, 0).localVocab_, copiedPart(0, 1).localVocab_);
   c.reset();
-  EXPECT_EQ(third.value().parts_.at(0).localVocab_.size(), 1);
+  const CopiedRows& copyOfC = copiedPart(2, 0);
+  EXPECT_EQ(copyOfC.localVocab_->size(), 1);
   EXPECT_EQ(localId.getLocalVocabIndex()->toStringRepresentation(),
             "\"local\"");
 
   // No tables, no chunks.
-  auto noChunks = ConstructTripleGenerator::makeRowChunks(
-      ad_utility::InputRangeTypeErased{std::vector<TableWithRange>{}}, 0, 4,
-      ad_utility::testing::makeAllocator());
+  auto noChunks = detail::makeRowChunks(
+      tablesThatMayThrow({}, false),
+      {.blankNodeRowIdOfFirstRow_ = 0,
+       .maxNumberOfRowsPerChunk_ = 4,
+       .storage_ = BorrowRows{},
+       .allocator_ = ad_utility::testing::makeAllocator()});
   EXPECT_FALSE(noChunks.get().has_value());
 }
 
 // _____________________________________________________________________________
-// The triples of a chunk of rows from two tables (with blank nodes, an unbound
-// value, and a `LocalVocab` entry) are the same as those of
-// `generateFormattedTriples` for these tables, for every format. Once `stop`
-// is requested, no more triples are formatted; a cancellation throws.
-TEST_F(ConstructTripleGeneratorTest, formatRowChunk) {
+// If requesting a table throws, the rows before are returned as a last
+// (partial) chunk, then the exception as an `InputError`, and then the range
+// ends without requesting another table.
+TEST_F(ConstructTripleGeneratorTest, makeRowChunksWithInputError) {
+  using ad_utility::testing::IntId;
+  auto a = makeResult(makeIdTableFromVector({{0}, {1}, {2}, {3}, {4}}, IntId));
+  size_t numberOfRequestedTables = 0;
+  auto chunks = detail::makeRowChunks(
+      tablesThatMayThrow({makeTableWithRange(*a, 0, 5)}, true,
+                         &numberOfRequestedTables),
+      {.blankNodeRowIdOfFirstRow_ = 0,
+       .maxNumberOfRowsPerChunk_ = 4,
+       .storage_ = BorrowRows{},
+       .allocator_ = ad_utility::testing::makeAllocator()});
+  EXPECT_THAT(chunkValues(chunks.get()),
+              ElementsAre(PartValues{{0, 1, 2, 3}, 0}));
+  EXPECT_THAT(chunkValues(chunks.get()), ElementsAre(PartValues{{4}, 4}));
+  auto error = chunks.get();
+  ASSERT_TRUE(error.has_value());
+  ASSERT_TRUE(std::holds_alternative<InputError>(error.value()));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      std::rethrow_exception(std::get<InputError>(error.value()).exception_),
+      ::testing::HasSubstr("table failed"));
+  EXPECT_FALSE(chunks.get().has_value());
+  EXPECT_EQ(numberOfRequestedTables, 2);
+}
+
+// _____________________________________________________________________________
+// The parallel export gives the same output as `generateFormattedTriples`, for
+// every format and both table lifetimes: two tables with more rows than one
+// chunk, blank nodes, an unbound value, a `LocalVocab` entry, an unused
+// column, and an OFFSET that ends inside the first table. If requesting a
+// table throws, the output before the exception is also the same: the chunks
+// before it are not dropped.
+TEST_F(ConstructTripleGeneratorTest, generateFormattedChunksInParallel) {
   LocalVocab localVocab;
   Id localId =
       Id::makeFromLocalVocabIndex(localVocab.getIndexAndAddIfNotContained(
           LocalVocabEntry::literalWithoutQuotes("local",
                                                 qec_->getLocalVocabContext())));
-  auto first = makeResult(makeIdTableFromVector({{idS_}, {U}, {idO_}}));
-  // More rows than one batch, so that the chunk has more than one batch.
-  IdTable secondTable{1, ad_utility::testing::makeAllocator()};
-  for (size_t i = 0; i < ConstructTripleGenerator::BATCH_SIZE + 3; ++i) {
-    secondTable.push_back({i % 2 == 0 ? localId : idQ_});
+  // Column 0 is not used by the template, column 1 is `?y`.
+  constexpr size_t numberOfRows =
+      ConstructTripleGenerator::MAX_NUMBER_OF_ROWS_PER_CHUNK + 1000;
+  IdTable firstTable{2, ad_utility::testing::makeAllocator()};
+  IdTable secondTable{2, ad_utility::testing::makeAllocator()};
+  for (size_t i = 0; i < numberOfRows; ++i) {
+    std::array values{idS_, U, idO_, localId};
+    firstTable.push_back({idQ_, values.at(i % 4)});
+    secondTable.push_back({idQ_, values.at((i + 1) % 4)});
   }
+  auto first = makeResult(std::move(firstTable));
   auto second = std::make_shared<const Result>(std::move(secondTable),
                                                std::vector<ColumnIndex>{},
                                                std::move(localVocab));
   auto tables = [&]() {
-    return ad_utility::InputRangeTypeErased{std::vector<TableWithRange>{
-        makeTableWithRange(*first, 0, 3),
-        makeTableWithRange(*second, 1,
-                           ConstructTripleGenerator::BATCH_SIZE + 3)}};
+    return std::vector<TableWithRange>{
+        makeTableWithRange(*first, 7, numberOfRows),
+        makeTableWithRange(*second, 0, numberOfRows)};
   };
   Triples templateTriples{
-      std::array<GraphTerm, 3>{Variable{"?x"}, iriV("<p>"), iriV("<o>")},
+      std::array<GraphTerm, 3>{Variable{"?y"}, iriV("<p>"), iriV("<o>")},
       std::array<GraphTerm, 3>{BlankNode{false, "b"}, iriV("<q>"),
-                               Variable{"?x"}}};
+                               Variable{"?y"}}};
   VariableToColumnMap variableColumns{
-      {Variable{"?x"}, makePossiblyUndefinedColumn(0)}};
-  auto preprocessedTemplate = ConstructTemplatePreprocessor::preprocess(
-      templateTriples, variableColumns, index_);
-  ad_utility::AllocatorWithLimit<char> allocator{
-      ad_utility::testing::makeAllocator()};
-  auto handle = makeHandle();
-  std::atomic<bool> stop = false;
+      {Variable{"?x"}, makeAlwaysDefinedColumn(0)},
+      {Variable{"?y"}, makePossiblyUndefinedColumn(1)}};
+  // Concatenate the output, and the message of the exception, if any.
+  auto consume = [](auto range) {
+    std::string output;
+    try {
+      for (const auto& element : range) {
+        output.append(std::string_view{element});
+      }
+    } catch (const std::exception& e) {
+      output.append(absl::StrCat("ERROR: ", e.what()));
+    }
+    return output;
+  };
   using enum ad_utility::MediaType;
   for (auto mediaType : {turtle, ntriples, csv, tsv}) {
-    std::string expected;
-    for (const std::string& triple :
-         ConstructTripleGenerator::generateFormattedTriples(
-             templateTriples, variableColumns, tables(), 7, mediaType,
-             makeConfig())) {
-      expected += triple;
+    for (bool throwAtEnd : {false, true}) {
+      auto expected =
+          consume(ConstructTripleGenerator::generateFormattedTriples(
+              templateTriples, variableColumns,
+              tablesThatMayThrow(tables(), throwAtEnd), 7, mediaType,
+              makeConfig()));
+      EXPECT_THAT(expected, ::testing::HasSubstr("\"local\""));
+      EXPECT_EQ(absl::StrContains(expected, "ERROR: table failed"), throwAtEnd);
+      for (auto tableLifetime :
+           {TableLifetime::WholeExport, TableLifetime::UntilNextTable}) {
+        EXPECT_EQ(
+            consume(ConstructTripleGenerator::generateFormattedChunksInParallel(
+                templateTriples, variableColumns,
+                tablesThatMayThrow(tables(), throwAtEnd), tableLifetime, 7,
+                mediaType, makeConfig(), 4)),
+            expected);
+      }
     }
-    auto chunks = ConstructTripleGenerator::makeRowChunks(
-        tables(), 7, ConstructTripleGenerator::MAX_NUMBER_OF_ROWS_PER_CHUNK,
-        ad_utility::testing::makeAllocator());
-    auto chunk = chunks.get();
-    ASSERT_TRUE(chunk.has_value());
-    EXPECT_FALSE(chunks.get().has_value());
-    EXPECT_EQ(chunk.value().parts_.size(), 2);
-    EXPECT_EQ(std::string{ConstructTripleGenerator::formatRowChunk(
-                  preprocessedTemplate, chunk.value(), mediaType, index_,
-                  handle, allocator, ad_utility::AsyncTransformStopFlag{stop})},
-              expected);
   }
-  auto chunk =
-      ConstructTripleGenerator::makeRowChunks(
-          tables(), 0, ConstructTripleGenerator::MAX_NUMBER_OF_ROWS_PER_CHUNK,
-          ad_utility::testing::makeAllocator())
-          .get();
-  ASSERT_TRUE(chunk.has_value());
-  auto format = [&]() {
-    return std::string{ConstructTripleGenerator::formatRowChunk(
-        preprocessedTemplate, chunk.value(), turtle, index_, handle, allocator,
-        ad_utility::AsyncTransformStopFlag{stop})};
+}
+
+// _____________________________________________________________________________
+// `ChunkFormatter`: once `stop` is requested, no more triples are formatted; a
+// cancellation throws; an `InputError` is rethrown.
+TEST_F(ConstructTripleGeneratorTest, chunkFormatter) {
+  auto result = makeResult(makeIdTableFromVector({{idS_}, {idO_}}));
+  Triples templateTriples{
+      std::array<GraphTerm, 3>{Variable{"?x"}, iriV("<p>"), iriV("<o>")}};
+  VariableToColumnMap variableColumns{
+      {Variable{"?x"}, makeAlwaysDefinedColumn(0)}};
+  auto handle = makeHandle();
+  detail::ChunkFormatter formatter{
+      std::make_shared<const PreprocessedConstructTemplate>(
+          ConstructTemplatePreprocessor::preprocess(templateTriples,
+                                                    variableColumns, index_)),
+      ad_utility::MediaType::turtle, index_, handle,
+      ad_utility::AllocatorWithLimit<char>{
+          ad_utility::testing::makeAllocator()}};
+  RowChunk chunk;
+  chunk.parts_.push_back(ChunkPart{makeTableWithRange(*result, 0, 2), 0});
+  std::atomic<bool> stop = false;
+  auto format = [&](const RowChunk& rowChunk) {
+    return std::string{
+        formatter.format(rowChunk, ad_utility::AsyncTransformStopFlag{stop})};
   };
-  EXPECT_THAT(format(), ::testing::HasSubstr("\"local\""));
+  EXPECT_EQ(format(chunk), "<s> <p> <o> .\n<o> <p> <o> .\n");
   stop = true;
-  EXPECT_EQ(format(), "");
+  EXPECT_EQ(format(chunk), "");
   stop = false;
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      formatter(InputError{std::make_exception_ptr(
+                    std::runtime_error{"table failed"})},
+                ad_utility::AsyncTransformStopFlag{stop}),
+      ::testing::HasSubstr("table failed"));
   handle->cancel(ad_utility::CancellationState::MANUAL);
-  EXPECT_THROW(format(), ad_utility::CancellationException);
+  EXPECT_THROW(format(chunk), ad_utility::CancellationException);
 }
 
 }  // namespace qlever::constructExport

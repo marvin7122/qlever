@@ -976,9 +976,16 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
     // `max-num-threads-per-query`).
     const size_t maxNumberOfChunksInFlight =
         2 * getRuntimeParameter<&RuntimeParameters::maxNumThreadsPerQuery_>();
+    // The tables of a fully materialized result stay valid, because the
+    // `result` is kept alive until the export is done.
+    const auto tableLifetime =
+        result->isFullyMaterialized()
+            ? qlever::constructExport::TableLifetime::WholeExport
+            : qlever::constructExport::TableLifetime::UntilNextTable;
     auto chunks = ConstructTripleGenerator::generateFormattedChunksInParallel(
         constructTriples, qet.getVariableColumns(), std::move(rowIndices),
-        limitAndOffset._offset, format, config, maxNumberOfChunksInFlight);
+        tableLifetime, limitAndOffset._offset, format, config,
+        maxNumberOfChunksInFlight);
     for (const auto& chunk : chunks) {
       // The chunks in flight may have been formatted before a cancellation,
       // so check it here too.
