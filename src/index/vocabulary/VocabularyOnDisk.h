@@ -5,6 +5,7 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -54,6 +55,10 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   struct BatchManagers {
     ad_utility::RecyclingPool<std::unique_ptr<ad_utility::BatchManagerBase>>
         pool_;
+    // Cleared when the io_uring setup of a manager fails (see
+    // `makeBatchManager`), so that the later managers read with `pread`
+    // without another failing setup and warning.
+    std::atomic<bool> preferIoUring_{true};
   };
   // Behind a pointer, because `BatchManagers` is not movable, but
   // `VocabularyOnDisk` is.
