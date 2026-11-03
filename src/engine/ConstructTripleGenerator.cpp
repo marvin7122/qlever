@@ -13,6 +13,7 @@
 #include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleInstantiator.h"
+#include "util/views/AsyncTransformView.h"
 
 namespace qlever::constructExport {
 
@@ -102,7 +103,107 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
          }) |
          ql::views::join;
 }
+
+// The range of `ConstructTripleGenerator::makeRowChunks`.
+class RowChunker : public ad_utility::InputRangeFromGet<RowChunk> {
+  InputRangeTypeErased<TableWithRange> tables_;
+  // The rows of the current table that are not yet in a chunk, or
+  // `std::nullopt` before the first table has been requested.
+  std::optional<TableWithRange> currentTable_;
+  // The blank node row id of row 0 of the `currentTable_`, and that of the next
+  // table (see `rowOffsetAccumulatesAcrossTables` in the test).
+  size_t tableRowOffset_ = 0;
+  size_t nextTableRowOffset_;
+  size_t maxNumberOfRowsPerChunk_;
+  ad_utility::AllocatorWithLimit<Id> allocator_;
+
+ public:
+  RowChunker(InputRangeTypeErased<TableWithRange> tables, size_t rowOffset,
+             size_t maxNumberOfRowsPerChunk,
+             ad_utility::AllocatorWithLimit<Id> allocator)
+      : tables_{std::move(tables)},
+        nextTableRowOffset_{rowOffset},
+        maxNumberOfRowsPerChunk_{maxNumberOfRowsPerChunk},
+        allocator_{std::move(allocator)} {
+    AD_CONTRACT_CHECK(maxNumberOfRowsPerChunk > 0);
+  }
+
+  std::optional<RowChunk> get() override {
+    RowChunk chunk;
+    size_t numberOfRows = 0;
+    while (numberOfRows < maxNumberOfRowsPerChunk_) {
+      // Only request the next table (which may invalidate the current one)
+      // when all rows of the current table are in a chunk.
+      if (!currentTable_.has_value() || currentTable_->view_.empty()) {
+        currentTable_ = tables_.get();
+        if (!currentTable_.has_value()) {
+          break;
+        }
+        tableRowOffset_ = nextTableRowOffset_;
+        nextTableRowOffset_ += currentTable_->view_.size();
+        continue;
+      }
+      auto& [tableWithVocab, rows] = currentTable_.value();
+      const uint64_t begin = *rows.begin();
+      const uint64_t tableEnd = begin + rows.size();
+      const uint64_t end =
+          std::min(tableEnd, begin + (maxNumberOfRowsPerChunk_ - numberOfRows));
+      IdTable idTable{tableWithVocab.idTable().numColumns(), allocator_};
+      idTable.insertAtEnd(tableWithVocab.idTable(), begin, end);
+      chunk.parts_.push_back(CopiedRows{std::move(idTable),
+                                        tableWithVocab.localVocab().clone(),
+                                        tableRowOffset_ + begin});
+      numberOfRows += end - begin;
+      rows = ql::views::iota(end, tableEnd);
+    }
+    if (chunk.parts_.empty()) {
+      return std::nullopt;
+    }
+    return chunk;
+  }
+};
 }  // namespace
+
+//______________________________________________________________________________
+InputRangeTypeErased<RowChunk> ConstructTripleGenerator::makeRowChunks(
+    InputRangeTypeErased<TableWithRange> rowIndices, size_t rowOffset,
+    size_t maxNumberOfRowsPerChunk,
+    ad_utility::AllocatorWithLimit<Id> allocator) {
+  return InputRangeTypeErased<RowChunk>{
+      RowChunker{std::move(rowIndices), rowOffset, maxNumberOfRowsPerChunk,
+                 std::move(allocator)}};
+}
+
+//______________________________________________________________________________
+FormattedChunk ConstructTripleGenerator::formatRowChunk(
+    const PreprocessedConstructTemplate& preprocessedTemplate,
+    const RowChunk& chunk, ad_utility::MediaType mediaType, const Index& index,
+    const CancellationHandle& cancellationHandle,
+    const ad_utility::AllocatorWithLimit<char>& allocator,
+    ad_utility::AsyncTransformStopFlag stop) {
+  // Each chunk has a cache of its own, because the cache is not thread-safe.
+  IdCache cache = makeIdCache(preprocessedTemplate);
+  const BatchEvalContext context{preprocessedTemplate, index, cache,
+                                 cancellationHandle, nullptr};
+  FormattedChunk formatted{allocator};
+  for (const CopiedRows& part : chunk.parts_) {
+    const TableConstRefWithVocab table{part.idTable_.asStaticView<0>(),
+                                       part.localVocab_};
+    // The rows are numbered from zero in the copy, so the blank node row id of
+    // row `i` is `part.blankNodeRowIdOfFirstRow_ + i`, as in `computeBatch`.
+    for (auto batch : ranges::views::chunk(
+             ql::views::iota(size_t{0}, part.idTable_.numRows()), BATCH_SIZE)) {
+      if (stop.isRequested()) {
+        return formatted;
+      }
+      for (const EvaluatedTriple& triple : computeBatch(
+               table, batch, context, part.blankNodeRowIdOfFirstRow_)) {
+        formatted.append(formatTriple(triple, mediaType));
+      }
+    }
+  }
+  return formatted;
+}
 
 //______________________________________________________________________________
 InputRangeTypeErased<EvaluatedTriple> ConstructTripleGenerator::evaluateTables(
@@ -160,6 +261,38 @@ ConstructTripleGenerator::generateFormattedTriples(
   };
   return InputRangeTypeErased(std::move(evaluatedTriples) |
                               ql::views::transform(transformer));
+}
+
+//______________________________________________________________________________
+InputRangeTypeErased<FormattedChunk>
+ConstructTripleGenerator::generateFormattedChunksInParallel(
+    const Triples& templateTriples, const VariableToColumnMap& variableColumns,
+    InputRangeTypeErased<TableWithRange> rowIndices, size_t rowOffset,
+    ad_utility::MediaType mediaType, const EvaluationConfig& config,
+    size_t maxNumberOfChunksInFlight) {
+  AD_CONTRACT_CHECK(
+      std::holds_alternative<DeduplicationMode::None>(config.mode_.value_));
+  const QueryExecutionContext& qec = config.qec_;
+  auto preprocessedTemplate =
+      qec.makeShared<const PreprocessedConstructTemplate>(
+          ConstructTemplatePreprocessor::preprocess(
+              templateTriples, variableColumns, config.index_));
+  auto chunks = makeRowChunks(std::move(rowIndices), rowOffset,
+                              MAX_NUMBER_OF_ROWS_PER_CHUNK, qec.getAllocator());
+  // The tasks only read what the lambda captures by value.
+  auto formatChunk =
+      [preprocessedTemplate = std::move(preprocessedTemplate), mediaType,
+       index = config.index_, cancellationHandle = config.cancellationHandle_,
+       allocator = ad_utility::AllocatorWithLimit<char>{qec.getAllocator()}](
+          RowChunk chunk, ad_utility::AsyncTransformStopFlag stop) {
+        return formatRowChunk(*preprocessedTemplate, chunk, mediaType, index,
+                              cancellationHandle, allocator, stop);
+      };
+  using View =
+      ad_utility::AsyncTransformView<decltype(chunks), decltype(formatChunk)>;
+  return InputRangeTypeErased<FormattedChunk>{
+      std::make_unique<View>(std::move(chunks), std::move(formatChunk),
+                             maxNumberOfChunksInFlight, qec.executor())};
 }
 
 //______________________________________________________________________________

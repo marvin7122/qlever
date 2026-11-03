@@ -10,10 +10,13 @@
 
 #include "./util/IdTableHelpers.h"
 #include "./util/TripleComponentTestHelpers.h"
+#include "engine/ConstructTemplatePreprocessor.h"
 #include "engine/ConstructTripleGenerator.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/Result.h"
+#include "util/AllocatorTestHelpers.h"
 #include "util/CancellationHandle.h"
+#include "util/IdTestHelpers.h"
 
 namespace {
 
@@ -509,6 +512,165 @@ TEST_F(ConstructTripleGeneratorTest,
       EXPECT_ANY_THROW(range.get());
     }
   }
+}
+
+// _____________________________________________________________________________
+// The rows of all tables are copied into chunks of the maximal number of rows
+// (only the last one is smaller), across table boundaries, with the blank node
+// row ids of `evaluateTables` and a clone of the `LocalVocab` of each table. A
+// table is only requested when its rows are needed.
+TEST_F(ConstructTripleGeneratorTest, makeRowChunks) {
+  using ad_utility::testing::IntId;
+  // Table `a` contributes its rows 0..3, `b` its rows 2..7, and `c` its rows
+  // 0..2, so there are 3 + 5 + 2 = 10 rows, and chunks of at most 4 rows.
+  auto a = makeResult(makeIdTableFromVector({{0}, {1}, {2}}, IntId));
+  auto b = makeResult(
+      makeIdTableFromVector({{10}, {11}, {12}, {13}, {14}, {15}, {16}}, IntId));
+  LocalVocab localVocabOfC;
+  Id localId =
+      Id::makeFromLocalVocabIndex(localVocabOfC.getIndexAndAddIfNotContained(
+          LocalVocabEntry::literalWithoutQuotes("local",
+                                                qec_->getLocalVocabContext())));
+  auto c = std::make_shared<const Result>(
+      makeIdTableFromVector({{20}, {21}}, IntId), std::vector<ColumnIndex>{},
+      std::move(localVocabOfC));
+  std::vector<TableWithRange> tables{makeTableWithRange(*a, 0, 3),
+                                     makeTableWithRange(*b, 2, 7),
+                                     makeTableWithRange(*c, 0, 2)};
+  size_t numberOfRequestedTables = 0;
+  auto rowIndices = ad_utility::InputRangeTypeErased<TableWithRange>{
+      ad_utility::InputRangeFromGetCallable{
+          [&tables,
+           &numberOfRequestedTables]() -> std::optional<TableWithRange> {
+            if (numberOfRequestedTables == tables.size()) {
+              return std::nullopt;
+            }
+            return tables.at(numberOfRequestedTables++);
+          }}};
+  auto chunks = ConstructTripleGenerator::makeRowChunks(
+      std::move(rowIndices), 100, 4, ad_utility::testing::makeAllocator());
+
+  // The rows of the parts of a chunk, and their blank node row ids.
+  using Part = std::pair<std::vector<int64_t>, size_t>;
+  auto parts = [](const RowChunk& chunk) {
+    std::vector<Part> result;
+    for (const CopiedRows& part : chunk.parts_) {
+      EXPECT_EQ(part.idTable_.numColumns(), 1);
+      std::vector<int64_t> rows;
+      for (Id id : part.idTable_.getColumn(0)) {
+        rows.push_back(id.getInt());
+      }
+      result.emplace_back(std::move(rows), part.blankNodeRowIdOfFirstRow_);
+    }
+    return result;
+  };
+  // `a` starts at the `rowOffset` 100. `b` starts at 100 + 3, and its first row
+  // is row 2. `c` starts at 103 + 5.
+  auto first = chunks.get();
+  ASSERT_TRUE(first.has_value());
+  EXPECT_THAT(parts(first.value()),
+              ElementsAre(Part{{0, 1, 2}, 100}, Part{{12}, 105}));
+  EXPECT_EQ(numberOfRequestedTables, 2);
+  auto second = chunks.get();
+  ASSERT_TRUE(second.has_value());
+  EXPECT_THAT(parts(second.value()), ElementsAre(Part{{13, 14, 15, 16}, 106}));
+  EXPECT_EQ(numberOfRequestedTables, 2);
+  auto third = chunks.get();
+  ASSERT_TRUE(third.has_value());
+  EXPECT_THAT(parts(third.value()), ElementsAre(Part{{20, 21}, 108}));
+  EXPECT_FALSE(chunks.get().has_value());
+
+  // The copy of the `LocalVocab` keeps its entries alive after the result of
+  // the table is gone.
+  tables.clear();
+  c.reset();
+  EXPECT_EQ(third.value().parts_.at(0).localVocab_.size(), 1);
+  EXPECT_EQ(localId.getLocalVocabIndex()->toStringRepresentation(),
+            "\"local\"");
+
+  // No tables, no chunks.
+  auto noChunks = ConstructTripleGenerator::makeRowChunks(
+      ad_utility::InputRangeTypeErased{std::vector<TableWithRange>{}}, 0, 4,
+      ad_utility::testing::makeAllocator());
+  EXPECT_FALSE(noChunks.get().has_value());
+}
+
+// _____________________________________________________________________________
+// The triples of a chunk of rows from two tables (with blank nodes, an unbound
+// value, and a `LocalVocab` entry) are the same as those of
+// `generateFormattedTriples` for these tables, for every format. Once `stop`
+// is requested, no more triples are formatted; a cancellation throws.
+TEST_F(ConstructTripleGeneratorTest, formatRowChunk) {
+  LocalVocab localVocab;
+  Id localId =
+      Id::makeFromLocalVocabIndex(localVocab.getIndexAndAddIfNotContained(
+          LocalVocabEntry::literalWithoutQuotes("local",
+                                                qec_->getLocalVocabContext())));
+  auto first = makeResult(makeIdTableFromVector({{idS_}, {U}, {idO_}}));
+  // More rows than one batch, so that the chunk has more than one batch.
+  IdTable secondTable{1, ad_utility::testing::makeAllocator()};
+  for (size_t i = 0; i < ConstructTripleGenerator::BATCH_SIZE + 3; ++i) {
+    secondTable.push_back({i % 2 == 0 ? localId : idQ_});
+  }
+  auto second = std::make_shared<const Result>(std::move(secondTable),
+                                               std::vector<ColumnIndex>{},
+                                               std::move(localVocab));
+  auto tables = [&]() {
+    return ad_utility::InputRangeTypeErased{std::vector<TableWithRange>{
+        makeTableWithRange(*first, 0, 3),
+        makeTableWithRange(*second, 1,
+                           ConstructTripleGenerator::BATCH_SIZE + 3)}};
+  };
+  Triples templateTriples{
+      std::array<GraphTerm, 3>{Variable{"?x"}, iriV("<p>"), iriV("<o>")},
+      std::array<GraphTerm, 3>{BlankNode{false, "b"}, iriV("<q>"),
+                               Variable{"?x"}}};
+  VariableToColumnMap variableColumns{
+      {Variable{"?x"}, makePossiblyUndefinedColumn(0)}};
+  auto preprocessedTemplate = ConstructTemplatePreprocessor::preprocess(
+      templateTriples, variableColumns, index_);
+  ad_utility::AllocatorWithLimit<char> allocator{
+      ad_utility::testing::makeAllocator()};
+  auto handle = makeHandle();
+  std::atomic<bool> stop = false;
+  using enum ad_utility::MediaType;
+  for (auto mediaType : {turtle, ntriples, csv, tsv}) {
+    std::string expected;
+    for (const std::string& triple :
+         ConstructTripleGenerator::generateFormattedTriples(
+             templateTriples, variableColumns, tables(), 7, mediaType,
+             makeConfig())) {
+      expected += triple;
+    }
+    auto chunks = ConstructTripleGenerator::makeRowChunks(
+        tables(), 7, ConstructTripleGenerator::MAX_NUMBER_OF_ROWS_PER_CHUNK,
+        ad_utility::testing::makeAllocator());
+    auto chunk = chunks.get();
+    ASSERT_TRUE(chunk.has_value());
+    EXPECT_FALSE(chunks.get().has_value());
+    EXPECT_EQ(chunk.value().parts_.size(), 2);
+    EXPECT_EQ(std::string{ConstructTripleGenerator::formatRowChunk(
+                  preprocessedTemplate, chunk.value(), mediaType, index_,
+                  handle, allocator, ad_utility::AsyncTransformStopFlag{stop})},
+              expected);
+  }
+  auto chunk =
+      ConstructTripleGenerator::makeRowChunks(
+          tables(), 0, ConstructTripleGenerator::MAX_NUMBER_OF_ROWS_PER_CHUNK,
+          ad_utility::testing::makeAllocator())
+          .get();
+  ASSERT_TRUE(chunk.has_value());
+  auto format = [&]() {
+    return std::string{ConstructTripleGenerator::formatRowChunk(
+        preprocessedTemplate, chunk.value(), turtle, index_, handle, allocator,
+        ad_utility::AsyncTransformStopFlag{stop})};
+  };
+  EXPECT_THAT(format(), ::testing::HasSubstr("\"local\""));
+  stop = true;
+  EXPECT_EQ(format(), "");
+  stop = false;
+  handle->cancel(ad_utility::CancellationState::MANUAL);
+  EXPECT_THROW(format(), ad_utility::CancellationException);
 }
 
 }  // namespace qlever::constructExport
