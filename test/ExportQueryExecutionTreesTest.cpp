@@ -2385,11 +2385,21 @@ class FreshLocalVocabPerBlock : public ValuesForTesting {
   std::vector<std::string> words_;
   Id y_;
 
+  // The table that `ValuesForTesting` uses for the width and the variable to
+  // column map. The result is created by `computeResult` below. The last
+  // argument of the constructor (`unlikelyToFitInCache`) keeps the lazy
+  // result out of the query cache, which would keep every `LocalVocab` alive.
+  static std::vector<IdTable> placeholderTables(Id y) {
+    std::vector<IdTable> tables;
+    tables.push_back(makeIdTableFromVector({{y, y}}));
+    return tables;
+  }
+
  public:
   FreshLocalVocabPerBlock(QueryExecutionContext* qec,
                           std::vector<std::string> words, Id y)
       : ValuesForTesting{qec,
-                         std::vector<IdTable>{makeIdTableFromVector({{y, y}})},
+                         placeholderTables(y),
                          {Variable{"?x"}, Variable{"?y"}},
                          true},
         words_{std::move(words)},
