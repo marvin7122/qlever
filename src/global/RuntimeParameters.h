@@ -284,6 +284,12 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // If set, the rows of a CSV or TSV export of a SELECT query are serialized
+  // in chunks that run concurrently on the threads of the query (at most
+  // `max-num-threads-per-query`), instead of one after the other on the thread
+  // that sends the response. The output is the same.
+  Bool parallelCsvTsvExport_{false, "parallel-csv-tsv-export"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.
