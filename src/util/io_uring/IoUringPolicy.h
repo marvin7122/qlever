@@ -86,7 +86,8 @@ class IoUringInterface {
 
 // Return an `IoUringInterface` backed by liburing with `ringSize` SQEs. Throw
 // if the ring cannot be set up, for example because `io_uring_setup` is blocked
-// by seccomp.
+// by seccomp, or if the kernel does not support `IORING_OP_READ` (before Linux
+// 5.6), so that `makeBatchManager` falls back to synchronous reads.
 std::unique_ptr<IoUringInterface> makeLiburingRing(RingSize ringSize);
 
 // A `ReadPolicy` that reads batches with io_uring, one batch at a time:

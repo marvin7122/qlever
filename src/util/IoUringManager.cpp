@@ -107,7 +107,8 @@ namespace {
 class LiburingRing final : public IoUringInterface {
  public:
   // Set up a ring with `ringSize` SQEs. `explicit`, because a `RingSize` is not
-  // a ring. Throws if `io_uring_queue_init` fails.
+  // a ring. Throws if `io_uring_queue_init` fails or the kernel does not
+  // support the operations that `IoUringPolicy` uses.
   explicit LiburingRing(RingSize ringSize) {
     // Set up the submission and completion queues, shared between this
     // process and the kernel, with `ringSize` submission slots and twice as
@@ -117,6 +118,14 @@ class LiburingRing final : public IoUringInterface {
     // details.
     if (io_uring_queue_init(ringSize.value(), &ring_, /*flags=*/0) < 0) {
       AD_THROW("io_uring_queue_init failed in IoUringManager");
+    }
+    // The destructor does not run if the constructor throws, so the ring is
+    // torn down here.
+    if (!supportsReadAndNoOp()) {
+      io_uring_queue_exit(&ring_);
+      AD_THROW(
+          "io_uring does not support IORING_OP_READ and IORING_OP_NOP on this "
+          "kernel (Linux 5.6 or newer is needed)");
     }
   }
 
@@ -213,6 +222,22 @@ class LiburingRing final : public IoUringInterface {
 
  private:
   io_uring ring_{};
+
+  // Return whether the kernel supports the operations that the ring is used
+  // for. `IORING_OP_READ` exists since Linux 5.6; on 5.1 to 5.5,
+  // `io_uring_queue_init` succeeds, but every read would complete with
+  // `EINVAL`. The probe exists since 5.6 as well, so a failed probe also
+  // means that the reads are not supported.
+  bool supportsReadAndNoOp() {
+    io_uring_probe* probe = io_uring_get_probe_ring(&ring_);
+    if (probe == nullptr) {
+      return false;
+    }
+    const bool supported = io_uring_opcode_supported(probe, IORING_OP_READ) &&
+                           io_uring_opcode_supported(probe, IORING_OP_NOP);
+    io_uring_free_probe(probe);
+    return supported;
+  }
 };
 }  // namespace
 
