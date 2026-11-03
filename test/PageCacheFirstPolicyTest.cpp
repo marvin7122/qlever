@@ -70,8 +70,13 @@ bool nothingRead(const UnservedReads& unserved) {
   return std::holds_alternative<UnservedReads::NothingRead>(unserved.reads_);
 }
 
-// Matches an `UnservedReads` for which at least one read was served and the
-// reads at `positions` were not.
+// True iff every read of the batch was served.
+bool allRead(const UnservedReads& unserved) {
+  return std::holds_alternative<UnservedReads::AllRead>(unserved.reads_);
+}
+
+// Matches an `UnservedReads` for which some reads were served and the reads at
+// `positions` were not.
 auto remainingPositions(std::vector<size_t> positions) {
   return Field(&UnservedReads::reads_,
                VariantWith<UnservedReads::RemainingPositions>(
@@ -116,7 +121,7 @@ TEST(ReadPageCacheHits, hitOnlyBatch) {
   PageCacheReader reader{counted(numberOfReads, &fullyCached)};
   auto [notServed, buffers] =
       notServedAndBuffers(reader, fd, {{0, 4}, {4, 4}, {12, 4}, {4, 0}});
-  EXPECT_THAT(notServed, remainingPositions({}));
+  EXPECT_TRUE(allRead(notServed));
   EXPECT_EQ(numberOfReads, 3u);
   EXPECT_EQ(buffers[0], "AAAA");
   EXPECT_EQ(buffers[1], "BBBB");
@@ -200,8 +205,7 @@ TEST(ReadPageCacheHits, permanentErrorsSwitchTheReaderOff) {
   }
   PageCacheReader otherReader{&fullyCached};
   EXPECT_TRUE(otherReader.isSupported());
-  EXPECT_THAT(notServedAndBuffers(otherReader, fd, {{0, 4}}).first,
-              remainingPositions({}));
+  EXPECT_TRUE(allRead(notServedAndBuffers(otherReader, fd, {{0, 4}}).first));
 }
 
 // _____________________________________________________________________________
@@ -239,7 +243,7 @@ TEST(ReadPageCacheHits, runsAreSplitAtIovMax) {
   size_t numberOfReads = 0;
   PageCacheReader reader{counted(numberOfReads, &fullyCached)};
   auto [notServed, buffers] = notServedAndBuffers(reader, fd, reads);
-  EXPECT_THAT(notServed, remainingPositions({}));
+  EXPECT_TRUE(allRead(notServed));
   EXPECT_EQ(numberOfReads, 2u);
   EXPECT_EQ(buffers.front(), "x");
   EXPECT_EQ(buffers.back(), "y");
@@ -269,9 +273,12 @@ struct RecordingPolicy {
   static inline std::vector<size_t> batchSizes_;
   // The file offsets of all reads, in the order of arrival.
   static inline std::vector<uint64_t> receivedOffsets_;
+  // The handles of all `wait` calls, in the order of arrival.
+  static inline std::vector<BatchHandle> waitedFor_;
   static void reset() {
     batchSizes_.clear();
     receivedOffsets_.clear();
+    waitedFor_.clear();
   }
 
   explicit RecordingPolicy([[maybe_unused]] unsigned ringSize) {}
@@ -286,7 +293,7 @@ struct RecordingPolicy {
           fd, targetBuffer, numberOfBytesToRead, fileOffset);
     }
   }
-  void wait([[maybe_unused]] BatchHandle handle) const {}
+  void wait(BatchHandle handle) const { waitedFor_.push_back(handle); }
 };
 
 // A manager whose (page-cache-first) policy is the `RecordingPolicy`
@@ -307,17 +314,20 @@ TEST(PageCacheFirstPolicy, onlyTheMissesAreForwarded) {
       64, counted(numberOfReads, pageCacheReadTestHelpers::cachedAt({0})));
   ReadBatchForTesting batch;
   batch.add({{0, 4}, {4, 4}, {12, 4}, {8, 4}});
-  manager.wait(batch.submitTo(manager, fd));
+  const auto handle = batch.submitTo(manager, fd);
+  manager.wait(handle);
   EXPECT_THAT(batch.result(), ElementsAre("AAAA", "BBBB", "DDDD", "CCCC"));
   EXPECT_THAT(RecordingPolicy::batchSizes_, ElementsAre(size_t{2}));
   EXPECT_THAT(RecordingPolicy::receivedOffsets_,
               ElementsAre(uint64_t{12}, uint64_t{8}));
+  EXPECT_THAT(RecordingPolicy::waitedFor_, ElementsAre(handle));
   EXPECT_EQ(numberOfReads, size_t{3});
 }
 
 // _____________________________________________________________________________
-// If the page-cache read serves every read, the decorated policy receives an
-// empty batch, and waiting for the batch returns immediately.
+// If the page-cache read serves every read, the decorated policy is not
+// involved at all: it receives no batch, and waiting for the batch returns
+// without asking it.
 TEST(PageCacheFirstPolicy, aBatchThatIsServedCompletelyHasNothingToWaitFor) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
@@ -328,8 +338,8 @@ TEST(PageCacheFirstPolicy, aBatchThatIsServedCompletelyHasNothingToWaitFor) {
   batch.add({{0, 4}, {8, 4}});
   manager.wait(batch.submitTo(manager, fd));
   EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
-  EXPECT_THAT(RecordingPolicy::batchSizes_, ElementsAre(size_t{0}));
-  EXPECT_TRUE(RecordingPolicy::receivedOffsets_.empty());
+  EXPECT_THAT(RecordingPolicy::batchSizes_, IsEmpty());
+  EXPECT_THAT(RecordingPolicy::waitedFor_, IsEmpty());
   EXPECT_EQ(numberOfReads, size_t{2});
 }
 
@@ -379,8 +389,7 @@ TEST(PageCacheFirstPolicy, theFastPathCanBeSwitchedOffAndOn) {
     manager.wait(batch.submitTo(manager, fd));
     EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
     EXPECT_EQ(numberOfReads, size_t{2});
-    EXPECT_THAT(RecordingPolicy::batchSizes_,
-                ElementsAre(size_t{2}, size_t{0}));
+    EXPECT_THAT(RecordingPolicy::batchSizes_, ElementsAre(size_t{2}));
   }
 }
 
