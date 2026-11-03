@@ -15,30 +15,27 @@
 
 #include "backports/concepts.h"
 #include "backports/span.h"
+#include "util/io_uring/BatchOfReads.h"
 
 namespace ad_utility {
 
 template <typename T>
 CPP_requires(ReadPolicy_,
-             requires(T& policy, int fd, ql::span<const size_t> numBytes,
-                      ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-                      typename T::BatchHandle handle)(
+             requires(T& policy, int fd, const BatchOfReads& reads)(
                  concepts::constructible_from<T, unsigned>,
-                 // Must provide `addBatch` with the following parameters.
-                 policy.addBatch(fd, numBytes, offsets, buffers, handle),
-                 // Must provide a `wait` method with the following interface.
-                 policy.wait(handle)));
+                 // Must provide `readBatch` with the following parameters.
+                 policy.readBatch(fd, reads)));
 
 // The pluggable I/O backend of `BatchManager`: it specifies how the reads in a
-// batch are carried out. See `IoUringPolicy` (asynchronous, via io_uring) and
-// `SyncIoPolicy` (blocking `pread` fallback) below. Must additionally be
-// constructible from a ringsize (`unsigned`). Also require that `T` must expose
-// an unsigned integral `BatchHandle` type.
+// batch are carried out. See `IoUringPolicy` (via io_uring, in
+// `io_uring/IoUringPolicy.h`) and `SyncIoPolicy` (blocking `pread` fallback, in
+// `IoUringManager.h`). Must additionally be constructible from a ring size
+// (`unsigned`). `readBatch(fd, reads)` reads the `reads` from `fd` and returns,
+// or throws, only once no read of the batch can write into its buffer any more;
+// it reports a failed or short read by throwing.
 template <typename T>
-CPP_concept ReadPolicyConcept =
-    concepts::constructible_from<T, unsigned> &&
-    concepts::unsigned_integral<typename T::BatchHandle> &&
-    CPP_requires_ref(ReadPolicy_, T);
+CPP_concept ReadPolicyConcept = concepts::constructible_from<T, unsigned> &&
+                                CPP_requires_ref(ReadPolicy_, T);
 
 namespace detail {
 // Satisfied iff `Policy` has a member callable as `setPageCacheFastPath(true)`,

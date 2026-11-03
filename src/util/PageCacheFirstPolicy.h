@@ -18,6 +18,7 @@
 #include "backports/algorithm.h"
 #include "backports/span.h"
 #include "util/IoUringManagerConcepts.h"
+#include "util/io_uring/BatchOfReads.h"
 
 namespace ad_utility {
 
@@ -41,7 +42,7 @@ bool pageCacheFastPathIsSupported() noexcept;
 namespace detail {
 // Owning copies of the reads of a batch at the indices `positions` into the
 // three equally long spans, in the order of `positions`, as the `numBytes`,
-// `offsets` and `buffers` arguments of `Policy::addBatch`.
+// `offsets` and `buffers` of the `BatchOfReads` passed to `Policy::readBatch`.
 struct SelectedReads {
   std::vector<size_t> numBytes_;
   std::vector<uint64_t> offsets_;
@@ -75,42 +76,37 @@ class PageCacheFirstPolicy {
       "PageCacheFirstPolicy's Policy must satisfy the ReadPolicyConcept.");
 
  public:
-  using BatchHandle = typename Policy::BatchHandle;
-
   // `ringSize` is forwarded to the constructor of the wrapped `Policy`.
   explicit PageCacheFirstPolicy(unsigned ringSize) : policy_(ringSize) {}
 
   PageCacheFirstPolicy(const PageCacheFirstPolicy&) = delete;
   PageCacheFirstPolicy& operator=(const PageCacheFirstPolicy&) = delete;
 
-  // Switch the fast path on (the default) or off for the batches that are added
+  // Switch the fast path on (the default) or off for the batches that are read
   // afterwards.
   void setPageCacheFastPath(bool enabled) noexcept { enabled_ = enabled; }
 
-  // Serve the reads of the batch that are in the page cache and pass the others
-  // on to the decorated policy. The arguments have the contract of
-  // `readPageCacheHits` and `Policy::addBatch`.
-  void addBatch(int fd, ql::span<const size_t> numBytes,
-                ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-                BatchHandle handle) {
+  // Serve the `reads` that are in the page cache and pass the others on to the
+  // decorated policy. The reads passed on may point into storage that lives
+  // only during this call, which suffices because `Policy::readBatch` is
+  // synchronous.
+  void readBatch(int fd, const BatchOfReads& reads) {
     if (!enabled_ || !pageCacheFastPathIsSupported()) {
-      policy_.addBatch(fd, numBytes, offsets, buffers, handle);
+      policy_.readBatch(fd, reads);
       return;
     }
-    const std::vector<size_t> notServed =
-        readPageCacheHits(fd, numBytes, offsets, buffers);
-    if (notServed.size() == numBytes.size()) {
+    const std::vector<size_t> notServed = readPageCacheHits(
+        fd, reads.numberOfBytes(), reads.offsets(), reads.buffers());
+    if (notServed.size() == reads.size()) {
       // Nothing was served, so the batch is passed on unchanged.
-      policy_.addBatch(fd, numBytes, offsets, buffers, handle);
+      policy_.readBatch(fd, reads);
       return;
     }
-    detail::SelectedReads missed{numBytes, offsets, buffers, notServed};
-    policy_.addBatch(fd, missed.numBytes_, missed.offsets_, missed.buffers_,
-                     handle);
+    detail::SelectedReads missed{reads.numberOfBytes(), reads.offsets(),
+                                 reads.buffers(), notServed};
+    policy_.readBatch(
+        fd, BatchOfReads{missed.numBytes_, missed.offsets_, missed.buffers_});
   }
-
-  // Block until every read of the batch `handle` has completed.
-  void wait(BatchHandle handle) { policy_.wait(handle); }
 
  private:
   Policy policy_;

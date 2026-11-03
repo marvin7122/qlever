@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -25,6 +26,7 @@
 #include "backports/span.h"
 #include "util/File.h"
 #include "util/IoUringManager.h"
+#include "util/io_uring/BatchOfReads.h"
 
 namespace ioUringManagerTestHelpers {
 
@@ -97,24 +99,32 @@ class ReadBatchForTesting {
                                                     reads.size()});
   }
 
-  // Submit all accumulated reads to `manager` for file `fd`; returns the
-  // handle.
-  template <typename Manager>
-  typename Manager::BatchHandle submitTo(Manager& manager, int fd) {
+  // Read all accumulated reads from file `fd` with `reader`: a batch manager,
+  // which takes the three spans, or a `ReadPolicy`, which takes them as a
+  // `BatchOfReads`.
+  template <typename Reader>
+  void readWith(Reader& reader, int fd) {
     // Build the buffer pointers here, after all buffers have been added, so the
     // addresses are stable (no further `add` will reallocate `targetBuffers_`).
-    // `addBatch` copies each address into its read request, so this temporary
-    // vector need not outlive the call.
     std::vector<char*> pointers = ::ranges::to_vector(
         targetBuffers_ | ql::views::transform([](std::string& buffer) {
           return buffer.data();
         }));
-    return manager.addBatch(fd, numBytes_, offsets_, pointers);
+    if constexpr (std::is_base_of_v<ad_utility::BatchManagerBase, Reader>) {
+      reader.readBatch(fd, numBytes_, offsets_, pointers);
+    } else {
+      reader.readBatch(fd,
+                       ad_utility::BatchOfReads{numBytes_, offsets_, pointers});
+    }
   }
 
   // The bytes read by each read, in request order (valid once the batch has
   // completed).
   const std::vector<std::string>& result() const { return targetBuffers_; }
+
+  // The file offset of read `i`, where `i` is the index that `add` returned
+  // (so `i` must be smaller than the number of added reads).
+  uint64_t offset(size_t i) const { return offsets_[i]; }
 
  private:
   std::vector<size_t> numBytes_;
