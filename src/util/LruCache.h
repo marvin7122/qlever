@@ -53,6 +53,26 @@ class LRUCache {
   // The number of entries in the cache.
   size_t size() const { return cache_.size(); }
 
+  // The number of slots of the hash table, which can be larger than `size()`:
+  // the table grows to about twice its capacity when it is 7/8 full, and does
+  // not shrink when entries are removed (see `shrinkHashTableToFit`).
+  size_t hashTableCapacity() const { return cache_.capacity(); }
+
+  // An upper estimate of the memory of a hash table with `capacity` slots: one
+  // slot (key, value and list iterator) and one control byte per slot of
+  // `absl::flat_hash_map`, plus at most 32 bytes for its cloned control bytes
+  // and its header. The list nodes and the heap memory of the values are not
+  // included.
+  static constexpr size_t numberOfBytesPerHashTableSlot =
+      sizeof(typename decltype(cache_)::value_type) + 1;
+  static constexpr size_t memoryOfHashTable(size_t capacity) {
+    return capacity == 0 ? 0 : capacity * numberOfBytesPerHashTableSlot + 32;
+  }
+
+  // Shrink the hash table to the smallest capacity that fits `size()`
+  // entries. Invalidates all references to values in the cache.
+  void shrinkHashTableToFit() { cache_.rehash(0); }
+
   // Check if `key` is in the cache. If found, move it to the front (most
   // recently used) and return a reference to the cached value wrapped in
   // `boost::optional`. If not found, return `boost::none`. Does not insert or
@@ -117,6 +137,7 @@ class LRUCache {
   // Precondition: `key` is not in the cache.
   template <typename Key, typename Value>
   const V& insertAbsent(Key&& key, Value&& value) {
+    AD_EXPENSIVE_CHECK(!cache_.contains(key));
     return insertNewEntry(AD_FWD(key),
                           [&value]() -> V { return AD_FWD(value); });
   }

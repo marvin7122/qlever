@@ -278,4 +278,31 @@ TEST(LRUCache, popLeastRecentlyUsedFollowsRecency) {
   EXPECT_EQ(cache.size(), 0u);
 }
 
+// _____________________________________________________________________________
+TEST(LRUCache, hashTableKeepsItsCapacityUntilShrunk) {
+  LRUCache<int, int> cache(1000);
+  EXPECT_EQ(cache.hashTableCapacity(), 0u);
+  using Cache = LRUCache<int, int>;
+  EXPECT_EQ(Cache::memoryOfHashTable(0), 0u);
+  for (int i = 0; i < 100; ++i) {
+    cache.insertAbsent(i, i);
+  }
+  size_t capacity = cache.hashTableCapacity();
+  EXPECT_GE(capacity, 100u);
+  EXPECT_GT(Cache::memoryOfHashTable(capacity),
+            capacity * Cache::numberOfBytesPerHashTableSlot);
+  for (int i = 0; i < 95; ++i) {
+    cache.popLeastRecentlyUsed();
+  }
+  // Removing entries does not shrink the table.
+  EXPECT_EQ(cache.hashTableCapacity(), capacity);
+  cache.shrinkHashTableToFit();
+  EXPECT_LT(cache.hashTableCapacity(), capacity);
+  EXPECT_GE(cache.hashTableCapacity(), 5u);
+  // The remaining entries are still there, in the same order.
+  for (int i = 95; i < 100; ++i) {
+    EXPECT_EQ(cache.popLeastRecentlyUsed(), i);
+  }
+}
+
 }  // namespace ad_utility::util
