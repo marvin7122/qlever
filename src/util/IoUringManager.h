@@ -14,6 +14,7 @@
 #include <gtest/gtest_prod.h>
 
 #include <cstdint>
+#include <functional>
 #include <unordered_map>
 
 #include "backports/algorithm.h"
@@ -216,11 +217,25 @@ class IoUringPolicy {
   void drainOneCqe();
 
  public:
+  // The liburing calls whose failures `IoUringPolicy` must handle: an
+  // interrupted wait, and a submit that fails or takes only some of the
+  // prepared SQEs. Tests replace them to inject such failures, which a real
+  // kernel produces only rarely.
+  struct LiburingCalls {
+    std::function<int(io_uring*)> submit = &io_uring_submit;
+    std::function<int(io_uring*, io_uring_cqe**)> waitCqe = &io_uring_wait_cqe;
+  };
+
+ private:
+  LiburingCalls liburingCalls_;
+
+ public:
   IoUringPolicy(const IoUringPolicy&) = delete;
   IoUringPolicy& operator=(const IoUringPolicy&) = delete;
 
   // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
   explicit IoUringPolicy(unsigned ringSize);
+  IoUringPolicy(unsigned ringSize, LiburingCalls liburingCalls);
   ~IoUringPolicy();
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the

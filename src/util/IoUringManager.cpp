@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include <stdexcept>
+#include <utility>
 
 #include "util/Exception.h"
 #include "util/Log.h"
@@ -56,7 +57,12 @@ void SyncIoPolicy::addBatch(int fd,
 #ifdef QLEVER_HAS_IO_URING
 
 //______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
+IoUringPolicy::IoUringPolicy(unsigned ringSize)
+    : IoUringPolicy(ringSize, LiburingCalls{}) {}
+
+//______________________________________________________________________________
+IoUringPolicy::IoUringPolicy(unsigned ringSize, LiburingCalls liburingCalls)
+    : ringSize_(ringSize), liburingCalls_(std::move(liburingCalls)) {
   // Set up the submission and completion queues, shared between this process
   // and the kernel, with (at least) `ringSize_` submission slots in the
   // submission queue. liburing rounds the requested size up to a power of two,
@@ -85,7 +91,7 @@ IoUringPolicy::~IoUringPolicy() {
   // avoid spinning forever (it would not decrement the in-flight count).
   while (numInFlightReadRequests_ > 0) {
     io_uring_cqe* cqe = nullptr;
-    if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
+    if (liburingCalls_.waitCqe(&ring_, &cqe) < 0) {
       break;
     }
     io_uring_cqe_seen(&ring_, cqe);
@@ -115,7 +121,7 @@ void IoUringPolicy::addBatch(int fd,
     if (numInFlightReadRequests_ >= ringSize_) {
       // Flush the SQEs prepared so far to the kernel so the kernel can start
       // servicing them. Their completions will free up submission slots.
-      io_uring_submit(&ring_);
+      liburingCalls_.submit(&ring_);
       while (numInFlightReadRequests_ >= ringSize_) {
         drainOneCqe();
       }
@@ -144,7 +150,7 @@ void IoUringPolicy::addBatch(int fd,
   // Flush the remaining prepared SQEs to the kernel (the loop above only
   // submits when the submission queue is full, so the last group of SQEs has
   // not yet been submitted).
-  io_uring_submit(&ring_);
+  liburingCalls_.submit(&ring_);
 }
 
 //______________________________________________________________________________
@@ -162,7 +168,7 @@ void IoUringPolicy::wait(BatchHandle handle) {
 void ad_utility::IoUringPolicy::drainOneCqe() {
   // Block until at least one completion queue entry (CQE) is available.
   io_uring_cqe* cqe = nullptr;
-  int ret = io_uring_wait_cqe(&ring_, &cqe);
+  int ret = liburingCalls_.waitCqe(&ring_, &cqe);
   if (ret < 0) {
     AD_THROW("io_uring_wait_cqe failed in IoUringPolicy");
   }
