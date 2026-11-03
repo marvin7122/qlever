@@ -1,15 +1,12 @@
 name: Check index version
 
 on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
-    # Also run when a label is applied, so that applying the `run-ci` or
-    # `run-full-ci` label triggers the checks. There is no need for `opened`,
-    # see `README.md`.
-    types: [ synchronize, reopened, labeled ]
-  merge_group:
+  # CI-trim 2026-09-23: hosted legs skip push/merge_group (GitHub queue
+  # latency fanned every merge into dozens of queued jobs). Fleet legs guard
+  # master; full signal via 'ci'-labeled PRs or manual dispatch.
+  # Minimal PR profile 2026-09-28: no pull_request trigger; fork PRs only
+  # run Build and test, Format check and Codespell. Run via workflow_dispatch.
+  workflow_dispatch:
 
 concurrency:
   group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
@@ -21,10 +18,7 @@ permissions:
 
 jobs:
   check-index-version:
-    # Only run for PRs with the `run-full-ci` label, see `README.md`.
-    if: >-
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'run-full-ci')
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci')
     strategy:
       fail-fast: false
       matrix:
@@ -58,10 +52,10 @@ jobs:
         compiler-version: ${{matrix.compiler-version}}
     - name: Configure CMake Master
       working-directory: ${{github.workspace}}/master
-      run:  cmake -B build -DCMAKE_BUILD_TYPE=${{matrix.build-type}} -DCMAKE_TOOLCHAIN_FILE="$(pwd)/toolchains/${{matrix.compiler}}${{matrix.compiler-version}}.cmake" -DADDITIONAL_COMPILER_FLAGS="${{matrix.warnings}} ${{matrix.asan-flags}} ${{matrix.ubsan-flags}}" -DRUN_EXPENSIVE_TESTS=true -DENABLE_EXPENSIVE_CHECKS=true
+      run:  cmake -B build -DCMAKE_BUILD_TYPE=${{matrix.build-type}} -DCMAKE_TOOLCHAIN_FILE="$(pwd)/toolchains/${{matrix.compiler}}${{matrix.compiler-version}}.cmake" -DADDITIONAL_COMPILER_FLAGS="${{matrix.warnings}} ${{matrix.asan-flags}} ${{matrix.ubsan-flags}}" -DUSE_PARALLEL=true -DRUN_EXPENSIVE_TESTS=true -DENABLE_EXPENSIVE_CHECKS=true
     - name: Configure CMake PR
       working-directory: ${{github.workspace}}/pr
-      run:  cmake -B build -DCMAKE_BUILD_TYPE=${{matrix.build-type}} -DCMAKE_TOOLCHAIN_FILE="$(pwd)/toolchains/${{matrix.compiler}}${{matrix.compiler-version}}.cmake" -DADDITIONAL_COMPILER_FLAGS="${{matrix.warnings}} ${{matrix.asan-flags}} ${{matrix.ubsan-flags}}" -DRUN_EXPENSIVE_TESTS=true -DENABLE_EXPENSIVE_CHECKS=true
+      run:  cmake -B build -DCMAKE_BUILD_TYPE=${{matrix.build-type}} -DCMAKE_TOOLCHAIN_FILE="$(pwd)/toolchains/${{matrix.compiler}}${{matrix.compiler-version}}.cmake" -DADDITIONAL_COMPILER_FLAGS="${{matrix.warnings}} ${{matrix.asan-flags}} ${{matrix.ubsan-flags}}" -DUSE_PARALLEL=true -DRUN_EXPENSIVE_TESTS=true -DENABLE_EXPENSIVE_CHECKS=true
 
     - name: Build master
         # Build your program with the given configuration

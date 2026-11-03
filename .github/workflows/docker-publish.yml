@@ -2,14 +2,12 @@ name: Docker build and publish
 
 on:
   push:
-    branches: [ master ]
+    # CI-trim 2026-09-23: no dev-image builds on master push (GitHub queue
+    # latency). Release tags still publish; PRs still validate the build.
     tags: [ 'v*.*.*' ]
-  pull_request:
-    branches: [ master ]
-    # Also run when a label is applied, so that applying the `run-ci` or
-    # `run-full-ci` label triggers the checks. There is no need for `opened`,
-    # see `README.md`.
-    types: [ synchronize, reopened, labeled ]
+  # Fork PR profile 2026-09-25: no pull_request trigger (packaging/analysis,
+  # not code quality). Run manually via workflow_dispatch.
+  workflow_dispatch:
 
 env:
   IMAGE: adfreiburg/qlever
@@ -37,10 +35,7 @@ permissions:
 
 jobs:
   build:
-    # Only run for PRs with the `run-full-ci` label, see `README.md`.
-    if: >-
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'run-full-ci')
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci')
     strategy:
       matrix:
         include:
@@ -97,12 +92,6 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           tags: ${{ env.IMAGE }}
-          # Link-time optimization only for the image published from `master`
-          # (not for pull requests, whose builds stay fast). The E2E build step
-          # below must pass the same value, so that it can reuse this build's
-          # cache instead of recompiling.
-          build-args: |
-            QLEVER_ENABLE_LTO=${{ github.event_name != 'pull_request' }}
           # push-by-digest means that the built image is not associated with a tag. Instead, the only way to refer to it
           # is by using its digest (which is basically a unique hash).
           outputs: type=image,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
@@ -134,10 +123,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           # The cache should already provide this. So no rebuild should occur.
-          # `build-args` must match the main build step above for the cache to hit.
           context: .
-          build-args: |
-            QLEVER_ENABLE_LTO=${{ github.event_name != 'pull_request' }}
           load: true
           push: false
           tags: ${{ env.IMAGE }}:tmp-${{ github.sha }}

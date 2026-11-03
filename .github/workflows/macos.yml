@@ -1,15 +1,12 @@
 name: Native build with conan on MacOS
 
 on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
-    # Also run when a label is applied, so that applying the `run-ci` or
-    # `run-full-ci` label triggers the checks. There is no need for `opened`,
-    # see `README.md`.
-    types: [ synchronize, reopened, labeled ]
-  merge_group:
+  # CI-trim 2026-09-23: hosted legs skip push/merge_group (GitHub queue
+  # latency fanned every merge into dozens of queued jobs). Fleet legs guard
+  # master; full signal via 'ci'-labeled PRs or manual dispatch.
+  # Fork PR profile 2026-09-25: no pull_request trigger (packaging/analysis,
+  # not code quality). Run manually via workflow_dispatch.
+  workflow_dispatch:
 
 concurrency:
   group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
@@ -21,16 +18,13 @@ permissions:
 
 jobs:
   build:
-    # Only run for PRs with the `run-full-ci` label, see `README.md`.
-    if: >-
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'run-full-ci')
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci')
     # The CMake configure and build commands are platform-agnostic and should work equally
     # well on Windows or Mac.  You can convert this to a matrix build if you need
     # cross-platform coverage.
     # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         build-type: [Release]
     runs-on: macos-15
@@ -62,7 +56,7 @@ jobs:
         run: clang++ --version
 
       - name: Cache for conan
-        uses: actions/cache@v6
+        uses: actions/cache@v5
         env:
           cache-name: cache-conan-modules-macos-15
         with:
@@ -78,7 +72,8 @@ jobs:
 
       - name: Configure CMake
         # For std::ranges::join_view we need the -fexperimental-library flag on libc++17.
-        run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{matrix.build-type}} -DCMAKE_TOOLCHAIN_FILE="$(pwd)/build/conan_toolchain.cmake" -DRUN_EXPENSIVE_TESTS=false -DENABLE_EXPENSIVE_CHECKS=true -DADDITIONAL_COMPILER_FLAGS="-fexperimental-library" -D_NO_TIMING_TESTS=ON -DCMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE=PRE_TEST
+        # We currently cannot use the parallel algorithms, as the parallel sort requires a GNU-extension, and we build with `libc++`.
+        run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{matrix.build-type}} -DCMAKE_TOOLCHAIN_FILE="$(pwd)/build/conan_toolchain.cmake" -DUSE_PARALLEL=false -DRUN_EXPENSIVE_TESTS=false -DENABLE_EXPENSIVE_CHECKS=true -DADDITIONAL_COMPILER_FLAGS="-fexperimental-library" -D_NO_TIMING_TESTS=ON -DCMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE=PRE_TEST
 
       - name: Build
         # Build your program with the given configuration

@@ -1,15 +1,17 @@
 name: Format check
 
 on:
-  push:
-    branches: [ master ]
+  # CI-trim 2026-09-23: hosted legs skip push/merge_group (GitHub queue
+  # latency fanned every merge into dozens of queued jobs). Fleet legs guard
+  # master; full signal via 'ci'-labeled PRs or manual dispatch.
   pull_request:
-    branches: [ master ]
-    # Also run when a label is applied, so that applying the `run-ci` or
-    # `run-full-ci` label triggers the checks. There is no need for `opened`,
-    # see `README.md`.
-    types: [ synchronize, reopened, labeled ]
-  merge_group:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+
+# A newer push to the same PR branch cancels the older run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 # The default GITHUB_TOKEN only needs to read the repository here.
 permissions:
@@ -17,11 +19,7 @@ permissions:
 
 jobs:
   build:
-    # Only run for PRs with the `run-ci` or `run-full-ci` label, see `README.md`.
-    if: >-
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'run-ci') ||
-      contains(github.event.pull_request.labels.*.name, 'run-full-ci')
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci')
     runs-on: ubuntu-24.04
 
     steps:

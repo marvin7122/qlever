@@ -1,0 +1,894 @@
+{
+ "CPP1": {
+  "title": "Pass cheap and sink parameters by value, expensive in-parameters by const reference, and return results instead of out-parameters",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/functions/parameter-passing.md"
+ },
+ "CPP10": {
+  "title": "Public templates state their requirements as concepts, and failures stay soft",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/templates/constrain-generic-interfaces.md"
+ },
+ "CPP11": {
+  "title": "A returned view, generator, or deferred callable holds no reference to the function's parameters or locals",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/returned-views-own-what-they-use.md"
+ },
+ "CPP12": {
+  "title": "string_view and span are for parameters, owned types are for storage",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/views-are-parameters-not-storage.md"
+ },
+ "CPP13": {
+  "title": "A moved-from object is only assigned to or destroyed",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/move-semantics/moved-from-is-valid-but-unspecified.md"
+ },
+ "CPP14": {
+  "title": "Move bytes through allocator-aware interfaces, not raw allocate plus memcpy",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/allocator-aware-interfaces.md"
+ },
+ "CPP15": {
+  "title": "Return a local variable by name, never wrapped in std::move",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/move-semantics/return-locals-by-name.md"
+ },
+ "CPP16": {
+  "title": "std::move a sink parameter on its last use; std::forward only a forwarding reference, with its exact type",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/move-semantics/move-sinks-forward-forwarding-references.md"
+ },
+ "CPP17": {
+  "title": "Nothing escapes a destructor or a noexcept function; noexcept marks the functions that truly cannot throw",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/exceptions-and-raii/destructors-and-noexcept-never-throw.md"
+ },
+ "CPP18": {
+  "title": "Nothing escapes a destructor or a noexcept function; noexcept marks the functions that truly cannot throw",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/exceptions-and-raii/destructors-and-noexcept-never-throw.md"
+ },
+ "CPP19": {
+  "title": "Catch clauses must be ordered most-derived-first; catching a base by value or reference before a derived handl…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/CPP19.md"
+ },
+ "CPP2": {
+  "title": "Ownership is expressed by a type, never by a raw pointer",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/no-owning-raw-pointers.md"
+ },
+ "CPP20": {
+  "title": "Every resource is released by a destructor, and a constructor that cannot finish throws",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/exceptions-and-raii/every-resource-has-an-raii-owner.md"
+ },
+ "CPP21": {
+  "title": "A function states which exception guarantee it gives and keeps it",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/exceptions-and-raii/state-the-exception-guarantee.md"
+ },
+ "CPP22": {
+  "title": "Every resource is released by a destructor, and a constructor that cannot finish throws",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/exceptions-and-raii/every-resource-has-an-raii-owner.md"
+ },
+ "CPP23": {
+  "title": "Locks are held by scoped guards, and several mutexes are acquired in one deadlock-free step",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/concurrency/locks-are-scoped-and-ordered.md"
+ },
+ "CPP24": {
+  "title": "Locks are held by scoped guards, and several mutexes are acquired in one deadlock-free step",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/concurrency/locks-are-scoped-and-ordered.md"
+ },
+ "CPP25": {
+  "title": "Every variable written by one thread and read by another is protected by a mutex or is atomic",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/concurrency/shared-mutable-state-is-synchronized.md"
+ },
+ "CPP26": {
+  "title": "Every variable written by one thread and read by another is protected by a mutex or is atomic",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/concurrency/shared-mutable-state-is-synchronized.md"
+ },
+ "CPP27": {
+  "title": "A thread is joined before its scope ends, and a condition-variable wait always checks a predicate",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/concurrency/threads-are-joined-and-waits-have-predicates.md"
+ },
+ "CPP28": {
+  "title": "Every variable written by one thread and read by another is protected by a mutex or is atomic",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/concurrency/shared-mutable-state-is-synchronized.md"
+ },
+ "CPP29": {
+  "title": "A thread is joined before its scope ends, and a condition-variable wait always checks a predicate",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/concurrency/threads-are-joined-and-waits-have-predicates.md"
+ },
+ "CPP3": {
+  "title": "Pass non-owning access as references and spans, not raw pointers",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/non-owning-access-without-raw-pointers.md"
+ },
+ "CPP30": {
+  "title": "Atomics use the default memory order unless a weaker order is proven correct",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/concurrency/default-to-sequentially-consistent-atomics.md"
+ },
+ "CPP31": {
+  "title": "A coroutine keeps everything it references alive across every suspension",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/coroutine-frames-outlive-their-references.md"
+ },
+ "CPP32": {
+  "title": "A coroutine keeps everything it references alive across every suspension",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/coroutine-frames-outlive-their-references.md"
+ },
+ "CPP33": {
+  "title": "A coroutine keeps everything it references alive across every suspension",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/coroutine-frames-outlive-their-references.md"
+ },
+ "CPP34": {
+  "title": "Public templates state their requirements as concepts, and failures stay soft",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/templates/constrain-generic-interfaces.md"
+ },
+ "CPP35": {
+  "title": "Public templates state their requirements as concepts, and failures stay soft",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/templates/constrain-generic-interfaces.md"
+ },
+ "CPP36": {
+  "title": "A specialisation behaves like the primary template, and constexpr means constant-evaluable",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/templates/specialisations-keep-the-primary-contract.md"
+ },
+ "CPP37": {
+  "title": "A specialisation behaves like the primary template, and constexpr means constant-evaluable",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/templates/specialisations-keep-the-primary-contract.md"
+ },
+ "CPP38": {
+  "title": "Symmetric operators are hidden friends, comparisons are defaulted, and swap follows the ADL idiom",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/operators/operators-are-hidden-friends-and-comparisons-are-defaulted.md"
+ },
+ "CPP39": {
+  "title": "Single-argument constructors and conversion operators are explicit",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/class-design/explicit-single-argument-constructors.md"
+ },
+ "CPP4": {
+  "title": "std::move a sink parameter on its last use; std::forward only a forwarding reference, with its exact type",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/move-semantics/move-sinks-forward-forwarding-references.md"
+ },
+ "CPP40": {
+  "title": "Compare and compute with like-signed types, and keep sizes and indices in size_t or ptrdiff_t",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/arithmetic/no-signed-unsigned-mixing.md"
+ },
+ "CPP41": {
+  "title": "Integer arithmetic never overflows, shifts out of range, or divides by zero",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/arithmetic/no-overflow-shift-or-zero-division.md"
+ },
+ "CPP42": {
+  "title": "Compare and compute with like-signed types, and keep sizes and indices in size_t or ptrdiff_t",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/arithmetic/no-signed-unsigned-mixing.md"
+ },
+ "CPP43": {
+  "title": "Integer arithmetic never overflows, shifts out of range, or divides by zero",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/arithmetic/no-overflow-shift-or-zero-division.md"
+ },
+ "CPP44": {
+  "title": "Integer arithmetic never overflows, shifts out of range, or divides by zero",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/arithmetic/no-overflow-shift-or-zero-division.md"
+ },
+ "CPP45": {
+  "title": "Floating-point values are compared with a tolerance, and accumulation order is chosen deliberately",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/arithmetic/floating-point-compares-with-tolerance.md"
+ },
+ "CPP46": {
+  "title": "The container follows the access pattern, and vector is the default",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/containers-and-ranges/choose-containers-by-access-pattern.md"
+ },
+ "CPP47": {
+  "title": "No iterator, pointer, or reference into a container survives a mutation that may relocate elements",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/no-references-across-container-mutation.md"
+ },
+ "CPP48": {
+  "title": "No iterator, pointer, or reference into a container survives a mutation that may relocate elements",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/no-references-across-container-mutation.md"
+ },
+ "CPP49": {
+  "title": "No iterator, pointer, or reference into a container survives a mutation that may relocate elements",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/no-references-across-container-mutation.md"
+ },
+ "CPP5": {
+  "title": "Define no special member functions, or define all five consistently",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/move-semantics/rule-of-zero-or-five.md"
+ },
+ "CPP50": {
+  "title": "No iterator, pointer, or reference into a container survives a mutation that may relocate elements",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/no-references-across-container-mutation.md"
+ },
+ "CPP51": {
+  "title": "Enumerations are enum class",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/class-design/scoped-enums.md"
+ },
+ "CPP52": {
+  "title": "Structured bindings (`auto& [a,b] = ...`) are references into the source; ensure the source outlives the bindi…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/CPP52.md"
+ },
+ "CPP53": {
+  "title": "A returned view, generator, or deferred callable holds no reference to the function's parameters or locals",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/returned-views-own-what-they-use.md"
+ },
+ "CPP54": {
+  "title": "A returned view, generator, or deferred callable holds no reference to the function's parameters or locals",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/returned-views-own-what-they-use.md"
+ },
+ "CPP54b": {
+  "title": "A returned view, generator, or deferred callable holds no reference to the function's parameters or locals",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/returned-views-own-what-they-use.md"
+ },
+ "CPP55": {
+  "title": "A returned view, generator, or deferred callable holds no reference to the function's parameters or locals",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/returned-views-own-what-they-use.md"
+ },
+ "CPP56": {
+  "title": "Nothing escapes a destructor or a noexcept function; noexcept marks the functions that truly cannot throw",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/exceptions-and-raii/destructors-and-noexcept-never-throw.md"
+ },
+ "CPP57": {
+  "title": "A polymorphic base has a virtual or protected destructor, and every override says override",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/class-design/polymorphic-bases-have-virtual-destructors-and-override.md"
+ },
+ "CPP58": {
+  "title": "Constructors and destructors do not call virtual functions expecting the derived override",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/class-design/no-virtual-calls-in-constructors.md"
+ },
+ "CPP59": {
+  "title": "A polymorphic base has a virtual or protected destructor, and every override says override",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/class-design/polymorphic-bases-have-virtual-destructors-and-override.md"
+ },
+ "CPP6": {
+  "title": "Everything that does not change is const",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/initialization-and-types/const-correctness.md"
+ },
+ "CPP60": {
+  "title": "Inherit only where the subclass is the base; dispatch on type once, not in every function",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/inheritance-is-for-substitutability.md"
+ },
+ "CPP61": {
+  "title": "Polymorphic objects travel by reference or pointer, never by value of the base type",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/class-design/no-slicing.md"
+ },
+ "CPP62": {
+  "title": "Polymorphic objects travel by reference or pointer, never by value of the base type",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/class-design/no-slicing.md"
+ },
+ "CPP64": {
+  "title": "Every variable is initialised, preferably with braces",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/initialization-and-types/always-initialize-and-prefer-braces.md"
+ },
+ "CPP65": {
+  "title": "Every variable is initialised, preferably with braces",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/initialization-and-types/always-initialize-and-prefer-braces.md"
+ },
+ "CPP66": {
+  "title": "auto deduces a value; write auto& or const auto& when a reference is meant, and check the deduced type",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/initialization-and-types/auto-drops-references-and-cv.md"
+ },
+ "CPP67": {
+  "title": "Symmetric operators are hidden friends, comparisons are defaulted, and swap follows the ADL idiom",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/operators/operators-are-hidden-friends-and-comparisons-are-defaulted.md"
+ },
+ "CPP68": {
+  "title": "Symmetric operators are hidden friends, comparisons are defaulted, and swap follows the ADL idiom",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/operators/operators-are-hidden-friends-and-comparisons-are-defaulted.md"
+ },
+ "CPP69": {
+  "title": "Define no special member functions, or define all five consistently",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/move-semantics/rule-of-zero-or-five.md"
+ },
+ "CPP7": {
+  "title": "No UB patterns: dangling string_view/span, iterator invalidation, signed overflow, uninitialized reads.",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/CPP7.md"
+ },
+ "CPP70": {
+  "title": "Symmetric operators are hidden friends, comparisons are defaulted, and swap follows the ADL idiom",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/operators/operators-are-hidden-friends-and-comparisons-are-defaulted.md"
+ },
+ "CPP72": {
+  "title": "Time is a std::chrono type, and elapsed time is measured with steady_clock",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/time/chrono-types-and-steady-clock.md"
+ },
+ "CPP9": {
+  "title": "Report errors through exceptions or an expected type, carry context, and never swallow them",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/exceptions-and-raii/errors-are-exceptions-or-expected-never-swallowed.md"
+ },
+ "CQ15": {
+  "title": "One logical change edits one place; one class changes for one reason",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/one-change-touches-one-place.md"
+ },
+ "CQ16": {
+  "title": "One logical change edits one place; one class changes for one reason",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/one-change-touches-one-place.md"
+ },
+ "CQ17": {
+  "title": "Values that travel together get a type, and domain concepts are not raw ints and strings",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/name-the-data-that-travels-together.md"
+ },
+ "CQ18": {
+  "title": "Values that travel together get a type, and domain concepts are not raw ints and strings",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/name-the-data-that-travels-together.md"
+ },
+ "CQ19": {
+  "title": "A layer that adds nothing is removed, and a chain of accessors is hidden behind one method",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/no-pass-through-layers.md"
+ },
+ "CQ20": {
+  "title": "A layer that adds nothing is removed, and a chain of accessors is hidden behind one method",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/no-pass-through-layers.md"
+ },
+ "CQ22": {
+  "title": "A member is meaningful for the object's whole life, and functions that must be called together are one function",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/state-is-valid-for-the-whole-object.md"
+ },
+ "CQ23": {
+  "title": "Inherit only where the subclass is the base; dispatch on type once, not in every function",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/inheritance-is-for-substitutability.md"
+ },
+ "CQ24": {
+  "title": "A module hides its decisions, depends on few others, and reaches only downward",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/low-coupling-high-cohesion.md"
+ },
+ "CQ25": {
+  "title": "One logical change edits one place; one class changes for one reason",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/one-change-touches-one-place.md"
+ },
+ "CQ26": {
+  "title": "Inherit only where the subclass is the base; dispatch on type once, not in every function",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/inheritance-is-for-substitutability.md"
+ },
+ "CQ27": {
+  "title": "Inherit only where the subclass is the base; dispatch on type once, not in every function",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/inheritance-is-for-substitutability.md"
+ },
+ "CQ32": {
+  "title": "A layer that adds nothing is removed, and a chain of accessors is hidden behind one method",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/no-pass-through-layers.md"
+ },
+ "CQ38": {
+  "title": "A comment states what the code cannot, is precise, and is updated or deleted with the code",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/comments-say-why-and-stay-true.md"
+ },
+ "CQ39": {
+  "title": "A public API is consistent with its siblings, does what its name says, completes its pairs, and makes the wrong call impossible",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/apis-are-hard-to-misuse.md"
+ },
+ "CQ40": {
+  "title": "A public API is consistent with its siblings, does what its name says, completes its pairs, and makes the wrong call impossible",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/apis-are-hard-to-misuse.md"
+ },
+ "CQ41": {
+  "title": "A public API is consistent with its siblings, does what its name says, completes its pairs, and makes the wrong call impossible",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/apis-are-hard-to-misuse.md"
+ },
+ "CQ42": {
+  "title": "A public API is consistent with its siblings, does what its name says, completes its pairs, and makes the wrong call impossible",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/apis-are-hard-to-misuse.md"
+ },
+ "CQ43": {
+  "title": "Handle the excluded case first and return; the rest of the function assumes the valid state",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/idioms/control-flow/early-return.md"
+ },
+ "CQ44": {
+  "title": "Report errors through exceptions or an expected type, carry context, and never swallow them",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/exceptions-and-raii/errors-are-exceptions-or-expected-never-swallowed.md"
+ },
+ "CQ45": {
+  "title": "Report errors through exceptions or an expected type, carry context, and never swallow them",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/exceptions-and-raii/errors-are-exceptions-or-expected-never-swallowed.md"
+ },
+ "CQ46": {
+  "title": "Every resource is released by a destructor, and a constructor that cannot finish throws",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/exceptions-and-raii/every-resource-has-an-raii-owner.md"
+ },
+ "CQ47": {
+  "title": "Pure computation is separated from effects, dependencies are injected, and nothing under test depends on the clock",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/testable-by-construction.md"
+ },
+ "CQ48": {
+  "title": "Pure computation is separated from effects, dependencies are injected, and nothing under test depends on the clock",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/testable-by-construction.md"
+ },
+ "CQ49": {
+  "title": "New behaviour has a direct test, assertions use matchers, repeated setup is a fixture, and benchmarks measure what they claim",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/tests-are-direct-and-use-matchers.md"
+ },
+ "CQ50": {
+  "title": "Pure computation is separated from effects, dependencies are injected, and nothing under test depends on the clock",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/testable-by-construction.md"
+ },
+ "CQ51": {
+  "title": "A module hides its decisions, depends on few others, and reaches only downward",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/low-coupling-high-cohesion.md"
+ },
+ "CQ52": {
+  "title": "A module hides its decisions, depends on few others, and reaches only downward",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/low-coupling-high-cohesion.md"
+ },
+ "CQ53": {
+  "title": "A module hides its decisions, depends on few others, and reaches only downward",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/low-coupling-high-cohesion.md"
+ },
+ "CQ56": {
+  "title": "A magic value is a named constant with a reason; an environment-dependent value is configuration",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/constants-are-named-and-tunables-are-configuration.md"
+ },
+ "CQ57": {
+  "title": "Log lines are at the level their audience needs, never per element in a hot loop, and never contain secrets",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/logging-is-actionable.md"
+ },
+ "CQ58": {
+  "title": "Log lines are at the level their audience needs, never per element in a hot loop, and never contain secrets",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/logging-is-actionable.md"
+ },
+ "CQ59": {
+  "title": "Log lines are at the level their audience needs, never per element in a hot loop, and never contain secrets",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/logging-is-actionable.md"
+ },
+ "CQ60": {
+  "title": "A TODO names an owner or ticket and says what and why; work that belongs in this change is done, not deferred",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/todos-are-tracked-and-not-shipped-for-this-change.md"
+ },
+ "CQ61": {
+  "title": "A TODO names an owner or ticket and says what and why; work that belongs in this change is done, not deferred",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/todos-are-tracked-and-not-shipped-for-this-change.md"
+ },
+ "CQ62": {
+  "title": "A diff is one logical change, touches only the lines that change behaviour, and leaves no debris",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/one-change-per-diff-and-nothing-accidental.md"
+ },
+ "CQ64": {
+  "title": "A diff is one logical change, touches only the lines that change behaviour, and leaves no debris",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/one-change-per-diff-and-nothing-accidental.md"
+ },
+ "PP10": {
+  "title": "A comment states what the code cannot, is precise, and is updated or deleted with the code",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/comments-say-why-and-stay-true.md"
+ },
+ "PP11": {
+  "title": "Every public function, class, and non-obvious member documents its semantics, ownership, lifetime, and units",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/public-apis-have-docstrings.md"
+ },
+ "PP13": {
+  "title": "No copy, allocation, or lookup the result does not need",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/performance/avoid-needless-copies-and-lookups.md"
+ },
+ "PP14": {
+  "title": "The type admits only the states the program can actually be in",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/make-illegal-states-unrepresentable.md"
+ },
+ "PP15": {
+  "title": "Before writing a helper, search for the one that exists; before copying a block, extract it",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/reuse-before-writing.md"
+ },
+ "PP16": {
+  "title": "Preconditions and invariants are asserted or made structural, and results that must be used say so",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/functions/preconditions-are-checked.md"
+ },
+ "PP17": {
+  "title": "New behaviour has a direct test, assertions use matchers, repeated setup is a fixture, and benchmarks measure what they claim",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/tests-are-direct-and-use-matchers.md"
+ },
+ "PP19": {
+  "title": "A returned view, generator, or deferred callable holds no reference to the function's parameters or locals",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/returned-views-own-what-they-use.md"
+ },
+ "PP2": {
+  "title": "Missing/wrong copyright header: Every new file has the modern QLever copyright header (\"Copyright ... The QLev…",
+  "url": null
+ },
+ "PP20": {
+  "title": "Compile-breaking interface and include drift: Every changed header remains self-consistent with its callers: d…",
+  "url": null
+ },
+ "PP21": {
+  "title": "Broken behavioral contract after refactoring: Changed implementations preserve the documented and tested behav…",
+  "url": null
+ },
+ "PP22": {
+  "title": "Public templates state their requirements as concepts, and failures stay soft",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/templates/constrain-generic-interfaces.md"
+ },
+ "PP23": {
+  "title": "New behaviour has a direct test, assertions use matchers, repeated setup is a fixture, and benchmarks measure what they claim",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/tests-are-direct-and-use-matchers.md"
+ },
+ "PP24": {
+  "title": "Pure computation is separated from effects, dependencies are injected, and nothing under test depends on the clock",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/testable-by-construction.md"
+ },
+ "PP25": {
+  "title": "Compiler options are scoped to what needs them, and CI never runs untrusted code with write access",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/build-and-ci-changes-are-narrow.md"
+ },
+ "PP4": {
+  "title": "A comment states what the code cannot, is precise, and is updated or deleted with the code",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/comments-say-why-and-stay-true.md"
+ },
+ "PP5": {
+  "title": "Before writing a helper, search for the one that exists; before copying a block, extract it",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/reuse-before-writing.md"
+ },
+ "PP7": {
+  "title": "New behaviour has a direct test, assertions use matchers, repeated setup is a fixture, and benchmarks measure what they claim",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/tests-are-direct-and-use-matchers.md"
+ },
+ "PP9": {
+  "title": "Code exists because something calls it now",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/no-speculative-generality.md"
+ },
+ "QC1": {
+  "title": "Preconditions and invariants are asserted or made structural, and results that must be used say so",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/functions/preconditions-are-checked.md"
+ },
+ "QC18": {
+  "title": "A comment states what the code cannot, is precise, and is updated or deleted with the code",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/comments-say-why-and-stay-true.md"
+ },
+ "QC18b": {
+  "title": "Every public function, class, and non-obvious member documents its semantics, ownership, lifetime, and units",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/public-apis-have-docstrings.md"
+ },
+ "QC19": {
+  "title": "Test files named `<Subject>Test.cpp`, located in `test/` mirroring `src/` subdirs, registered in `test/CMakeLi…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC19.md"
+ },
+ "QC2": {
+  "title": "Unreachable code paths use `AD_FAIL()`; runtime errors thrown via `AD_THROW(\"...\")` (from `src/util/Exception.…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC2.md"
+ },
+ "QC20": {
+  "title": "Tests needing a real index use `ad_utility::testing::getQec(...)` from `test/util/IndexTestHelpers.h` (static-…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC20.md"
+ },
+ "QC22": {
+  "title": "Coupled-lifetime locals (owner ⊇ table ⊇ view) bundled in an owner struct so declaration order enforces lifeti…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC22.md"
+ },
+ "QC22b": {
+  "title": "A returned view, generator, or deferred callable holds no reference to the function's parameters or locals",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/returned-views-own-what-they-use.md"
+ },
+ "QC23": {
+  "title": "`TEST_P` + `INSTANTIATE_TEST_SUITE_P` only at ~4+ instances with one identical body; at 2 divergent instances …",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC23.md"
+ },
+ "QC24": {
+  "title": "Before writing a helper, search for the one that exists; before copying a block, extract it",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/reuse-before-writing.md"
+ },
+ "QC25": {
+  "title": "Ordinary function definitions go in the .cpp; a header defines only what must be visible to the caller",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/definitions-belong-in-the-source-file.md"
+ },
+ "QC26": {
+  "title": "Every member that influences the computed result is reflected in `getCacheKeyImpl()`; descriptors/estimates ar…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC26.md"
+ },
+ "QC27": {
+  "title": "`cloneImpl()` deep-copies children and all state; never override the final `clone()` wrapper. New operations g…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC27.md"
+ },
+ "QC28": {
+  "title": "`IdTable`s created in `computeResult` use the context allocator (`allocator()` → `QueryExecutionContext::getAl…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC28.md"
+ },
+ "QC29": {
+  "title": "Long-running loops in operators call `checkCancellation()` (or `cancellationHandle_->throwIfCancelled`) period…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC29.md"
+ },
+ "QC3": {
+  "title": "Preconditions and invariants are asserted or made structural, and results that must be used say so",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/functions/preconditions-are-checked.md"
+ },
+ "QC30": {
+  "title": "Lazy results are produced as `Result::IdTableVocabPair` chunks via `Result::Generator` (`cppcoro::generator<Id…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC30.md"
+ },
+ "QC31": {
+  "title": "`resultSortedOn()` claims match the actual order of the produced `IdTable`; sortedness is never claimed specul…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC31.md"
+ },
+ "QC32": {
+  "title": "`VariableToColumnMap` entries are built with `makeAlwaysDefinedColumn` / `makePossiblyUndefinedColumn` and the…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC32.md"
+ },
+ "QC33": {
+  "title": "`IdTable` is never copied implicitly (copy ctor is disabled); explicit copies use `.clone()`; tables are moved…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC33.md"
+ },
+ "QC34": {
+  "title": "Runtime dispatch on column count uses `CALL_FIXED_SIZE`/`callFixedSize` with `IdTableStatic`/`toStatic()`/`toD…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC34.md"
+ },
+ "QC35": {
+  "title": "Strings/IRIs created at query time go into the `LocalVocab` via `getIndexAndAddIfNotContained` (or the `...IfC…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC35.md"
+ },
+ "QC36": {
+  "title": "No code stores raw pointers/`LocalVocabIndex`es beyond the lifetime of the owning `LocalVocab`; entry address …",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC36.md"
+ },
+ "QC37": {
+  "title": "Fresh runtime blank nodes come from `ad_utility::BlankNodeManager` / its `LocalBlankNodeManager`, not from ad-…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC37.md"
+ },
+ "QC38": {
+  "title": "A new `SparqlExpression` implements `evaluate(EvaluationContext*)`, `getCacheKey(VariableToColumnMap)`, `isDet…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC38.md"
+ },
+ "QC39": {
+  "title": "Id → value conversion inside expressions uses the existing value getters (`StringValueGetter`, `LiteralFromIdG…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC39.md"
+ },
+ "QC4": {
+  "title": "string_view and span are for parameters, owned types are for storage",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/views-are-parameters-not-storage.md"
+ },
+ "QC40": {
+  "title": "IRIs/literals are handled via the `src/rdfTypes` classes (`Iri`/`IriView`, `Literal`) with the `fromStringRepr…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC40.md"
+ },
+ "QC41": {
+  "title": "New global constants go to src/global/Constants.h; special/typed IDs use src/global/SpecialIds.h / TypedIndex.…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC41.md"
+ },
+ "QC42": {
+  "title": "Hash containers are `ad_utility::HashMap`/`HashSet` (absl wrappers), not `std::unordered_map/set` or raw absl …",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC42.md"
+ },
+ "QC43": {
+  "title": "Memory quantities are `ad_utility::MemorySize` (`_GB`/`_MB` literals); query-data-sized allocations go through…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC43.md"
+ },
+ "QC44": {
+  "title": "JSON uses `#include \"util/json.h\"` (the sanctioned nlohmann include point with the `ad_utility::SameAsAny<T, n…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC44.md"
+ },
+ "QC45": {
+  "title": "Binary persistence uses the serialization framework: `AD_SERIALIZE_FUNCTION` / `AD_SERIALIZE_FRIEND_FUNCTION` …",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC45.md"
+ },
+ "QC46": {
+  "title": "String work reuses src/util/StringUtils.h (`utf8ToLower`/`utf8ToUpper`, `getUTF8Prefix`, `constantTimeEquals`,…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC46.md"
+ },
+ "QC47": {
+  "title": "Range plumbing reuses src/util/Views.h and src/util/views/: `OwningView`, `bufferedAsyncView`, `integerRange` …",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC47.md"
+ },
+ "QC48": {
+  "title": "Generators use the in-repo `cppcoro::generator` (src/util/Generator.h) or `ad_utility::streams::stream_generat…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC48.md"
+ },
+ "QC49": {
+  "title": "Log lines are at the level their audience needs, never per element in a hot loop, and never contain secrets",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/logging-is-actionable.md"
+ },
+ "QC5": {
+  "title": "Use `ql::` backports (`ql::span`, `ql::ranges::sort`, `ql::views::*` from `src/backports/`) instead of `std::`…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC5.md"
+ },
+ "QC50": {
+  "title": "HTTP/WebSocket code goes through src/util/http (`HttpClient`, `HttpServer`, `UrlParser`, `MediaTypes`, `stream…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC50.md"
+ },
+ "QC51": {
+  "title": "Every variable written by one thread and read by another is protected by a mutex or is atomic",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/concurrency/shared-mutable-state-is-synchronized.md"
+ },
+ "QC52": {
+  "title": "Nothing escapes a destructor or a noexcept function; noexcept marks the functions that truly cannot throw",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/exceptions-and-raii/destructors-and-noexcept-never-throw.md"
+ },
+ "QC53": {
+  "title": "Time is a std::chrono type, and elapsed time is measured with steady_clock",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/time/chrono-types-and-steady-clock.md"
+ },
+ "QC54": {
+  "title": "Type-trait needs check src/util/TypeTraits.h first (`ad_utility::SameAsAny`, etc.) before adding new metaprogr…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC54.md"
+ },
+ "QC55": {
+  "title": "Backport coverage check before using a C++20/23 std facility directly: src/backports provides span, concepts, …",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC55.md"
+ },
+ "QC56": {
+  "title": "absl boundary: absl is used via the ad_utility wrappers (HashMap/HashSet, `Set = absl::node_hash_set` in Local…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC56.md"
+ },
+ "QC57": {
+  "title": "Runtime-tunable behavior goes through `RuntimeParameters` (src/global/RuntimeParameters.h; non-copyable struct…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC57.md"
+ },
+ "QC58": {
+  "title": "New engine/util sources are added to the `add_library(...)` source list of the directory's CMakeLists.txt and …",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC58.md"
+ },
+ "QC59": {
+  "title": "Test `IdTable`s are built with `makeIdTableFromVector` and IDs with test/util/IdTestHelpers.h factories (`IntI…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC59.md"
+ },
+ "QC6": {
+  "title": "Template constraints, type traits, and concepts use `src/backports/concepts.h` (`CPP_requires`, `CPP_concept`,…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC6.md"
+ },
+ "QC60": {
+  "title": "Exception assertions use `AD_EXPECT_THROW_WITH_MESSAGE` / `AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE` from test/ut…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC60.md"
+ },
+ "QC61": {
+  "title": "Domain-specific test helpers are reused before writing new scaffolding: AllocatorTestHelpers, OperationTestHel…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC61.md"
+ },
+ "QC62": {
+  "title": "New reusable test helpers live in test/util/ (with .cpp registered in test/util/CMakeLists.txt), not copy-past…",
+  "url": "https://github.com/marvin7122/ocr-runners/blob/main/docs/rules/QC62.md"
+ },
+ "QC9": {
+  "title": "Before writing a helper, search for the one that exists; before copying a block, extract it",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/reuse-before-writing.md"
+ },
+ "rule:logic-error": {
+  "title": "wrong result or incorrect code, not style",
+  "url": null
+ },
+ "rule:missing-check": {
+  "title": "Preconditions and invariants are asserted or made structural, and results that must be used say so",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/functions/preconditions-are-checked.md"
+ },
+ "rule:tests": {
+  "title": "New behaviour has a direct test, assertions use matchers, repeated setup is a fixture, and benchmarks measure what they claim",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/tests-are-direct-and-use-matchers.md"
+ },
+ "rule:lifetime": {
+  "title": "A returned view, generator, or deferred callable holds no reference to the function's parameters or locals",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/ownership-and-lifetime/returned-views-own-what-they-use.md"
+ },
+ "rule:move-semantics": {
+  "title": "std::move a sink parameter on its last use; std::forward only a forwarding reference, with its exact type",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/move-semantics/move-sinks-forward-forwarding-references.md"
+ },
+ "rule:const-ref": {
+  "title": "Pass cheap and sink parameters by value, expensive in-parameters by const reference, and return results instead of out-parameters",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/functions/parameter-passing.md"
+ },
+ "rule:design-flaw": {
+  "title": "abstraction conflates distinct concepts",
+  "url": null
+ },
+ "rule:design-suggestion": {
+  "title": "reviewer proposes a concrete refactor",
+  "url": null
+ },
+ "rule:simpler-alternative": {
+  "title": "a simpler existing form exists",
+  "url": null
+ },
+ "rule:redundant-code": {
+  "title": "Before writing a helper, search for the one that exists; before copying a block, extract it",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/reuse-before-writing.md"
+ },
+ "rule:unused-code": {
+  "title": "Code exists because something calls it now",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/no-speculative-generality.md"
+ },
+ "rule:performance": {
+  "title": "No copy, allocation, or lookup the result does not need",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/performance/avoid-needless-copies-and-lookups.md"
+ },
+ "rule:style-idiom": {
+  "title": "QLever convention / consistency",
+  "url": null
+ },
+ "rule:cpp-template-macro": {
+  "title": "Public templates state their requirements as concepts, and failures stay soft",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/templates/constrain-generic-interfaces.md"
+ },
+ "rule:includes": {
+  "title": "missing, unused, or non-repo-relative include",
+  "url": null
+ },
+ "rule:helper-placement": {
+  "title": "Before writing a helper, search for the one that exists; before copying a block, extract it",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/reuse-before-writing.md"
+ },
+ "rule:header-implementation-placement": {
+  "title": "Ordinary function definitions go in the .cpp; a header defines only what must be visible to the caller",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/definitions-belong-in-the-source-file.md"
+ },
+ "rule:naming": {
+  "title": "A name says what the thing is or does, fully, so that its meaning is clear without reading its body",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/names-declare-intent.md"
+ },
+ "rule:naming-grammar": {
+  "title": "A name states what the value means in the domain, precisely, and never just its type",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/names-say-what-a-value-is.md"
+ },
+ "rule:idiom": {
+  "title": "Handle the excluded case first and return; the rest of the function assumes the valid state",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/idioms/control-flow/early-return.md"
+ },
+ "rule:comment-accuracy": {
+  "title": "A comment states what the code cannot, is precise, and is updated or deleted with the code",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/comments-say-why-and-stay-true.md"
+ },
+ "rule:comment-precision": {
+  "title": "A comment states what the code cannot, is precise, and is updated or deleted with the code",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/comments-say-why-and-stay-true.md"
+ },
+ "rule:comment-format": {
+  "title": "Comments are full sentences; function comments are imperative, member comments are noun phrases, identifiers are in backticks",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/comment-grammar.md"
+ },
+ "rule:missing-doc": {
+  "title": "Every public function, class, and non-obvious member documents its semantics, ownership, lifetime, and units",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/public-apis-have-docstrings.md"
+ },
+ "rule:stale-comment": {
+  "title": "A comment states what the code cannot, is precise, and is updated or deleted with the code",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/comments-say-why-and-stay-true.md"
+ },
+ "rule:redundant-comment": {
+  "title": "A comment states what the code cannot, is precise, and is updated or deleted with the code",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/comments-say-why-and-stay-true.md"
+ },
+ "rule:todo-needed": {
+  "title": "A TODO names an owner or ticket and says what and why; work that belongs in this change is done, not deferred",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/todos-are-tracked-and-not-shipped-for-this-change.md"
+ },
+ "rule:todo-resolved": {
+  "title": "A TODO names an owner or ticket and says what and why; work that belongs in this change is done, not deferred",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/todos-are-tracked-and-not-shipped-for-this-change.md"
+ },
+ "rule:pr-structure": {
+  "title": "A diff is one logical change, touches only the lines that change behaviour, and leaves no debris",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/one-change-per-diff-and-nothing-accidental.md"
+ },
+ "rule:migration-cleanup": {
+  "title": "Code exists because something calls it now",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/guidelines/design/no-speculative-generality.md"
+ },
+ "rule:accidental-formatting": {
+  "title": "A diff is one logical change, touches only the lines that change behaviour, and leaves no debris",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/one-change-per-diff-and-nothing-accidental.md"
+ },
+ "rule:code-suggestion": {
+  "title": "bare GitHub suggestion block, no prose",
+  "url": null
+ },
+ "IDM026": {
+  "title": "No classic index loop: iterate a range, a view, or a counted range, or use a while loop",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/containers-and-ranges/no-index-loops.md"
+ },
+ "IDM028": {
+  "title": "Memory for the expected load is allocated once, and every loop states and asserts its bound",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/contracts/allocate-upfront-and-bound-every-loop.md"
+ },
+ "IDM029": {
+  "title": "A function used only by contracts exists only in debug builds",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/contracts/debug-only-code-exists-only-in-debug-builds.md"
+ },
+ "IDM030": {
+  "title": "A function states its contract at the top and leaves only through a checked return; opting out is explicit",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/contracts/every-function-states-its-contract.md"
+ },
+ "IDM031": {
+  "title": "A class invariant is enforced by its members' types where possible, and checked at run time only for what types cannot say",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/contracts/invariants-are-types-first.md"
+ },
+ "IDM036": {
+  "title": "A function body fits on one screen: forty lines at most, counted between its braces",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/functions/function-length-is-bounded.md"
+ },
+ "IDM055": {
+  "title": "A pointer is compared with nullptr explicitly, never used as a truth value",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/rules/pointers/compare-pointers-with-nullptr.md"
+ },
+ "IDM059": {
+  "title": "Blank lines separate the contract from the body, logical groups of statements from each other, and functions from each other",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/blank-lines-group-logic.md"
+ },
+ "IDM061": {
+  "title": "Every automated check runs before a commit can exist, with no skip switch for failures",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/checks-gate-every-commit.md"
+ },
+ "IDM066": {
+  "title": "Every function sits under a separator with an imperative comment that names what it does, to what, and why; special members carry their label",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/function-layout.md"
+ },
+ "IDM069": {
+  "title": "A name says what the thing is or does, fully, so that its meaning is clear without reading its body",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/names-declare-intent.md"
+ },
+ "IDM075": {
+  "title": "Every test sits under a separator with an `Intent:` comment that states what the test establishes",
+  "url": "https://github.com/marvin7122/cpp-idioms/blob/main/style/tests-state-their-intent.md"
+ }
+}
