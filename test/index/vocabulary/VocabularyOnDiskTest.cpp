@@ -17,6 +17,7 @@
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
+#include "../../util/RuntimeParametersTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "global/Constants.h"
@@ -302,6 +303,30 @@ TEST(VocabularyOnDisk, LookupBatchMatchesIndividualLookups) {
   auto result = vocab->lookupBatch(indices);
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*vocab, result,
                                                                 indices);
+}
+
+// `VocabularyOnDisk::open` builds its batch managers with the
+// `vocabulary-prefer-io-uring` runtime parameter: with the parameter off they
+// use the synchronous backend, with it on the io_uring backend where io_uring
+// is available. This test checks only that the lookups are correct with both
+// settings; which backend `makeBatchManager` builds for a given flag is checked
+// by the `MakeBatchManager` tests in `IoUringManagerTest.cpp`.
+TEST(VocabularyOnDisk, LookupBatchIsCorrectWithEitherPreferIoUringSetting) {
+  std::array<size_t, 8> indices{2, 0, 3, 1, 1, 4, 0, 3};
+  auto resetParameter =
+      setRuntimeParameterForTest<&RuntimeParameters::vocabularyPreferIoUring_>(
+          false);
+  {
+    auto vocab = createExampleVocabulary();
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+  }
+  setRuntimeParameter<&RuntimeParameters::vocabularyPreferIoUring_>(true);
+  {
+    auto vocab = createExampleVocabulary();
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+  }
 }
 
 // An empty batch is an invalid request and must throw.
