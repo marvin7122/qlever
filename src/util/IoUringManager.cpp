@@ -16,15 +16,25 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <climits>
 #include <cstring>
 #include <exception>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "util/Exception.h"
 #include "util/Log.h"
+
+#ifdef QLEVER_HAS_IO_URING
+#include <liburing.h>
+// `liburing.h` pulls in the kernel header `<linux/fs.h>`, which defines a macro
+// `BLOCK_SIZE`, a very common identifier. QLever does not use the macro, so we
+// get rid of it again.
+#undef BLOCK_SIZE
+#endif
 
 namespace ad_utility {
 
@@ -64,19 +74,97 @@ void SyncIoPolicy::addBatch(int fd,
 
 #ifdef QLEVER_HAS_IO_URING
 
-//______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
-  // Set up the submission and completion queues, shared between this process
-  // and the kernel, with (at least) `ringSize_` submission slots in the
-  // submission queue. liburing rounds the requested size up to a power of two,
-  // so the actual ring may be larger than `ringSize`; `ringSize_` is therefore
-  // a conservative (lower) bound for the "ring full" check below. See
-  // https://man7.org/linux/man-pages/man3/io_uring_queue_init.3.html for
-  // details.
-  int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
-  if (ret < 0) {
-    AD_THROW("io_uring_queue_init failed in IoUringManager");
+namespace {
+// `IoUringInterface` via liburing.
+class LiburingRing final : public IoUringInterface {
+ public:
+  explicit LiburingRing(unsigned ringSize) {
+    // Set up the submission and completion queues, shared between this
+    // process and the kernel, with (at least) `ringSize` submission slots in
+    // the submission queue. liburing rounds the requested size up to a power
+    // of two, so the actual ring may be larger than `ringSize`; `ringSize` is
+    // therefore a conservative (lower) bound for the "ring full" check of
+    // `IoUringPolicy`. See
+    // https://man7.org/linux/man-pages/man3/io_uring_queue_init.3.html for
+    // details.
+    if (io_uring_queue_init(ringSize, &ring_, /*flags=*/0) < 0) {
+      AD_THROW("io_uring_queue_init failed in IoUringManager");
+    }
   }
+
+  ~LiburingRing() override { io_uring_queue_exit(&ring_); }
+
+  LiburingRing(const LiburingRing&) = delete;
+  LiburingRing& operator=(const LiburingRing&) = delete;
+
+  bool prepareRead(int fd, char* buffer, size_t numberOfBytes, uint64_t offset,
+                   uint64_t requestId) override {
+    io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
+    if (sqe == nullptr) {
+      return false;
+    }
+    // Record the read's parameters in the SQE (this only sets the SQE's
+    // fields; the request is not handed to the kernel until a later
+    // `io_uring_submit`). io_uring copies the SQE's `user_data` verbatim into
+    // the matching completion, so the request id can be recovered from it.
+    io_uring_prep_read(sqe, fd, buffer, static_cast<unsigned>(numberOfBytes),
+                       static_cast<__u64>(offset));
+    io_uring_sqe_set_data64(sqe, requestId);
+    return true;
+  }
+
+  int submit() override { return io_uring_submit(&ring_); }
+
+  int waitForCompletions(unsigned minComplete) override {
+    io_uring_cqe* cqe = nullptr;
+    return io_uring_wait_cqes(&ring_, &cqe, minComplete, nullptr, nullptr);
+  }
+
+  size_t popCompletions(ql::span<Completion> completions) override {
+    // `io_uring_peek_batch_cqe` does not block; `io_uring_cq_advance`
+    // releases all of them with one CQ-head update instead of one
+    // `io_uring_cqe_seen` per CQE. The fields are copied out before the
+    // release, after which the kernel may reuse the slots.
+    std::array<io_uring_cqe*, MAX_CHUNK> cqes{};
+    const unsigned numberOfReady = io_uring_peek_batch_cqe(
+        &ring_, cqes.data(),
+        static_cast<unsigned>(std::min(completions.size(), cqes.size())));
+    for (size_t i = 0; i < numberOfReady; ++i) {
+      completions[i] =
+          Completion{io_uring_cqe_get_data64(cqes[i]), cqes[i]->res};
+    }
+    io_uring_cq_advance(&ring_, numberOfReady);
+    return numberOfReady;
+  }
+
+  void backOff() override {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  // The largest chunk that `popCompletions` reaps per call.
+  static constexpr size_t MAX_CHUNK = 64;
+
+ private:
+  io_uring ring_{};
+};
+}  // namespace
+
+//______________________________________________________________________________
+std::unique_ptr<IoUringInterface> makeLiburingRing(unsigned ringSize) {
+  return std::make_unique<LiburingRing>(ringSize);
+}
+
+//______________________________________________________________________________
+IoUringPolicy::IoUringPolicy(unsigned ringSize)
+    : IoUringPolicy(ringSize, makeLiburingRing(ringSize)) {}
+
+//______________________________________________________________________________
+IoUringPolicy::IoUringPolicy(unsigned ringSize,
+                             std::unique_ptr<IoUringInterface> ring)
+    : ring_(std::move(ring)), ringSize_(ringSize) {
+  AD_CONTRACT_CHECK(ring_ != nullptr,
+                    "An IoUringPolicy needs a ring to run on.");
+  AD_CONTRACT_CHECK(ringSize_ > 0, "An IoUringPolicy needs a ring size > 0.");
 }
 
 //______________________________________________________________________________
@@ -104,14 +192,12 @@ IoUringPolicy::~IoUringPolicy() {
   // stop if `io_uring_wait_cqe` fails, to avoid spinning forever (it would not
   // decrement the outstanding count).
   while (numOutstandingReadRequests_ > 0) {
-    io_uring_cqe* cqe = nullptr;
-    if (io_uring_wait_cqe(&ring_, &cqe) < 0) {
+    if (ring_->waitForCompletions(1) < 0) {
       break;
     }
-    io_uring_cqe_seen(&ring_, cqe);
-    --numOutstandingReadRequests_;
+    std::array<IoUringInterface::Completion, 1> completion{};
+    numOutstandingReadRequests_ -= ring_->popCompletions(completion);
   }
-  io_uring_queue_exit(&ring_);
 }
 
 //______________________________________________________________________________
@@ -138,37 +224,27 @@ void IoUringPolicy::addBatch(int fd,
       // Wait for a wave of completions instead of one, and reap every ready
       // CQE, so a large batch refills the ring in waves rather than one SQE
       // per reaped CQE.
-      io_uring_submit(&ring_);
+      ring_->submit();
       while (numOutstandingReadRequests_ >= ringSize_) {
         reapWave(numOutstandingReadRequests_);
       }
     }
 
-    // Claim the next free SQE. The check above guarantees a slot is available,
-    // so `io_uring_get_sqe` must not return `nullptr` here.
-    io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
-    AD_CORRECTNESS_CHECK(sqe != nullptr);
-
-    // Record the read's parameters in the SQE (this only sets the SQE's fields;
-    // the request is not handed to the kernel until a later `io_uring_submit`).
-    io_uring_prep_read(sqe, fd, targetBuf,
-                       static_cast<unsigned>(numBytesToRead),
-                       static_cast<__u64>(fileOffset));
-
-    // Tag the SQE with a unique request id and record its metadata (the batch
-    // it belongs to and how many bytes it should read). io_uring copies the
-    // request id (the SQE's `user_data`) verbatim into the matching completion,
-    // so `processCqe` can recover it.
+    // Claim the next free SQE and tag it with a unique request id, and record
+    // the read's metadata (the batch it belongs to and how many bytes it
+    // should read) under that id, so `processCqe` can recover it. The check
+    // above guarantees a slot is available.
     const uint64_t requestId = nextRequestIdToAssign_++;
+    AD_CORRECTNESS_CHECK(ring_->prepareRead(fd, targetBuf, numBytesToRead,
+                                            fileOffset, requestId));
     outstandingReadsByRequestId_[requestId] =
         OutstandingRead{handle, numBytesToRead};
-    io_uring_sqe_set_data64(sqe, requestId);
     numOutstandingReadRequests_++;
   }
   // Flush the remaining prepared SQEs to the kernel (the loop above only
   // submits when the submission queue is full, so the last group of SQEs has
   // not yet been submitted).
-  io_uring_submit(&ring_);
+  ring_->submit();
 }
 
 //______________________________________________________________________________
@@ -213,53 +289,32 @@ void IoUringPolicy::reapWave(size_t numReadsToComplete) {
   // `-EINTR` and we wait again; with at least one ready CQE, it returns 0
   // although fewer than `waveSize` CQEs may be ready (the kernel then reports
   // success, see `io_cqring_wait`), and we reap those.
-  io_uring_cqe* cqe = nullptr;
   int ret = 0;
   do {
-    ret = io_uring_wait_cqes(&ring_, &cqe, waveSize, nullptr, nullptr);
+    ret = ring_->waitForCompletions(waveSize);
   } while (ret == -EINTR);
   if (ret < 0) {
     AD_THROW(absl::StrCat("io_uring_wait_cqes failed in IoUringPolicy: ",
                           std::strerror(-ret)));
   }
 
-  // Reap every ready CQE in chunks. `io_uring_peek_batch_cqe` does not block;
-  // `io_uring_cq_advance` releases a whole chunk with one CQ-head update
-  // instead of one `io_uring_cqe_seen` per CQE. The result and the request id
-  // of each CQE are copied out and the chunk is released before any of them is
-  // applied to the bookkeeping, and every CQE of the chunk is applied even if
-  // `processCqe` throws for one of them (its correctness checks, or the
-  // allocation of a failure message): a CQE that stayed in the completion
-  // queue would be processed a second time by the next drain, and a CQE that
-  // left the queue without being applied would leave the outstanding counts
-  // too high, so that the next `wait()` or the destructor would block forever.
-  // The first exception is rethrown once every ready CQE is applied.
-
-  // The two fields of a CQE that `processCqe` needs.
-  struct CompletedRead {
-    int numBytesRead;
-    uint64_t requestId;
-  };
-  std::array<io_uring_cqe*, REAP_CHUNK> cqes{};
-  std::array<CompletedRead, REAP_CHUNK> completedReadsBuffer{};
+  // Reap every ready CQE in chunks of up to `REAP_CHUNK`. `popCompletions`
+  // does not block and releases a whole chunk at once. Every CQE of the chunk
+  // is applied even if `processCqe` throws for one of them (its correctness
+  // checks, or the allocation of a failure message): a CQE that left the
+  // queue without being applied would leave the outstanding counts too high,
+  // so that the next `wait()` or the destructor would block forever. The first
+  // exception is rethrown once every ready CQE is applied.
+  std::array<IoUringInterface::Completion, REAP_CHUNK> completions{};
   size_t numReaped = 0;
   std::exception_ptr firstException;
   while (true) {
-    const unsigned n = io_uring_peek_batch_cqe(
-        &ring_, cqes.data(), static_cast<unsigned>(cqes.size()));
+    const size_t n = ring_->popCompletions(completions);
     if (n == 0) {
       break;
     }
-    const ql::span<io_uring_cqe* const> readyCqes(cqes.data(), n);
-    const ql::span<CompletedRead> completedReads(completedReadsBuffer.data(),
-                                                 n);
-    ql::ranges::transform(
-        readyCqes, completedReads.begin(), [](const io_uring_cqe* cqe) {
-          // Recover the id via the 64-bit `user_data` field, see `addBatch`.
-          return CompletedRead{cqe->res, io_uring_cqe_get_data64(cqe)};
-        });
-    io_uring_cq_advance(&ring_, n);
-    for (const auto& [numBytesRead, requestId] : completedReads) {
+    for (const auto& [requestId, numBytesRead] :
+         ql::span<const IoUringInterface::Completion>(completions.data(), n)) {
       try {
         processCqe(numBytesRead, requestId);
       } catch (...) {

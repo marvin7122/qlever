@@ -23,23 +23,12 @@
 
 #include "backports/algorithm.h"
 #include "backports/concepts.h"
+#include "backports/span.h"
 #include "util/Exception.h"
 #include "util/HashMap.h"
-#include "util/Log.h"
-
-#ifdef QLEVER_HAS_IO_URING
-#include <liburing.h>
-// `liburing.h` pulls in the kernel header `<linux/fs.h>`, which defines a macro
-// `BLOCK_SIZE`. That is a very common identifier, and a macro of that name
-// breaks every header that later declares something with that name (for
-// example `boost/sort/common/util/circular_buffer.hpp`, which is pulled in by
-// `util/blockSort/BoostSortHeaders.h`). QLever does not use the macro, so we
-// simply get rid of it again.
-#undef BLOCK_SIZE
-#endif
-
-#include "backports/span.h"
+#include "util/IoUringInterface.h"
 #include "util/IoUringManagerConcepts.h"
+#include "util/Log.h"
 #include "util/PageCacheFirstPolicy.h"
 
 namespace ad_utility {
@@ -177,7 +166,7 @@ class IoUringPolicy {
   using BatchHandle = uint64_t;
 
  private:
-  io_uring ring_{};
+  std::unique_ptr<IoUringInterface> ring_;
   unsigned ringSize_;
 
   // Total number of outstanding reads: reads that are prepared (SQE filled in,
@@ -263,6 +252,9 @@ class IoUringPolicy {
 
   // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
   explicit IoUringPolicy(unsigned ringSize);
+  // Run on `ring` instead of a liburing ring (for tests). `ring` must have
+  // room for at least `ringSize` SQEs and `2 * ringSize` CQEs.
+  IoUringPolicy(unsigned ringSize, std::unique_ptr<IoUringInterface> ring);
   ~IoUringPolicy();
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
