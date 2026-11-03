@@ -364,20 +364,25 @@ TEST(FsstEncoder, firstTest) {
   }
 }
 
-// `FsstRepeatedDecoder::decompressInto` yields the same words as
-// `decompress`, also when the scratch buffers are reused for words of very
-// different sizes (long, then short, then empty, then long again).
-TEST(FsstRepeatedDecoder, decompressIntoMatchesDecompress) {
+// `decompressWithScratch` of `FsstDecoder` and `FsstRepeatedDecoder` yields
+// the same words as `decompress`, also when the scratch buffers are reused for
+// words of very different sizes (long, then short, then empty, then long
+// again).
+TEST(FsstDecoder, decompressWithScratchMatchesDecompress) {
   std::vector<std::string> words{std::string(1000, 'a') + "bcdefg", "x", "",
                                  "the quick brown fox jumps over the lazy dog",
                                  std::string(2000, 'z')};
   auto [buffer1, views1, decoder1] = FsstEncoder::compressAll(words);
   auto [buffer2, views2, decoder2] = FsstEncoder::compressAll(views1);
-  FsstRepeatedDecoder<2> decoder{std::array{decoder1, decoder2}};
+  FsstRepeatedDecoder<2> repeatedDecoder{std::array{decoder1, decoder2}};
 
-  std::array<std::string, 2> scratch;
+  FsstDecompressionScratch scratch;
+  for (auto [compressed, word] : ::ranges::views::zip(views1, words)) {
+    EXPECT_EQ(decoder1.decompress(compressed), word);
+    EXPECT_EQ(decoder1.decompressWithScratch(compressed, scratch), word);
+  }
   for (auto [compressed, word] : ::ranges::views::zip(views2, words)) {
-    EXPECT_EQ(decoder.decompress(compressed), word);
-    EXPECT_EQ(decoder.decompressInto(compressed, scratch), word);
+    EXPECT_EQ(repeatedDecoder.decompress(compressed), word);
+    EXPECT_EQ(repeatedDecoder.decompressWithScratch(compressed, scratch), word);
   }
 }

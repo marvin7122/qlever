@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "backports/span.h"
 #include "util/Concepts.h"
 #include "util/Exception.h"
 #include "util/Log.h"
@@ -34,6 +35,11 @@ struct CastToUnsignedPtr {
 };
 constexpr CastToUnsignedPtr castToUnsignedPtr{};
 }  // namespace detail
+
+// Two buffers that a decoder reuses for the words of a batch (see
+// `decompressWithScratch` below), so that it does not allocate and zero-fill a
+// new string per word. They only grow.
+using FsstDecompressionScratch = std::array<std::string, 2>;
 
 // A simple C++ wrapper around the C-API of the `FSST` library. It consists of
 // two types, a thredsafe `FsstDecoder` that can be used to perform
@@ -64,20 +70,37 @@ class FsstDecoder {
     std::string output;
     // FSST compresses at most by a factor of 8.
     output.resize(8 * str.size());
-    output.resize(decompressInto(str, output.data(), output.size()));
+    output.resize(decompressInto(str, output));
     return output;
   }
 
-  // Decompress `str` into `out`, which has room for `capacity` bytes (at
-  // least `8 * str.size()`, see `decompress`), and return the decompressed
-  // size.
-  size_t decompressInto(std::string_view str, char* out,
-                        size_t capacity) const {
+  // Decompress `str` into `out`, which must have room for the decompressed
+  // string (at most `8 * str.size()` bytes, see `decompress`), and return the
+  // decompressed size.
+  [[nodiscard]] size_t decompressInto(std::string_view str,
+                                      ql::span<char> out) const {
     auto cast = detail::castToUnsignedPtr;
     size_t size = fsst_decompress(&decoder_, str.size(), cast(str.data()),
-                                  capacity, cast(out));
-    AD_CORRECTNESS_CHECK(size <= capacity);
+                                  out.size(), cast(out.data()));
+    AD_CORRECTNESS_CHECK(size <= out.size());
     return size;
+  }
+
+  // Decompress `str` into `buffer`, which is grown (never shrunk) to the
+  // maximal decompressed size, and return a view of the result in `buffer`.
+  std::string_view decompressIntoBuffer(std::string_view str,
+                                        std::string& buffer) const {
+    if (buffer.size() < 8 * str.size()) {
+      buffer.resize(8 * str.size());
+    }
+    return {buffer.data(), decompressInto(str, buffer)};
+  }
+
+  // Like `decompress`, but the result is a view into `scratch`, valid until
+  // `scratch` is used again.
+  std::string_view decompressWithScratch(
+      std::string_view str, FsstDecompressionScratch& scratch) const {
+    return decompressIntoBuffer(str, scratch[0]);
   }
   // Allow this type to be trivially serializable,
   CPP_template(typename T, typename U)(
@@ -122,23 +145,17 @@ class FsstRepeatedDecoder {
     return result;
   }
 
-  // Like `decompress`, but through the two `scratch` buffers, which are only
-  // ever grown (so they are not allocated and zero-filled again per word),
-  // instead of a new string per step. The result points into `scratch` and is
+  // Like `decompress`, but each step writes into one of the two buffers of
+  // `scratch` (alternating, so that the input of a step is never the buffer it
+  // writes to), instead of a new string. The result is a view into `scratch`,
   // valid until `scratch` is used again.
-  std::string_view decompressInto(std::string_view str,
-                                  std::array<std::string, 2>& scratch) const {
+  std::string_view decompressWithScratch(
+      std::string_view str, FsstDecompressionScratch& scratch) const {
     std::string_view nextInput = str;
-    size_t next = 0;
+    size_t nextBuffer = 0;
     for (const FsstDecoder& decoder : ql::views::reverse(decoders_)) {
-      std::string& buffer = scratch[next];
-      next ^= 1;
-      if (buffer.size() < 8 * nextInput.size()) {
-        buffer.resize(8 * nextInput.size());
-      }
-      nextInput = std::string_view{
-          buffer.data(),
-          decoder.decompressInto(nextInput, buffer.data(), buffer.size())};
+      nextInput = decoder.decompressIntoBuffer(nextInput, scratch[nextBuffer]);
+      nextBuffer ^= 1;
     }
     return nextInput;
   }
