@@ -38,15 +38,15 @@ using namespace ioUringManagerTestHelpers;
 // call).
 std::pair<std::vector<size_t>, std::vector<std::string>> notServedAndBuffers(
     int fd, const std::vector<std::pair<uint64_t, size_t>>& reads) {
-  std::vector<size_t> numBytes;
-  numBytes.reserve(reads.size());
+  std::vector<size_t> numberOfBytesToRead;
+  numberOfBytesToRead.reserve(reads.size());
   std::vector<uint64_t> offsets;
   offsets.reserve(reads.size());
   std::vector<std::string> buffers;
   buffers.reserve(reads.size());
   for (const auto& [offset, size] : reads) {
     offsets.push_back(offset);
-    numBytes.push_back(size);
+    numberOfBytesToRead.push_back(size);
     buffers.emplace_back(size, '-');
   }
   std::vector<char*> targets;
@@ -54,7 +54,7 @@ std::pair<std::vector<size_t>, std::vector<std::string>> notServedAndBuffers(
     targets.push_back(buffer.data());
   }
   auto notServed =
-      ad_utility::readPageCacheHits(fd, numBytes, offsets, targets);
+      ad_utility::readPageCacheHits(fd, numberOfBytesToRead, offsets, targets);
   return {std::move(notServed), std::move(buffers)};
 }
 
@@ -77,7 +77,7 @@ TEST(ReadPageCacheHits, missOnlyBatch) {
 using pageCacheReadTestHelpers::ScopedPageCacheRead;
 
 // Number of calls of the injected page-cache reads below.
-size_t numPageCacheReads = 0;
+size_t numberOfPageCacheReads = 0;
 
 // Read into the buffers of `iov` with plain blocking `pread` calls (which work
 // on any file system, unlike `preadv2` with `RWF_NOWAIT`) and return the
@@ -94,16 +94,17 @@ int64_t blockingFill(int fd, const ::iovec* iov, int iovcnt,
     auto* base = static_cast<char*>(iovec.iov_base);
     size_t remaining = iovec.iov_len;
     while (remaining > 0) {
-      const ssize_t numBytesRead = ::pread(fd, base, remaining, offset + total);
-      if (numBytesRead < 0) {
+      const ssize_t numberOfBytesRead =
+          ::pread(fd, base, remaining, offset + total);
+      if (numberOfBytesRead < 0) {
         return -1;
       }
-      if (numBytesRead == 0) {
+      if (numberOfBytesRead == 0) {
         return total;
       }
-      base += numBytesRead;
-      remaining -= static_cast<size_t>(numBytesRead);
-      total += numBytesRead;
+      base += numberOfBytesRead;
+      remaining -= static_cast<size_t>(numberOfBytesRead);
+      total += numberOfBytesRead;
     }
   }
   return total;
@@ -112,21 +113,21 @@ int64_t blockingFill(int fd, const ::iovec* iov, int iovcnt,
 // A fully cached run, counted.
 int64_t countedCachedRead(int fd, const ::iovec* iov, int iovcnt,
                           int64_t offset) noexcept {
-  ++numPageCacheReads;
+  ++numberOfPageCacheReads;
   return blockingFill(fd, iov, iovcnt, offset);
 }
 
 // `EAGAIN` (nothing cached), counted.
 int64_t countedNothingCached(int fd, const ::iovec* iov, int iovcnt,
                              int64_t offset) noexcept {
-  ++numPageCacheReads;
+  ++numberOfPageCacheReads;
   return pageCacheReadTestHelpers::nothingCached(fd, iov, iovcnt, offset);
 }
 
 // `EOPNOTSUPP`, counted.
 int64_t countedNotSupported(int fd, const ::iovec* iov, int iovcnt,
                             int64_t offset) noexcept {
-  ++numPageCacheReads;
+  ++numberOfPageCacheReads;
   return pageCacheReadTestHelpers::notSupported(fd, iov, iovcnt, offset);
 }
 
@@ -134,8 +135,9 @@ int64_t countedNotSupported(int fd, const ::iovec* iov, int iovcnt,
 // only 6 bytes are reported as read.
 int64_t sixBytesCached(int fd, const ::iovec* iov, int iovcnt,
                        int64_t offset) noexcept {
-  const int64_t numBytesRead = blockingFill(fd, iov, iovcnt, offset);
-  return numBytesRead < 0 ? numBytesRead : std::min<int64_t>(numBytesRead, 6);
+  const int64_t numberOfBytesRead = blockingFill(fd, iov, iovcnt, offset);
+  return numberOfBytesRead < 0 ? numberOfBytesRead
+                               : std::min<int64_t>(numberOfBytesRead, 6);
 }
 
 // `RWF_NOWAIT` may return 0 before the end of the file (readv(2)).
@@ -225,17 +227,17 @@ TEST(ReadPageCacheHits, partialAndZeroByteReads) {
 TEST(ReadPageCacheHits, notSupportedDisablesTheFastPath) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
-  numPageCacheReads = 0;
+  numberOfPageCacheReads = 0;
   {
     ScopedPageCacheRead inject{&countedNotSupported};
     auto [notServed, buffers] =
         notServedAndBuffers(fd, {{0, 4}, {8, 4}, {12, 2}});
     EXPECT_EQ(notServed, allPositions(3));
-    EXPECT_EQ(numPageCacheReads, 1u);
+    EXPECT_EQ(numberOfPageCacheReads, 1u);
     EXPECT_FALSE(ad_utility::pageCacheFastPathIsSupported());
     auto [notServed2, unusedBuffers] = notServedAndBuffers(fd, {{0, 4}});
     EXPECT_EQ(notServed2, allPositions(1));
-    EXPECT_EQ(numPageCacheReads, 1u);
+    EXPECT_EQ(numberOfPageCacheReads, 1u);
   }
   // The guard re-enabled the fast path.
   EXPECT_TRUE(ad_utility::pageCacheFastPathIsSupported());
@@ -253,11 +255,11 @@ TEST(ReadPageCacheHits, runsAreSplitAtIovMax) {
   for (size_t i : ad_utility::integerRange(numReads)) {
     reads.emplace_back(i, 1);
   }
-  numPageCacheReads = 0;
+  numberOfPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedCachedRead};
   auto [notServed, buffers] = notServedAndBuffers(fd, reads);
   EXPECT_TRUE(notServed.empty());
-  EXPECT_EQ(numPageCacheReads, 2u);
+  EXPECT_EQ(numberOfPageCacheReads, 2u);
   EXPECT_EQ(buffers.front(), "x");
   EXPECT_EQ(buffers.back(), "y");
 }
@@ -267,13 +269,13 @@ TEST(ReadPageCacheHits, runsAreSplitAtIovMax) {
 TEST(ReadPageCacheHits, emptyBatchAndContract) {
   auto [tmp, fd] = makeTempFile("AAAA");
   EXPECT_TRUE(ad_utility::readPageCacheHits(fd, {}, {}, {}).empty());
-  std::vector<size_t> numBytes{4, 4};
+  std::vector<size_t> numberOfBytesToRead{4, 4};
   std::vector<uint64_t> offsets{0};
   std::string buffer(8, '-');
   std::vector<char*> targets{buffer.data(), buffer.data() + 4};
   AD_EXPECT_THROW_WITH_MESSAGE(
-      ad_utility::readPageCacheHits(fd, numBytes, offsets, targets),
-      HasSubstr("offsets.size() == numBytes.size()"));
+      ad_utility::readPageCacheHits(fd, numberOfBytesToRead, offsets, targets),
+      HasSubstr("offsets.size() == numberOfBytesToRead.size()"));
 }
 
 // A `ReadPolicy` that reads synchronously and records the reads it receives.
@@ -290,12 +292,12 @@ struct RecordingPolicy {
   }
 
   explicit RecordingPolicy([[maybe_unused]] unsigned ringSize) {}
-  void addBatch(int fd, ql::span<const size_t> numBytes,
+  void addBatch(int fd, ql::span<const size_t> numberOfBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 [[maybe_unused]] BatchHandle handle) {
-    batchSizes.push_back(numBytes.size());
+    batchSizes.push_back(numberOfBytesToRead.size());
     for (auto&& [numberOfBytesToRead, fileOffset, targetBuffer] :
-         ::ranges::views::zip(numBytes, offsets, buffers)) {
+         ::ranges::views::zip(numberOfBytesToRead, offsets, buffers)) {
       receivedOffsets.push_back(fileOffset);
       ad_utility::SyncIoPolicy::readFullyOrThrow(
           fd, targetBuffer, numberOfBytesToRead, fileOffset);
@@ -312,7 +314,7 @@ using RecordedManager =
 // Only the first run of adjacent reads is "cached", all later runs are not.
 int64_t firstRunCached(int fd, const ::iovec* iov, int iovcnt,
                        int64_t offset) noexcept {
-  if (numPageCacheReads++ == 0) {
+  if (numberOfPageCacheReads++ == 0) {
     return blockingFill(fd, iov, iovcnt, offset);
   }
   return pageCacheReadTestHelpers::nothingCached(fd, iov, iovcnt, offset);
@@ -325,7 +327,7 @@ TEST(PageCacheFirstPolicy, onlyTheMissesAreForwarded) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   RecordingPolicy::reset();
-  numPageCacheReads = 0;
+  numberOfPageCacheReads = 0;
   ScopedPageCacheRead inject{&firstRunCached};
   RecordedManager manager(64);
   ReadBatchForTesting batch;
@@ -335,7 +337,7 @@ TEST(PageCacheFirstPolicy, onlyTheMissesAreForwarded) {
   EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}));
   EXPECT_THAT(RecordingPolicy::receivedOffsets,
               ElementsAre(uint64_t{12}, uint64_t{8}));
-  EXPECT_EQ(numPageCacheReads, size_t{3});
+  EXPECT_EQ(numberOfPageCacheReads, size_t{3});
 }
 
 // If the page-cache read serves every read, the decorated policy receives an
@@ -344,7 +346,7 @@ TEST(PageCacheFirstPolicy, aBatchThatIsServedCompletelyHasNothingToWaitFor) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   RecordingPolicy::reset();
-  numPageCacheReads = 0;
+  numberOfPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedCachedRead};
   RecordedManager manager(64);
   ReadBatchForTesting batch;
@@ -353,7 +355,7 @@ TEST(PageCacheFirstPolicy, aBatchThatIsServedCompletelyHasNothingToWaitFor) {
   EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
   EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{0}));
   EXPECT_TRUE(RecordingPolicy::receivedOffsets.empty());
-  EXPECT_EQ(numPageCacheReads, size_t{2});
+  EXPECT_EQ(numberOfPageCacheReads, size_t{2});
 }
 
 // If the page-cache read serves nothing, the decorated policy receives the
@@ -362,7 +364,7 @@ TEST(PageCacheFirstPolicy, aBatchThatIsNotServedIsPassedOnUnchanged) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   RecordingPolicy::reset();
-  numPageCacheReads = 0;
+  numberOfPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedNothingCached};
   RecordedManager manager(64);
   ReadBatchForTesting batch;
@@ -373,7 +375,7 @@ TEST(PageCacheFirstPolicy, aBatchThatIsNotServedIsPassedOnUnchanged) {
   EXPECT_THAT(RecordingPolicy::receivedOffsets,
               ElementsAre(uint64_t{8}, uint64_t{0}, uint64_t{12}));
   // One page-cache read per run; the three reads are not adjacent.
-  EXPECT_EQ(numPageCacheReads, size_t{3});
+  EXPECT_EQ(numberOfPageCacheReads, size_t{3});
 }
 
 // With the fast path switched off through the manager, the page-cache read is
@@ -382,7 +384,7 @@ TEST(PageCacheFirstPolicy, theFastPathCanBeSwitchedOffAndOn) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   RecordingPolicy::reset();
-  numPageCacheReads = 0;
+  numberOfPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedCachedRead};
   RecordedManager manager(64);
   ad_utility::BatchManagerBase& base = manager;
@@ -392,7 +394,7 @@ TEST(PageCacheFirstPolicy, theFastPathCanBeSwitchedOffAndOn) {
     batch.add({{0, 4}, {8, 4}});
     manager.wait(batch.submitTo(manager, fd));
     EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
-    EXPECT_EQ(numPageCacheReads, size_t{0});
+    EXPECT_EQ(numberOfPageCacheReads, size_t{0});
     EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}));
   }
   base.setPageCacheFastPath(true);
@@ -401,7 +403,7 @@ TEST(PageCacheFirstPolicy, theFastPathCanBeSwitchedOffAndOn) {
     batch.add({{0, 4}, {8, 4}});
     manager.wait(batch.submitTo(manager, fd));
     EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
-    EXPECT_EQ(numPageCacheReads, size_t{2});
+    EXPECT_EQ(numberOfPageCacheReads, size_t{2});
     EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}, size_t{0}));
   }
 }
@@ -412,7 +414,7 @@ TEST(PageCacheFirstPolicy, anUnsupportedFastPathIsLeftAlone) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   RecordingPolicy::reset();
-  numPageCacheReads = 0;
+  numberOfPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedNotSupported};
   RecordedManager manager(64);
   for (int round = 0; round < 2; ++round) {
@@ -422,7 +424,7 @@ TEST(PageCacheFirstPolicy, anUnsupportedFastPathIsLeftAlone) {
     EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
     EXPECT_FALSE(ad_utility::pageCacheFastPathIsSupported());
   }
-  EXPECT_EQ(numPageCacheReads, size_t{1});
+  EXPECT_EQ(numberOfPageCacheReads, size_t{1});
   EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}, size_t{2}));
 }
 

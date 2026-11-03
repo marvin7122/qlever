@@ -34,36 +34,38 @@
 namespace ad_utility {
 
 //______________________________________________________________________________
-void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
+void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer,
+                                    size_t numberOfBytesToRead,
                                     uint64_t fileOffset) {
-  // `pread` reads up to `numBytes` bytes from file descriptor `fd` at offset
-  // `fileOffset` (from the start of the file) into `targetBuffer`. The file
-  // offset is not changed. On success, it returns the number of bytes read (0
-  // indicates end of file); on error it returns -1 and sets `errno`. See
-  // https://man7.org/linux/man-pages/man2/pread.2.html for more details.
-  const ssize_t numBytesRead =
-      pread(fd, targetBuffer, numBytes, static_cast<off_t>(fileOffset));
+  // `pread` reads up to `numberOfBytesToRead` bytes from file descriptor `fd`
+  // at offset `fileOffset` (from the start of the file) into `targetBuffer`.
+  // The file offset is not changed. On success, it returns the number of bytes
+  // read (0 indicates end of file); on error it returns -1 and sets `errno`.
+  // See https://man7.org/linux/man-pages/man2/pread.2.html for more details.
+  const ssize_t numberOfBytesRead = pread(fd, targetBuffer, numberOfBytesToRead,
+                                          static_cast<off_t>(fileOffset));
 
-  if (numBytesRead < 0) {
+  if (numberOfBytesRead < 0) {
     AD_THROW("pread failed in readFullyOrThrow");
   }
   // A result smaller than requested (a partial read, or 0 at end of file) means
   // we read fewer bytes than expected, which we treat as an error.
-  if (static_cast<size_t>(numBytesRead) != numBytes) {
+  if (static_cast<size_t>(numberOfBytesRead) != numberOfBytesToRead) {
     AD_THROW("read fewer bytes than requested in readFullyOrThrow");
   }
 }
 
 //______________________________________________________________________________
-void SyncIoPolicy::addBatch(int fd,
-                            ql::span<const size_t> numBytesToReadPerRequest,
-                            ql::span<const uint64_t> fileOffsetPerRequest,
-                            ql::span<char*> targetBufferPerRequest,
-                            [[maybe_unused]] BatchHandle handle) const {
-  for (const auto& [numBytesToRead, fileOffset, targetBuf] :
-       ::ranges::views::zip(numBytesToReadPerRequest, fileOffsetPerRequest,
+void SyncIoPolicy::addBatch(
+    int fd, ql::span<const size_t> numberOfBytesToReadPerRequest,
+    ql::span<const uint64_t> fileOffsetPerRequest,
+    ql::span<char*> targetBufferPerRequest,
+    [[maybe_unused]] BatchHandle handle) const {
+  for (const auto& [numberOfBytesToRead, fileOffset, targetBuf] :
+       ::ranges::views::zip(numberOfBytesToReadPerRequest, fileOffsetPerRequest,
                             targetBufferPerRequest)) {
-    SyncIoPolicy::readFullyOrThrow(fd, targetBuf, numBytesToRead, fileOffset);
+    SyncIoPolicy::readFullyOrThrow(fd, targetBuf, numberOfBytesToRead,
+                                   fileOffset);
   }
 }
 
@@ -107,8 +109,8 @@ class LiburingRing final : public IoUringInterface {
   LiburingRing(const LiburingRing&) = delete;
   LiburingRing& operator=(const LiburingRing&) = delete;
 
-  bool prepareRead(int fd, char* buffer, size_t numBytes, uint64_t offset,
-                   uint64_t requestId) override {
+  bool prepareRead(int fd, char* buffer, size_t numberOfBytesToRead,
+                   uint64_t offset, uint64_t requestId) override {
     io_uring_sqe* sqe = io_uring_get_sqe(&ring_);
     if (sqe == nullptr) {
       return false;
@@ -116,7 +118,8 @@ class LiburingRing final : public IoUringInterface {
     // This only fills in the SQE; the kernel sees it at the next
     // `io_uring_submit`. io_uring copies the SQE's `user_data` verbatim into
     // the matching completion.
-    io_uring_prep_read(sqe, fd, buffer, static_cast<unsigned>(numBytes),
+    io_uring_prep_read(sqe, fd, buffer,
+                       static_cast<unsigned>(numberOfBytesToRead),
                        static_cast<__u64>(offset));
     io_uring_sqe_set_data64(sqe, requestId);
     return true;
@@ -206,20 +209,20 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::addBatch(int fd, ql::span<const size_t> numBytesToRead,
+void IoUringPolicy::addBatch(int fd, ql::span<const size_t> numberOfBytesToRead,
                              ql::span<const uint64_t> offsets,
                              ql::span<char*> buffers,
                              [[maybe_unused]] BatchHandle handle) {
-  AD_CONTRACT_CHECK(offsets.size() == numBytesToRead.size() &&
-                        buffers.size() == numBytesToRead.size(),
+  AD_CONTRACT_CHECK(offsets.size() == numberOfBytesToRead.size() &&
+                        buffers.size() == numberOfBytesToRead.size(),
                     "The three spans describe the same reads, so they "
                     "must have the same length.");
-  if (numBytesToRead.empty()) {
+  if (numberOfBytesToRead.empty()) {
     return;
   }
   Batch batch;
-  batch.numBytes = numBytesToRead;
-  batch.states.assign(numBytesToRead.size(), ReadState::NotQueued);
+  batch.numBytes = numberOfBytesToRead;
+  batch.states.assign(numberOfBytesToRead.size(), ReadState::NotQueued);
   // `run` throws only if a correctness check fails or memory runs out. The
   // bookkeeping can then no longer tell which reads the kernel still holds, so
   // the exception must not reach the caller, who would free the buffers.
@@ -262,7 +265,7 @@ void IoUringPolicy::run(int fd, ql::span<const uint64_t> offsets,
     // Wait for a wave of completions, but never for more requests than the
     // kernel holds.
     reap(batch,
-         static_cast<unsigned>(std::min<size_t>(REAP_WAVE, numInKernel)));
+         static_cast<unsigned>(std::min<size_t>(REAP_WAVE_SIZE, numInKernel)));
   }
 }
 

@@ -19,15 +19,16 @@
 namespace ad_utility {
 
 template <typename T>
-CPP_requires(ReadPolicy_,
-             requires(T& policy, int fd, ql::span<const size_t> numBytes,
-                      ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-                      typename T::BatchHandle handle)(
-                 concepts::constructible_from<T, unsigned>,
-                 // Must provide `addBatch` with the following parameters.
-                 policy.addBatch(fd, numBytes, offsets, buffers, handle),
-                 // Must provide a `wait` method with the following interface.
-                 policy.wait(handle)));
+CPP_requires(
+    ReadPolicy_,
+    requires(T& policy, int fd, ql::span<const size_t> numberOfBytesToRead,
+             ql::span<const uint64_t> offsets, ql::span<char*> buffers,
+             typename T::BatchHandle handle)(
+        concepts::constructible_from<T, unsigned>,
+        // Must provide `addBatch` with the following parameters.
+        policy.addBatch(fd, numberOfBytesToRead, offsets, buffers, handle),
+        // Must provide a `wait` method with the following interface.
+        policy.wait(handle)));
 
 // The pluggable I/O backend of `BatchManager`: it specifies how the reads in a
 // batch are carried out. See `IoUringPolicy` (via io_uring) and
