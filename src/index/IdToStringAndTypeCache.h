@@ -12,7 +12,9 @@
 
 #include <cstdint>
 #include <functional>
+#include <list>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -20,6 +22,7 @@
 #include "index/ExportIds.h"
 #include "index/Index.h"
 #include "index/LocalVocab.h"
+#include "util/AllocatorWithLimit.h"
 #include "util/Log.h"
 #include "util/LruCache.h"
 #include "util/MemorySize/MemorySize.h"
@@ -31,25 +34,19 @@ namespace ql::exportIds {
 // The configuration of an `IdToStringAndTypeCache`, see the runtime parameters
 // `select-export-term-cache-*` for the values used by the SELECT export.
 struct IdToStringAndTypeCacheConfig {
-  // The maximal number of cached terms. 0 disables the cache: every lookup is
-  // computed directly.
-  size_t capacity_;
-  // The maximal total size of the cached strings. Every entry gets the same
-  // share, `maxSize_ / capacity_`: a term whose string has a larger
-  // `capacity()` is returned but not cached. This bounds the memory of the
-  // strings even when a result repeats very long terms (for example large WKT
-  // literals), which a bound on the number of entries alone does not. Each
-  // entry additionally takes a fixed amount of memory for its bookkeeping (the
-  // `Id`, the `Value` with its `std::string` object, the hash-map slot and the
-  // LRU list node). Neither is counted against the memory limit of the query.
+  // The maximal memory of the cache, including its bookkeeping. A single term
+  // may take at most 1/16 of it, so that one term cannot evict most of the
+  // others. A size below 16 times the bookkeeping of one entry (about 3 KB)
+  // disables the cache: every lookup is then computed directly.
   ad_utility::MemorySize maxSize_;
-  // The hit rate is checked after every `numberOfLookupsPerWindow_` cached
-  // lookups. If the hit rate of that window is below `minHitRate_`, the cache
-  // is switched off for the rest of the export: on results with mostly
+  // The hit rate is checked after every `numberOfLookupsPerWindow_` lookups
+  // that are hits or misses (see `IdToStringAndTypeCache::Statistics`). If the
+  // hit rate of that window is below `minHitRate_`, the cache destroys its
+  // entries and computes every later term directly: on results with mostly
   // distinct terms, the hash lookup, the LRU bookkeeping and the copy of every
-  // missed string into the cache cost more than the few hits save. The switch
-  // is one-way, because a switched-off cache no longer observes hits. 0 for
-  // either value disables the check.
+  // missed string into the cache cost more than the few hits save. This is
+  // final for the export, because a switched-off cache no longer observes
+  // hits. 0 for either value disables the check.
   size_t numberOfLookupsPerWindow_;
   double minHitRate_;
 };
@@ -61,8 +58,15 @@ struct IdToStringAndTypeCacheConfig {
 // the type and of the state of the cache: one instance can never return a term
 // that was formatted for another output format.
 //
-// Only `Id`s for which `canBeCachedForWholeExport` holds are cached (this
-// excludes `LocalVocabIndex`, see there for the reason).
+// Only the `Id`s whose conversion reads a vocabulary or the text index are
+// cached (see `isWorthCaching`); the values that are formatted from the bits of
+// the `Id` alone are computed directly.
+//
+// The memory of the cache is reserved from the memory budget of the queries
+// (the `allocator` passed to the constructor) and returned when entries are
+// evicted or the cache is destroyed. A term for which the budget has not
+// enough memory left is returned, but not cached; the cache never makes a
+// query fail.
 template <bool removeQuotesAndAngleBrackets = false,
           bool returnOnlyLiterals = false,
           typename EscapeFunction = ql::identity>
@@ -71,45 +75,67 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
   using Value = std::optional<std::pair<std::string, const char*>>;
 
   // The number of lookups by how they were answered. Every lookup is counted
-  // exactly once.
+  // in exactly one of these. Only hits and misses count for the hit rate.
   struct Statistics {
     uint64_t numberOfHits_ = 0;
     uint64_t numberOfMisses_ = 0;
-    // Computed directly because the cache was disabled.
-    uint64_t numberOfLookupsWhileDisabled_ = 0;
     // Computed directly because `canBeCachedForWholeExport` was false.
     uint64_t numberOfLocalVocabLookups_ = 0;
-    // The misses whose string was larger than the per-entry share of
-    // `maxSize_` and therefore not cached (a subset of `numberOfMisses_`).
-    uint64_t numberOfTermsTooLargeToCache_ = 0;
+    // Computed directly because the value is formatted from the `Id` bits.
+    uint64_t numberOfBitEncodedLookups_ = 0;
+    // Computed directly because the cache was disabled.
+    uint64_t numberOfLookupsWhileDisabled_ = 0;
+    // Not found and not cached, because the term was larger than 1/16 of the
+    // maximal size or the memory budget had not enough memory left.
+    uint64_t numberOfTermsNotCachedForLackOfMemory_ = 0;
 
     uint64_t numberOfLookups() const {
-      return numberOfHits_ + numberOfMisses_ + numberOfLookupsWhileDisabled_ +
-             numberOfLocalVocabLookups_;
+      return numberOfHits_ + numberOfMisses_ + numberOfLocalVocabLookups_ +
+             numberOfBitEncodedLookups_ + numberOfLookupsWhileDisabled_ +
+             numberOfTermsNotCachedForLackOfMemory_;
     }
   };
 
  private:
+  // The map is keyed by the bits of the `Id`. Comparing and hashing an `Id`
+  // dereferences the `LocalVocabEntry` of a `LocalVocabIndex`, which a key of
+  // bits can never do. With such keys, a cached `LocalVocabIndex` would be
+  // found again for a different word at the same address, which is why
+  // `get` never caches one.
+  using Key = Id::T;
+  using Cache = ad_utility::util::LRUCache<Key, Value>;
+
+  // An upper estimate of the memory of one entry besides the heap memory of
+  // its string: the slot in the `absl::flat_hash_map` of `LRUCache` (with its
+  // control byte, times 16/7 because the table grows at a load factor of 7/8
+  // to twice its size) and the node of its `std::list` (two pointers, the key,
+  // and 16 bytes of overhead of the memory allocator).
+  static constexpr size_t numberOfBytesOfBookkeepingPerEntry =
+      (sizeof(std::pair<const Key,
+                        std::pair<Value, typename std::list<Key>::iterator>>) +
+       1) *
+          16 / 7 +
+      1 + 2 * sizeof(void*) + sizeof(Key) + 16;
+  static constexpr size_t maxFractionOfOneEntry = 16;
+
   std::reference_wrapper<const Index> index_;
   EscapeFunction escapeFunction_;
-  // The configured capacity, only used in the log message.
-  size_t capacity_;
-  // The share of `maxSize_` of one entry, in bytes (0 if the cache is
-  // disabled).
-  size_t maxNumberOfBytesPerTerm_ = 0;
-  // Empty iff the cache is disabled, either by `capacity_ == 0` or because a
-  // window's hit rate fell below `minHitRate_`. In the second case the cached
-  // values are destroyed right away, so that the memory is freed for the rest
-  // of the export.
-  std::optional<ad_utility::util::LRUCache<Id, Value>> cache_;
+  ad_utility::AllocatorWithLimit<Id> allocator_;
+  size_t maxNumberOfBytes_;
+  // The memory of the entries in the cache, which is reserved from
+  // `allocator_`.
+  size_t numberOfBytes_ = 0;
+  // Empty iff the cache is disabled, either by the configuration or because a
+  // window's hit rate fell below `minHitRate_`.
+  std::optional<Cache> cache_;
   size_t numberOfLookupsPerWindow_;
   double minHitRate_;
-  // The number of cached lookups that are left in the current window, and the
+  // The number of hits and misses that are left in the current window, and the
   // number of hits in it so far.
   size_t numberOfLookupsLeftInWindow_;
   uint64_t numberOfHitsInWindow_ = 0;
   Statistics statistics_;
-  // Holds the result of every lookup that does not go through the cache, so
+  // Holds the result of every lookup that is not answered from the cache, so
   // that `get` can return a reference in every case. It is overwritten by the
   // next such lookup.
   Value uncached_;
@@ -117,70 +143,107 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
  public:
   IdToStringAndTypeCache(const Index& index,
                          const IdToStringAndTypeCacheConfig& config,
+                         ad_utility::AllocatorWithLimit<Id> allocator,
                          EscapeFunction escapeFunction = EscapeFunction{})
       : index_{index},
         escapeFunction_{std::move(escapeFunction)},
-        capacity_{config.capacity_},
+        allocator_{std::move(allocator)},
+        maxNumberOfBytes_{config.maxSize_.getBytes()},
         numberOfLookupsPerWindow_{config.numberOfLookupsPerWindow_},
         minHitRate_{config.minHitRate_},
         numberOfLookupsLeftInWindow_{config.numberOfLookupsPerWindow_} {
-    if (capacity_ > 0) {
-      cache_.emplace(capacity_);
-      maxNumberOfBytesPerTerm_ = config.maxSize_.getBytes() / capacity_;
+    if (maxNumberOfBytes_ / maxFractionOfOneEntry >=
+        numberOfBytesOfBookkeepingPerEntry) {
+      // Every entry takes at least `numberOfBytesOfBookkeepingPerEntry`, so
+      // the bound on the bytes is reached before the bound on the number of
+      // entries (see `makeRoomFor`).
+      cache_.emplace(maxNumberOfBytes_ / numberOfBytesOfBookkeepingPerEntry);
     }
   }
 
-  // Log the statistics of an export that used the cache.
+  // Return the reserved memory, and log the statistics of an export that used
+  // the cache. The log is here because the export functions are generators
+  // that can be abandoned at any row (a client that disconnects, an error).
   ~IdToStringAndTypeCache() {
+    switchOff();
     const auto& s = statistics_;
     if (s.numberOfLookups() > 0) {
-      AD_LOG_DEBUG << "SELECT export term cache: capacity " << capacity_ << ", "
-                   << s.numberOfHits_ << " hits, " << s.numberOfMisses_
-                   << " misses, " << s.numberOfLookupsWhileDisabled_
-                   << " lookups while disabled, "
-                   << s.numberOfLocalVocabLookups_
-                   << " local vocab lookups (never cached), "
-                   << s.numberOfTermsTooLargeToCache_
-                   << " terms too large to cache, "
-                   << (isEnabled() ? "enabled" : "disabled") << " at the end"
-                   << std::endl;
+      AD_LOG_DEBUG << "SELECT export term cache: " << s.numberOfHits_
+                   << " hits, " << s.numberOfMisses_ << " misses, "
+                   << s.numberOfTermsNotCachedForLackOfMemory_
+                   << " terms not cached for lack of memory, "
+                   << s.numberOfLocalVocabLookups_ << " local vocab lookups, "
+                   << s.numberOfBitEncodedLookups_ << " bit-encoded values, "
+                   << s.numberOfLookupsWhileDisabled_
+                   << " lookups while disabled" << std::endl;
     }
   }
 
   // Return `idToStringAndType` for `id`, from the cache if possible. The
-  // reference is only valid until the next call: lookups that do not go
-  // through the cache share one slot. Every caller in the SELECT export uses
-  // the value before the next call. A callback API would avoid this
-  // restriction, but the TSV/CSV export has to `co_yield` the value, which a
-  // callback cannot do.
+  // reference is only valid until the next call: lookups that are not
+  // answered from the cache share one slot, and an insertion can evict or move
+  // a cached value. Every caller in the SELECT export uses the value before
+  // the next call. A callback API would avoid this restriction, but the
+  // TSV/CSV export has to `co_yield` the value, which a callback cannot do.
   const Value& get(Id id, const LocalVocab& localVocab) {
     if (!canBeCachedForWholeExport(id)) {
       ++statistics_.numberOfLocalVocabLookups_;
-      uncached_ = compute(id, localVocab);
-      return uncached_;
+      return computeUncached(id, localVocab);
+    }
+    if (!isWorthCaching(id)) {
+      ++statistics_.numberOfBitEncodedLookups_;
+      return computeUncached(id, localVocab);
     }
     if (!isEnabled()) {
       ++statistics_.numberOfLookupsWhileDisabled_;
-      uncached_ = compute(id, localVocab);
+      return computeUncached(id, localVocab);
+    }
+    Key key = id.getBits();
+    if (auto cached = cache_->tryGet(key)) {
+      ++statistics_.numberOfHits_;
+      ++numberOfHitsInWindow_;
+      return endOfWindowLookup(cached.value());
+    }
+    Value value = compute(id, localVocab);
+    size_t numberOfBytes = numberOfBytesOfEntry(value);
+    if (!makeRoomFor(numberOfBytes)) {
+      ++statistics_.numberOfTermsNotCachedForLackOfMemory_;
+      uncached_ = std::move(value);
       return uncached_;
     }
-    const Value& result = getFromEnabledCache(id, localVocab);
-    if (!isWindowHitRateTooLow()) {
-      return result;
-    }
-    // Switching off destroys `result` if it is cached, so return it via
-    // `uncached_`.
-    if (&result != &uncached_) {
-      uncached_ = result;
-    }
-    cache_.reset();
-    return uncached_;
+    ++statistics_.numberOfMisses_;
+    numberOfBytes_ += numberOfBytes;
+    return endOfWindowLookup(cache_->insertAbsent(key, std::move(value)));
   }
 
-  // True while lookups go through the cache.
+  // True while lookups can be answered from the cache.
   bool isEnabled() const { return cache_.has_value(); }
 
   const Statistics& statistics() const { return statistics_; }
+
+  // The memory of the entries in the cache, including their bookkeeping.
+  ad_utility::MemorySize memoryUsed() const {
+    return ad_utility::MemorySize::bytes(numberOfBytes_);
+  }
+
+  // True iff the conversion of `id` reads a vocabulary or the text index. The
+  // other values (`Undefined`, `Bool`, `Int`, `Double`, `Date`, `GeoPoint`,
+  // `BlankNodeIndex`) are formatted from the bits of the `Id` without reading
+  // any vocabulary, so caching them saves no read; they would only take the
+  // place of terms that need one and distort the hit rate.
+  static bool isWorthCaching(Id id) {
+    using enum Datatype;
+    switch (id.getDatatype()) {
+      case VocabIndex:
+      case SecondaryVocabIndex:
+      case EncodedVal:
+      case WordVocabIndex:
+      case TextRecordIndex:
+        return true;
+      default:
+        return false;
+    }
+  }
 
  private:
   // The uncached conversion.
@@ -189,36 +252,91 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
         index_.get(), id, localVocab, escapeFunction_);
   }
 
-  // The part of `get` for an enabled cache and an `Id` that can be cached.
-  const Value& getFromEnabledCache(Id id, const LocalVocab& localVocab) {
-    if (auto cached = cache_->tryGet(id)) {
-      countLookup(true);
-      return cached.value();
-    }
-    countLookup(false);
-    Value value = compute(id, localVocab);
-    size_t numberOfBytes = value.has_value() ? value->first.capacity() : 0;
-    if (numberOfBytes > maxNumberOfBytesPerTerm_) {
-      ++statistics_.numberOfTermsTooLargeToCache_;
-      uncached_ = std::move(value);
-      return uncached_;
-    }
-    return cache_->getOrCompute(
-        id, [&value](const Id&) -> Value { return std::move(value); });
+  const Value& computeUncached(Id id, const LocalVocab& localVocab) {
+    uncached_ = compute(id, localVocab);
+    return uncached_;
   }
 
-  // Count a lookup that went through the cache.
-  void countLookup(bool isHit) {
-    if (isHit) {
-      ++statistics_.numberOfHits_;
-      ++numberOfHitsInWindow_;
-    } else {
-      ++statistics_.numberOfMisses_;
+  // The memory of an entry with `value`: the bookkeeping, and the heap memory
+  // of the string unless it is stored inside the `std::string` object (small
+  // string optimization).
+  static size_t numberOfBytesOfEntry(const Value& value) {
+    size_t numberOfBytes = numberOfBytesOfBookkeepingPerEntry;
+    if (value.has_value()) {
+      const std::string& string = value->first;
+      const char* object = reinterpret_cast<const char*>(&string);
+      std::less<const char*> less;
+      bool isStoredInObject = !less(string.data(), object) &&
+                              less(string.data(), object + sizeof(string));
+      if (!isStoredInObject) {
+        numberOfBytes += string.capacity() + 1;
+      }
     }
+    return numberOfBytes;
+  }
+
+  // Evict least recently used entries until an entry of `numberOfBytes` fits
+  // into the maximal size, and reserve its memory from `allocator_`. Return
+  // false if the entry is larger than 1/16 of the maximal size or the memory
+  // budget has not enough memory left; nothing is reserved then.
+  bool makeRoomFor(size_t numberOfBytes) {
+    if (numberOfBytes > maxNumberOfBytes_ / maxFractionOfOneEntry) {
+      return false;
+    }
+    while (numberOfBytes_ + numberOfBytes > maxNumberOfBytes_) {
+      auto evicted = cache_->popLeastRecentlyUsed();
+      AD_CORRECTNESS_CHECK(evicted.has_value());
+      release(numberOfBytesOfEntry(evicted.value()));
+    }
+    // The bound on the bytes implies the bound on the number of entries (see
+    // the constructor), so `LRUCache` never evicts an entry on its own, which
+    // would leave its memory reserved.
+    AD_CORRECTNESS_CHECK(cache_->size() < cache_->capacity());
+    auto memorySize = ad_utility::MemorySize::bytes(numberOfBytes);
+    if (allocator_.amountMemoryLeft() < memorySize) {
+      return false;
+    }
+    try {
+      // Lowering the limit of the shared budget reserves the memory.
+      allocator_.decreaseMemoryLimit(memorySize);
+    } catch (const std::runtime_error&) {
+      // Another query took the memory since the check above.
+      return false;
+    }
+    return true;
+  }
+
+  // Return the reservation of an entry of `numberOfBytes` to `allocator_`.
+  void release(size_t numberOfBytes) {
+    AD_CORRECTNESS_CHECK(numberOfBytes_ >= numberOfBytes);
+    numberOfBytes_ -= numberOfBytes;
+    allocator_.increaseMemoryLimit(
+        ad_utility::MemorySize::bytes(numberOfBytes));
+  }
+
+  // Destroy all entries and return their memory.
+  void switchOff() {
+    cache_.reset();
+    allocator_.increaseMemoryLimit(
+        ad_utility::MemorySize::bytes(numberOfBytes_));
+    numberOfBytes_ = 0;
+  }
+
+  // Complete a hit or a miss with the `result` that is stored in the cache:
+  // check the hit rate if the lookup completed a window, and switch the cache
+  // off if it is too low. Switching off destroys `result`, so it is then
+  // returned via `uncached_`.
+  const Value& endOfWindowLookup(const Value& result) {
+    if (!isWindowHitRateTooLow()) {
+      return result;
+    }
+    uncached_ = result;
+    switchOff();
+    return uncached_;
   }
 
   // True iff the last lookup completed a window of `numberOfLookupsPerWindow_`
-  // cached lookups whose hit rate is below `minHitRate_`. A completed window
+  // hits and misses whose hit rate is below `minHitRate_`. A completed window
   // also starts the next one. A countdown instead of a modulo of the total
   // number of lookups avoids an integer division on every lookup.
   bool isWindowHitRateTooLow() {

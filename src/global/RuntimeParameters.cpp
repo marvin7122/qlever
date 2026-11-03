@@ -73,9 +73,8 @@ RuntimeParameters::RuntimeParameters() {
   add(disableCaching_);
   add(logLevel_);
   add(constructDeduplication_);
-  add(selectExportTermCacheCapacity_);
   add(selectExportTermCacheMaxSize_);
-  add(selectExportTermCacheWindow_);
+  add(selectExportTermCacheNumberOfLookupsPerWindow_);
   add(selectExportTermCacheMinHitRate_);
 
   // Propagate runtime log level changes immediately to the global atomic in

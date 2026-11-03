@@ -323,9 +323,9 @@ ExportQueryExecutionTrees::constructQueryResultBindingsToQLeverJSON(
 static ql::exportIds::IdToStringAndTypeCacheConfig
 selectExportTermCacheConfig() {
   return {
-      getRuntimeParameter<&RuntimeParameters::selectExportTermCacheCapacity_>(),
       getRuntimeParameter<&RuntimeParameters::selectExportTermCacheMaxSize_>(),
-      getRuntimeParameter<&RuntimeParameters::selectExportTermCacheWindow_>(),
+      getRuntimeParameter<
+          &RuntimeParameters::selectExportTermCacheNumberOfLookupsPerWindow_>(),
       getRuntimeParameter<
           &RuntimeParameters::selectExportTermCacheMinHitRate_>()};
 }
@@ -333,7 +333,6 @@ selectExportTermCacheConfig() {
 // _____________________________________________________________________________
 // Create the row indicated by rowIndex from IdTable in QLeverJSON format.
 nlohmann::json idTableToQLeverJSONRow(
-    const QueryExecutionTree& qet,
     const QueryExecutionTree::ColumnIndicesAndTypes& columns,
     const LocalVocab& localVocab, const size_t rowIndex,
     const IdTableView<0>& data,
@@ -374,10 +373,11 @@ auto ExportQueryExecutionTrees::idTableToQLeverJSONBindings(
   // One cache for the whole export, shared by all columns. It must outlive the
   // lazily evaluated view below.
   auto cache = std::make_shared<ql::exportIds::IdToStringAndTypeCache<>>(
-      qet.getQec()->getIndex(), selectExportTermCacheConfig());
+      qet.getQec()->getIndex(), selectExportTermCacheConfig(),
+      qet.getQec()->getAllocator());
   return std::move(rowIndicies) |
          ql::views::transform(
-             [&qet, columns = std::move(columns), result = std::move(result),
+             [columns = std::move(columns), result = std::move(result),
               cancellationHandle = std::move(cancellationHandle),
               cache](const auto& tableWithView) {
                return ql::ranges::transform_view(
@@ -386,8 +386,8 @@ auto ExportQueryExecutionTrees::idTableToQLeverJSONBindings(
                      const TableConstRefWithVocab tableWithVocab =
                          tableWithView.tableWithVocab_;
                      return idTableToQLeverJSONRow(
-                                qet, columns, tableWithVocab.localVocab(),
-                                rowIndex, tableWithVocab.idTable(), *cache)
+                                columns, tableWithVocab.localVocab(), rowIndex,
+                                tableWithVocab.idTable(), *cache)
                          .dump();
                    });
              }) |
@@ -562,7 +562,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   ql::exportIds::IdToStringAndTypeCache<format == csv, false,
                                         std::decay_t<decltype(escapeFunction)>>
       cache{qet.getQec()->getIndex(), selectExportTermCacheConfig(),
-            escapeFunction};
+            qet.getQec()->getAllocator(), escapeFunction};
   uint64_t resultSize = 0;
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
@@ -589,9 +589,8 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
 
 // _____________________________________________________________________________
 // Convert a single ID to an XML binding of the given `variable`.
-template <typename LocalVocabType>
 static std::string idToXMLBinding(
-    std::string_view variable, Id id, const LocalVocabType& localVocab,
+    std::string_view variable, Id id, const LocalVocab& localVocab,
     ql::exportIds::IdToStringAndTypeCache<>& cache) {
   using namespace std::string_view_literals;
   using namespace std::string_literals;
@@ -701,7 +700,8 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream<
   // TODO<joka921> we could prefilter for the nonexisting variables.
   // One cache for the whole export, shared by all columns.
   ql::exportIds::IdToStringAndTypeCache<> cache{qet.getQec()->getIndex(),
-                                                selectExportTermCacheConfig()};
+                                                selectExportTermCacheConfig(),
+                                                qet.getQec()->getAllocator()};
   uint64_t resultSize = 0;
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
@@ -752,7 +752,8 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream<
 
   // One cache for the whole export, shared by all columns.
   ql::exportIds::IdToStringAndTypeCache<> cache{qet.getQec()->getIndex(),
-                                                selectExportTermCacheConfig()};
+                                                selectExportTermCacheConfig(),
+                                                qet.getQec()->getAllocator()};
   auto getBinding = [&](const TableConstRefWithVocab& pair, const uint64_t& i) {
     auto binding = nlohmann::ordered_json::object();
     for (const auto& column : columns) {

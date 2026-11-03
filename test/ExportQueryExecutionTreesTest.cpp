@@ -191,40 +191,48 @@ void runSelectQueryTestCaseImpl(const TestCaseSelectQuery& testCase,
   }
 }
 
-// Call `run()` once for each of the following configurations of the term
-// cache of the SELECT export (see `ql::exportIds::IdToStringAndTypeCache`),
-// which must all give the same result: the default, disabled, a capacity of
-// one (every new term evicts the previous one), switched off after the first
-// lookup, switched off after the second lookup (with cached entries), and a
-// maximal size of 0 (no term fits). `run` is called with `true` for the
-// default configuration and `false` for the others.
+// The configurations of the term cache of the SELECT export (see
+// `ql::exportIds::IdToStringAndTypeCache`) that the export tests use.
+enum class TermCacheConfigs {
+  // The default (disabled) and a large cache that never switches itself off.
+  DefaultAndEnabled,
+  // In addition: a small cache that has to evict entries, and caches that
+  // switch themselves off after the first and after the second lookup (with
+  // cached entries).
+  All
+};
+
+// Call `run()` once for each configuration of `configs`, which must all give
+// the same result. `run` is called with `true` for the default configuration
+// and `false` for the others.
 template <typename Run>
-void forEachTermCacheConfig(const Run& run) {
+void forEachTermCacheConfig(const Run& run,
+                            TermCacheConfigs configs = TermCacheConfigs::All) {
   using Config = ql::exportIds::IdToStringAndTypeCacheConfig;
+  using ad_utility::MemorySize;
   const RuntimeParameters defaults;
-  const Config defaultConfig{defaults.selectExportTermCacheCapacity_.get(),
-                             defaults.selectExportTermCacheMaxSize_.get(),
-                             defaults.selectExportTermCacheWindow_.get(),
-                             defaults.selectExportTermCacheMinHitRate_.get()};
-  const auto maxSize = defaultConfig.maxSize_;
-  const auto noSize = ad_utility::MemorySize::bytes(0);
+  const Config defaultConfig{
+      defaults.selectExportTermCacheMaxSize_.get(),
+      defaults.selectExportTermCacheNumberOfLookupsPerWindow_.get(),
+      defaults.selectExportTermCacheMinHitRate_.get()};
+  const auto large = MemorySize::megabytes(64);
+  std::vector<Config> configsToRun{defaultConfig, Config{large, 0, 0.0}};
+  if (configs == TermCacheConfigs::All) {
+    configsToRun.push_back(Config{MemorySize::kilobytes(4), 0, 0.0});
+    configsToRun.push_back(Config{large, 1, 1.0});
+    configsToRun.push_back(Config{large, 2, 1.0});
+  }
   bool isDefault = true;
-  for (const Config& config :
-       {defaultConfig, Config{0, maxSize, 0, 0.0}, Config{1, maxSize, 0, 0.0},
-        Config{1 << 16, maxSize, 1, 1.0}, Config{1 << 16, maxSize, 2, 1.0},
-        Config{1 << 16, noSize, 0, 0.0}}) {
+  for (const Config& config : configsToRun) {
     auto traceConfig = generateLocationTrace(
         AD_CURRENT_SOURCE_LOC(),
-        absl::StrCat("term cache capacity ", config.capacity_, ", max size ",
-                     config.maxSize_.asString(), ", window ",
-                     config.numberOfLookupsPerWindow_, ", minimal hit rate ",
-                     config.minHitRate_));
-    auto capacity = setRuntimeParameterForTest<
-        &RuntimeParameters::selectExportTermCacheCapacity_>(config.capacity_);
-    auto maxSizeCleanup = setRuntimeParameterForTest<
+        absl::StrCat("term cache max size ", config.maxSize_.asString(),
+                     ", window ", config.numberOfLookupsPerWindow_,
+                     ", minimal hit rate ", config.minHitRate_));
+    auto maxSize = setRuntimeParameterForTest<
         &RuntimeParameters::selectExportTermCacheMaxSize_>(config.maxSize_);
     auto window = setRuntimeParameterForTest<
-        &RuntimeParameters::selectExportTermCacheWindow_>(
+        &RuntimeParameters::selectExportTermCacheNumberOfLookupsPerWindow_>(
         config.numberOfLookupsPerWindow_);
     auto minHitRate = setRuntimeParameterForTest<
         &RuntimeParameters::selectExportTermCacheMinHitRate_>(
@@ -234,18 +242,22 @@ void forEachTermCacheConfig(const Run& run) {
   }
 }
 
-// Run a single test case for a SELECT query with every configuration of
-// `forEachTermCacheConfig`. The interaction with the export limit does not
-// depend on the term cache and is only tested with the default configuration.
+// Run a single test case for a SELECT query with the default configuration
+// of the term cache and with an enabled cache (the other configurations run in
+// the tests that target the cache, to keep the runtime of this file low). The
+// interaction with the export limit does not depend on the term cache and is
+// only tested with the default configuration.
 void runSelectQueryTestCase(
     const TestCaseSelectQuery& testCase, bool useTextIndex = false,
     ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
   auto cleanup = setRuntimeParameterForTest<
       &RuntimeParameters::sparqlResultsJsonWithTime_>(false);
   auto trace = generateLocationTrace(l, "runSelectQueryTestCase");
-  forEachTermCacheConfig([&](bool isDefaultConfig) {
-    runSelectQueryTestCaseImpl(testCase, useTextIndex, isDefaultConfig);
-  });
+  forEachTermCacheConfig(
+      [&](bool isDefaultConfig) {
+        runSelectQueryTestCaseImpl(testCase, useTextIndex, isDefaultConfig);
+      },
+      TermCacheConfigs::DefaultAndEnabled);
 }
 
 // Run a single test case for a CONSTRUCT query.
@@ -2425,8 +2437,11 @@ class FreshLocalVocabPerBlock : public ValuesForTesting {
 // The export of a lazy result whose blocks each have their own `LocalVocab`,
 // with every configuration of the term cache. This is the case for which the
 // term cache must not cache `LocalVocabIndex` `Id`s (see
-// `ql::exportIds::canBeCachedForWholeExport`): a cached entry would hash and
-// compare the `LocalVocabEntry` of a block that has already been freed.
+// `ql::exportIds::canBeCachedForWholeExport`): the cache is keyed by the bits
+// of the `Id`, so a cached `LocalVocabIndex` would be returned for the word of
+// a later block whose `LocalVocabEntry` the allocator puts at the same
+// address. Whether that happens depends on the allocator, so this test can
+// only detect such a bug when it does.
 TEST(ExportQueryExecutionTrees, LazyResultWithLocalVocabPerBlock) {
   auto qec = ad_utility::testing::getQec("<s> <p> <y> .");
   Id y = ad_utility::testing::makeGetId(qec->getIndex())("<y>");
