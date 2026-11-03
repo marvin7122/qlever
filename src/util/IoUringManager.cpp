@@ -199,8 +199,11 @@ void IoUringPolicy::wait(BatchHandle handle) {
 
 //______________________________________________________________________________
 void IoUringPolicy::reapWave(size_t numReadsToComplete) {
-  AD_CORRECTNESS_CHECK(numReadsToComplete > 0);
-  AD_CORRECTNESS_CHECK(numReadsToComplete <= numOutstandingReadRequests_);
+  AD_CORRECTNESS_CHECK(numReadsToComplete > 0,
+                       "a wave must wait for at least one completion");
+  AD_CORRECTNESS_CHECK(
+      numReadsToComplete <= numOutstandingReadRequests_,
+      "a wave cannot wait for more reads than are outstanding");
   const auto waveSize =
       static_cast<unsigned>(std::min<size_t>(REAP_WAVE, numReadsToComplete));
 
@@ -272,7 +275,8 @@ void IoUringPolicy::reapWave(size_t numReadsToComplete) {
   }
   // `io_uring_wait_cqes` returned 0, so at least one CQE was ready, and the
   // loop above reaps every ready CQE.
-  AD_CORRECTNESS_CHECK(numReaped > 0);
+  AD_CORRECTNESS_CHECK(numReaped > 0,
+                       "`io_uring_wait_cqes` returned 0 without a ready CQE");
 }
 
 //______________________________________________________________________________
@@ -282,11 +286,15 @@ void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
   // entry of its batch. Both lookups and checks happen before any count is
   // changed, so that a failing check leaves the bookkeeping consistent.
   auto outstandingReadIt = outstandingReadsByRequestId_.find(requestId);
-  AD_CORRECTNESS_CHECK(outstandingReadIt != outstandingReadsByRequestId_.end());
+  AD_CORRECTNESS_CHECK(
+      outstandingReadIt != outstandingReadsByRequestId_.end(),
+      "a CQE carries the id of a read that is not outstanding");
   const OutstandingRead outstandingRead = outstandingReadIt->second;
   auto it =
       numOutstandingReadRequestsPerBatch_.find(outstandingRead.batchHandle);
-  AD_CORRECTNESS_CHECK(it != numOutstandingReadRequestsPerBatch_.end());
+  AD_CORRECTNESS_CHECK(it != numOutstandingReadRequestsPerBatch_.end(),
+                       "an outstanding read belongs to a batch that has no "
+                       "outstanding reads");
 
   // Attribute the completion to its batch and decrement that batch's
   // outstanding count, erasing the batch once its last read is reaped. This
