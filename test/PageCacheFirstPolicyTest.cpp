@@ -9,7 +9,6 @@
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <gtest/gtest.h>
-#include <unistd.h>
 
 #include <climits>
 #include <cstddef>
@@ -90,43 +89,11 @@ using pageCacheReadTestHelpers::ScopedPageCacheRead;
 // Number of calls of the injected page-cache reads below.
 size_t numPageCacheReads = 0;
 
-// Read into the buffers of `iov` with plain blocking `pread` calls (which work
-// on any file system, unlike `preadv2` with `RWF_NOWAIT`) and return the
-// number of bytes read (short at the end of the file), or -1 on a real I/O
-// error. Like `serveRun`, which calls it for a run of adjacent reads, it
-// assumes that the `iov` cover consecutive file ranges from `offset` on. This
-// lets the
-// tests below exercise the batching of `readPageCacheHits` without depending
-// on `RWF_NOWAIT` being supported for the test files (it is rejected with
-// `EOPNOTSUPP` in the docker builds, for example on overlayfs).
-int64_t blockingFill(int fd, const ::iovec* iov, int iovcnt,
-                     int64_t offset) noexcept {
-  int64_t total = 0;
-  for (const ::iovec& iovec :
-       ql::span<const ::iovec>{iov, static_cast<size_t>(iovcnt)}) {
-    auto* base = static_cast<char*>(iovec.iov_base);
-    size_t remaining = iovec.iov_len;
-    while (remaining > 0) {
-      const ssize_t numBytesRead = ::pread(fd, base, remaining, offset + total);
-      if (numBytesRead < 0) {
-        return -1;
-      }
-      if (numBytesRead == 0) {
-        return total;
-      }
-      base += numBytesRead;
-      remaining -= static_cast<size_t>(numBytesRead);
-      total += numBytesRead;
-    }
-  }
-  return total;
-}
-
 // A fully cached run, counted.
 int64_t countedCachedRead(int fd, const ::iovec* iov, int iovcnt,
                           int64_t offset) noexcept {
   ++numPageCacheReads;
-  return blockingFill(fd, iov, iovcnt, offset);
+  return pageCacheReadTestHelpers::fullyCached(fd, iov, iovcnt, offset);
 }
 
 // `EAGAIN` (nothing cached), counted.
@@ -147,7 +114,8 @@ int64_t countedNotSupported(int fd, const ::iovec* iov, int iovcnt,
 // only 6 bytes are reported as read.
 int64_t sixBytesCached(int fd, const ::iovec* iov, int iovcnt,
                        int64_t offset) noexcept {
-  const int64_t numBytesRead = blockingFill(fd, iov, iovcnt, offset);
+  const int64_t numBytesRead =
+      pageCacheReadTestHelpers::fullyCached(fd, iov, iovcnt, offset);
   return numBytesRead < 0 ? numBytesRead : std::min<int64_t>(numBytesRead, 6);
 }
 
@@ -326,7 +294,7 @@ using RecordedManager =
 int64_t firstRunCached(int fd, const ::iovec* iov, int iovcnt,
                        int64_t offset) noexcept {
   if (numPageCacheReads++ == 0) {
-    return blockingFill(fd, iov, iovcnt, offset);
+    return pageCacheReadTestHelpers::fullyCached(fd, iov, iovcnt, offset);
   }
   return pageCacheReadTestHelpers::nothingCached(fd, iov, iovcnt, offset);
 }

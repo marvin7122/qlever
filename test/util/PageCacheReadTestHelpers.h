@@ -10,12 +10,17 @@
 #ifndef QLEVER_TEST_UTIL_PAGECACHEREADTESTHELPERS_H
 #define QLEVER_TEST_UTIL_PAGECACHEREADTESTHELPERS_H
 
+#include <sys/types.h>
 #include <sys/uio.h>
+#include <unistd.h>
 
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <utility>
 
+#include "backports/span.h"
+#include "util/NoCopyNoMove.h"
 #include "util/io_uring/PageCacheFirstPolicy.h"
 #include "util/io_uring/PageCacheReadHook.h"
 
@@ -38,7 +43,7 @@ namespace pageCacheReadTestHelpers {
 //    again, undoing an `EOPNOTSUPP` that the test itself injected. If it
 //    was already off (a platform without `RWF_NOWAIT`), nothing is
 //    reset: the test must not pretend the fast path works there.
-class ScopedPageCacheRead {
+class ScopedPageCacheRead : public ad_utility::NoCopyNoMove {
  public:
   explicit ScopedPageCacheRead(ad_utility::detail::PageCacheRead function)
       : previous_{
@@ -52,16 +57,45 @@ class ScopedPageCacheRead {
       ad_utility::detail::resetPageCacheFastPathSupport();
     }
   }
-  ScopedPageCacheRead(const ScopedPageCacheRead&) = delete;
-  ScopedPageCacheRead& operator=(const ScopedPageCacheRead&) = delete;
-  // Deleted: moving would restore the previous read twice.
-  ScopedPageCacheRead(ScopedPageCacheRead&&) = delete;
-  ScopedPageCacheRead& operator=(ScopedPageCacheRead&&) = delete;
 
  private:
   const ad_utility::detail::PageCacheRead previous_;
   bool wasSupported_ = ad_utility::pageCacheFastPathIsSupported();
 };
+
+//______________________________________________________________________________
+// Read the file range of `fd` that starts at `offset` into the buffers of
+// `iov` with blocking `pread` calls, like a `preadv2(RWF_NOWAIT)` for which the
+// whole range is cached: return the number of bytes read (fewer than requested
+// only at the end of the file), or -1 on an I/O error. Unlike the real call, it
+// works on every file system (`RWF_NOWAIT` is rejected with `EOPNOTSUPP` on
+// overlayfs, for example in the docker builds) and does not depend on the file
+// still being cached.
+inline int64_t fullyCached(int fd, const ::iovec* iov, int iovcnt,
+                           int64_t offset) noexcept {
+  int64_t numBytesReadTotal = 0;
+  for (const ::iovec& buffer :
+       ql::span<const ::iovec>{iov, static_cast<size_t>(iovcnt)}) {
+    auto* target = static_cast<char*>(buffer.iov_base);
+    size_t numBytesRemaining = buffer.iov_len;
+    while (numBytesRemaining > 0) {
+      const ssize_t numBytesRead =
+          ::pread(fd, target, numBytesRemaining,
+                  static_cast<off_t>(offset + numBytesReadTotal));
+      if (numBytesRead < 0) {
+        return -1;
+      }
+      if (numBytesRead == 0) {
+        return numBytesReadTotal;
+      }
+      const auto numBytesReadUnsigned = static_cast<size_t>(numBytesRead);
+      target += numBytesReadUnsigned;
+      numBytesRemaining -= numBytesReadUnsigned;
+      numBytesReadTotal += numBytesRead;
+    }
+  }
+  return numBytesReadTotal;
+}
 
 //______________________________________________________________________________
 // Report that nothing is cached (`EAGAIN`).
