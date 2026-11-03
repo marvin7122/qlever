@@ -105,10 +105,11 @@ class BatchManagerPool : public NoCopyNoMove {
 // io_uring probe has run before the first query. Other programs (the index
 // builder, tests) get the default pool on their first batched read.
 //
-// TODO<joka921> Like `globalExecutor`, this is a mutable process-wide
-// singleton whose configuration can only be set before its first use. Once
-// the server passes its resources to the index explicitly, the pool should
-// become an object that is owned by the server and handed to its users.
+// NOTE: Like `globalExecutor` (see the TODO in `util/GlobalExecutor.h`), this
+// is a mutable process-wide singleton whose configuration can only be set
+// before its first use. Once the server passes its resources to the index
+// explicitly, the pool should become an object that is owned by the server and
+// handed to its users.
 
 // Configure the pool: `numManagers` (> 0) managers that try io_uring iff
 // `preferIoUring`. This only has an effect before the pool exists. Return

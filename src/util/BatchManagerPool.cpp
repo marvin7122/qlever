@@ -10,6 +10,8 @@
 #include "util/BatchManagerPool.h"
 
 #include <algorithm>
+#include <range/v3/range/conversion.hpp>
+#include <range/v3/view/generate_n.hpp>
 #include <thread>
 #include <utility>
 
@@ -39,14 +41,17 @@ BatchManagerPool::Lease::~Lease() {
 BatchManagerPool::BatchManagerPool(size_t numManagers, bool preferIoUring)
     : numManagers_{numManagers} {
   AD_CONTRACT_CHECK(numManagers > 0);
-  idle_.reserve(numManagers);
   // `makeBatchManager` clears `preferIoUring` (a reference parameter) when the
   // io_uring setup fails or io_uring is not compiled in, so after the first
   // failure the remaining managers are synchronous ones, and the flag is still
-  // set after the loop iff all managers use io_uring.
-  for (size_t i = 0; i < numManagers; ++i) {
-    idle_.push_back(makeBatchManager(preferIoUring));
-  }
+  // set afterwards iff all managers use io_uring.
+  auto makeManager = [&preferIoUring]() {
+    return makeBatchManager(preferIoUring);
+  };
+  // All managers start idle, so `idle_` has room for all of them and `release`
+  // never has to allocate.
+  idle_ = ::ranges::to_vector(
+      ::ranges::views::generate_n(makeManager, numManagers));
   usesIoUring_ = preferIoUring;
 }
 
