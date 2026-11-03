@@ -19,11 +19,11 @@
 
 // The compile-time interface between `BatchManager` (in `IoUringManager.h`) and
 // the policies that carry out its reads. A `BatchManager` owns the batch
-// bookkeeping (it hands out one `BatchHandle` per batch) and delegates the
-// reads themselves to a `ReadPolicy`. This header holds only the constraints,
-// so that `PageCacheFirstPolicy.h`, a policy that wraps another policy, can
-// state them without depending on `IoUringManager.h`. The models are
-// `IoUringPolicy` (asynchronous reads via io_uring) and `SyncIoPolicy`
+// bookkeeping (it hands out one `BatchHandle` with a `BatchId` per batch) and
+// delegates the reads themselves to a `ReadPolicy`. This header holds only the
+// constraints, so that `PageCacheFirstPolicy.h`, a policy that wraps another
+// policy, can state them without depending on `IoUringManager.h`. The models
+// are `IoUringPolicy` (asynchronous reads via io_uring) and `SyncIoPolicy`
 // (blocking `pread`) in `IoUringManager.h`, and `PageCacheFirstPolicy<Policy>`
 // in `PageCacheFirstPolicy.h`.
 
@@ -40,7 +40,7 @@ CPP_requires(
     ReadPolicy_,
     requires(T& policy, int fd, ql::span<const size_t> numBytes,
              ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-             typename T::BatchHandle handle)(
+             typename T::BatchId handle)(
         ::concepts::requires_<ql::concepts::same_as<
             decltype(policy.addBatch(fd, numBytes, offsets, buffers, handle)),
             bool>>,
@@ -48,12 +48,13 @@ CPP_requires(
 
 // A `ReadPolicy`, used as the template argument of `BatchManager` and
 // `PageCacheFirstPolicy`: it has the member functions of `ReadPolicy_` above,
-// an unsigned integral `BatchHandle` type, and a constructor from the size of
-// an io_uring ring (`unsigned`), which policies without a ring ignore.
+// an unsigned integral `BatchId` type (the id that `BatchManager` hands it for
+// a batch), and a constructor from the size of an io_uring ring (`unsigned`),
+// which policies without a ring ignore.
 template <typename T>
 CPP_concept ReadPolicyConcept =
     ql::concepts::constructible_from<T, unsigned> &&
-    ql::concepts::unsigned_integral<typename T::BatchHandle> &&
+    ql::concepts::unsigned_integral<typename T::BatchId> &&
     CPP_requires_ref(ReadPolicy_, T);
 
 }  // namespace ad_utility

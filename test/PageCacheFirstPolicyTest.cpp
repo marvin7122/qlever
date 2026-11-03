@@ -342,13 +342,13 @@ TEST(UnservedReads, fromNotServed) {
 // A `ReadPolicy` that reads synchronously and records the reads it receives.
 // The records are static because a `BatchManager` owns its policy.
 struct RecordingPolicy {
-  using BatchHandle = uint64_t;
+  using BatchId = uint64_t;
   // The number of reads of every `addBatch` call.
   static inline std::vector<size_t> batchSizes_;
   // The file offsets of all reads, in the order of arrival.
   static inline std::vector<uint64_t> receivedOffsets_;
   // The handles of all `wait` calls, in the order of arrival.
-  static inline std::vector<BatchHandle> waitedFor_;
+  static inline std::vector<BatchId> waitedFor_;
   static void reset() {
     batchSizes_.clear();
     receivedOffsets_.clear();
@@ -360,7 +360,7 @@ struct RecordingPolicy {
   // tests can see whether `wait` reaches the policy.
   bool addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-                [[maybe_unused]] BatchHandle handle) {
+                [[maybe_unused]] BatchId handle) {
     batchSizes_.push_back(numBytes.size());
     for (auto&& [numberOfBytesToRead, fileOffset, targetBuffer] :
          ::ranges::views::zip(numBytes, offsets, buffers)) {
@@ -370,7 +370,7 @@ struct RecordingPolicy {
     }
     return true;
   }
-  void wait(BatchHandle handle) const { waitedFor_.push_back(handle); }
+  void wait(BatchId handle) const { waitedFor_.push_back(handle); }
 };
 
 // A manager whose (page-cache-first) policy is the `RecordingPolicy`
