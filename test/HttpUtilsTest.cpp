@@ -131,3 +131,43 @@ TEST(HttpUtils, CreateOkResponseFromGeneratorWithCompression) {
   }
   EXPECT_EQ(decompressed, "Hello, World!");
 }
+
+// Test that `createOkResponse` compresses the body with the given
+// `CompressBody`, and only if the request asks for a compression.
+TEST(HttpUtils, CreateOkResponseFromGeneratorWithCustomCompression) {
+  namespace http = boost::beast::http;
+  using ad_utility::MediaType;
+  using ad_utility::content_encoding::CompressionMethod;
+  auto yieldOnce = [](std::string value) -> cppcoro::generator<std::string> {
+    co_yield value;
+  };
+  auto generator = [&yieldOnce]() { return yieldOnce("Hello"); };
+  std::vector<CompressionMethod> methods;
+  ad_utility::httpUtils::CompressBody compressBody =
+      [&methods, &yieldOnce](cppcoro::generator<std::string>,
+                             CompressionMethod method) {
+        methods.push_back(method);
+        return yieldOnce("compressed");
+      };
+  auto bodyToString = [](auto& body) {
+    std::string result;
+    for (const auto& chunk : body) {
+      result += chunk;
+    }
+    return result;
+  };
+  http::request<http::string_body> request;
+
+  auto response = ad_utility::httpUtils::createOkResponse(
+      generator(), request, MediaType::textPlain, compressBody);
+  EXPECT_EQ(response.count(http::field::content_encoding), 0);
+  EXPECT_EQ(bodyToString(response.body()), "Hello");
+  EXPECT_TRUE(methods.empty());
+
+  request.set(http::field::accept_encoding, "deflate");
+  response = ad_utility::httpUtils::createOkResponse(
+      generator(), request, MediaType::textPlain, compressBody);
+  EXPECT_EQ(response.at(http::field::content_encoding), "deflate");
+  EXPECT_EQ(bodyToString(response.body()), "compressed");
+  EXPECT_EQ(methods, std::vector{CompressionMethod::DEFLATE});
+}
