@@ -295,6 +295,14 @@ struct RuntimeParameters {
   // and then fails the export. The output of a successful export is the same.
   Bool parallelCsvTsvExport_{false, "parallel-csv-tsv-export"};
 
+  // If set, the result of a query that the client asks for compressed (with
+  // `Accept-Encoding: deflate` or `gzip`) is compressed on the executor of the
+  // query, in blocks of at least 128 KiB, instead of on the thread that
+  // produces the response body (see `streams::compressStreamInParallel`). At
+  // most `2 * max-num-threads-per-query` blocks are in flight per query. The
+  // compressed bytes differ, but they decompress to the same result.
+  Bool parallelResponseCompression_{false, "parallel-response-compression"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.

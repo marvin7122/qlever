@@ -38,6 +38,7 @@
 #include "util/ConcurrencyLimitedExecutor.h"
 #include "util/Exception.h"
 #include "util/MemorySize/MemorySize.h"
+#include "util/ParallelCompressorStream.h"
 #include "util/ParseException.h"
 #include "util/ParseableDuration.h"
 #include "util/QueryEventLog.h"
@@ -1136,8 +1137,25 @@ Awaitable<void> Server::sendStreamableResponse(
       cancellationHandle);
   auto responseGenerator = co_await std::move(coroutine);
 
+  // With `parallel-response-compression`, a compressed response is compressed
+  // on the executor of the query, like the other parallel work of the query.
+  ad_utility::httpUtils::CompressBody compressBody =
+      ad_utility::httpUtils::compressSequentially;
+  if (getRuntimeParameter<&RuntimeParameters::parallelResponseCompression_>()) {
+    compressBody =
+        [executor = plannedQuery.queryExecutionTree().getQec()->executor(),
+         maxNumberOfBlocksInFlight =
+             2 *
+             getRuntimeParameter<&RuntimeParameters::maxNumThreadsPerQuery_>()](
+            cppcoro::generator<std::string> body,
+            ad_utility::content_encoding::CompressionMethod method) {
+          return ad_utility::streams::compressStreamInParallel(
+              std::move(body), method, executor, maxNumberOfBlocksInFlight);
+        };
+  }
   auto response = ad_utility::httpUtils::createOkResponse(
-      std::move(responseGenerator), request, mediaType);
+      std::move(responseGenerator), request, mediaType,
+      std::move(compressBody));
   if (plannedQuery.parsedQuery().responseMiddleware_.has_value()) {
     response =
         plannedQuery.parsedQuery().responseMiddleware_.value().applyQuery(
