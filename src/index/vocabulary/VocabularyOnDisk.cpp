@@ -278,17 +278,6 @@ VocabularyScanRange VocabularyOnDisk::scanAll() const {
 }
 
 // _____________________________________________________________________________
-std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
-    ad_utility::BatchManagerBase& manager,
-    ql::span<const size_t> indices) const {
-  for (size_t index : indices) {
-    AD_CONTRACT_CHECK(index < size());
-  }
-  return ad_utility::vocabulary::readOffsetPairs(manager, offsetsFile_.fd(),
-                                                 indices);
-}
-
-// _____________________________________________________________________________
 VocabBatchLookupResult VocabularyOnDisk::readStrings(
     ad_utility::BatchManagerBase& manager,
     ql::span<const OffsetPair> offsetPairs) const {
@@ -342,7 +331,8 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
   // change between two lookups.
   manager->setPageCacheFastPath(
       getRuntimeParameter<&RuntimeParameters::vocabularyPageCacheFastPath_>());
-  auto offsetPairs = readOffsetPairs(*manager, indices);
+  auto offsetPairs = ad_utility::vocabulary::readOffsetPairs(
+      *manager, offsetsFile_.fd(), indices, size());
   return readStrings(*manager, offsetPairs);
 }
 

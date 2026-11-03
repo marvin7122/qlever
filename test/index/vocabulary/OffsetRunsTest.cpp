@@ -89,7 +89,7 @@ TEST(ReadOffsetPairs, pairsInTheOrderOfTheIndicesWithOneReadPerRun) {
   // `0, 1, 2` and `1`.
   std::vector<size_t> indices{3, 4, 0, 1, 2, 1};
   EXPECT_THAT(
-      readOffsetPairs(manager, fd, indices),
+      readOffsetPairs(manager, fd, indices, 5),
       ElementsAre(OffsetPair{6, 10}, OffsetPair{10, 15}, OffsetPair{0, 1},
                   OffsetPair{1, 3}, OffsetPair{3, 6}, OffsetPair{1, 3}));
   // One batch with one read per run; a run of `k` indices reads `k + 1`
@@ -107,8 +107,19 @@ TEST(ReadOffsetPairs, noIndicesReadNothing) {
   auto [tmp, fd] =
       ioUringManagerTestHelpers::makeTempFile(offsetsFileContent({1}));
   RecordingManager manager;
-  EXPECT_THAT(readOffsetPairs(manager, fd, {}), IsEmpty());
+  EXPECT_THAT(readOffsetPairs(manager, fd, {}, 1), IsEmpty());
   EXPECT_THAT(manager.batches_, ElementsAre(IsEmpty()));
+}
+
+// _____________________________________________________________________________
+TEST(ReadOffsetPairs, indicesMustBeSmallerThanTheNumberOfWords) {
+  auto [tmp, fd] =
+      ioUringManagerTestHelpers::makeTempFile(offsetsFileContent({1, 2}));
+  RecordingManager manager;
+  std::vector<size_t> indices{0, 2};
+  AD_EXPECT_THROW_WITH_MESSAGE(readOffsetPairs(manager, fd, indices, 2),
+                               HasSubstr("index < numWords"));
+  EXPECT_THAT(manager.batches_, IsEmpty());
 }
 
 }  // namespace
