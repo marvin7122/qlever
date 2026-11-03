@@ -430,7 +430,11 @@ TEST(IoUringManagerDrop, destroyTheManagerRightAfterABatch) {
 }
 
 // `LiburingRing::cancelQueued` rewrites the queued SQEs in the real ring: once
-// submitted, they complete as no-ops and never write into their buffers.
+// submitted, they complete as no-ops and never write into their buffers. It
+// finds the queued SQEs from the kernel's head of the submission queue, so the
+// test also runs after `numberOfReadsBefore` reads have gone through the ring:
+// with 6 of 8 slots used before, the 4 cancelled SQEs are in the slots 6, 7, 0
+// and 1, so the positions wrap around the end of the queue.
 TEST(LiburingRing, cancelledReadsCompleteAsNoOps) {
   if (!ioUringAvailableAtRuntime()) {
     GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
@@ -440,29 +444,48 @@ TEST(LiburingRing, cancelledReadsCompleteAsNoOps) {
   // The policy's real no-op id, so that a collision with an id that liburing
   // reserves would show up here.
   constexpr uint64_t noOp = ad_utility::IoUringPolicy::NO_OP_REQUEST_ID;
-  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");
-  auto ring = ad_utility::makeLiburingRing(ad_utility::RingSize{8});
-  constexpr size_t NUMBER_OF_READS = 3;
-  std::vector<std::string> buffers(NUMBER_OF_READS, std::string(4, '-'));
-  for (size_t i : ql::views::iota(size_t{0}, NUMBER_OF_READS)) {
-    ASSERT_TRUE(ring->prepareRead(fd, buffers[i].data(), 4, 4 * i, i));
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  for (const size_t numberOfReadsBefore : {size_t{0}, size_t{6}}) {
+    SCOPED_TRACE(absl::StrCat(numberOfReadsBefore, " reads before"));
+    auto ring = ad_utility::makeLiburingRing(ad_utility::RingSize{8});
+    std::array<Completion, 8> completions{};
+    // Move the kernel's head of the submission queue forward.
+    std::vector<std::string> readBuffers(numberOfReadsBefore,
+                                         std::string(4, '-'));
+    for (size_t i : ql::views::iota(size_t{0}, numberOfReadsBefore)) {
+      ASSERT_TRUE(ring->prepareRead(fd, readBuffers[i].data(), 4, 0, i));
+    }
+    if (numberOfReadsBefore > 0) {
+      ASSERT_EQ(ring->submit(), static_cast<int>(numberOfReadsBefore));
+      ASSERT_EQ(
+          ring->waitForCompletions(static_cast<unsigned>(numberOfReadsBefore)),
+          0);
+      ASSERT_EQ(ring->popCompletions(completions), numberOfReadsBefore);
+      EXPECT_THAT(readBuffers, Each(std::string("AAAA")));
+    }
+
+    constexpr size_t NUMBER_OF_READS = 4;
+    std::vector<std::string> buffers(NUMBER_OF_READS, std::string(4, '-'));
+    for (size_t i : ql::views::iota(size_t{0}, NUMBER_OF_READS)) {
+      ASSERT_TRUE(ring->prepareRead(fd, buffers[i].data(), 4, 4 * i, i));
+    }
+    EXPECT_THAT(ring->cancelQueued(noOp), ElementsAre(0, 1, 2, 3));
+    // No-ops that are cancelled again are not reported again.
+    EXPECT_THAT(ring->cancelQueued(noOp), IsEmpty());
+    ASSERT_EQ(ring->submit(), static_cast<int>(NUMBER_OF_READS));
+    ASSERT_EQ(ring->waitForCompletions(NUMBER_OF_READS), 0);
+    ASSERT_EQ(ring->popCompletions(completions), NUMBER_OF_READS);
+    // Every cancelled read completes as a no-op with result 0.
+    // A vector, not a `take` view: gtest would print the view with range-v3's
+    // `operator<<`, which GCC 11 fails to compile for this element type.
+    const std::vector<Completion> reaped(completions.begin(),
+                                         completions.begin() + NUMBER_OF_READS);
+    EXPECT_THAT(reaped,
+                ::testing::Each(::testing::AllOf(
+                    AD_FIELD(Completion, requestId, ::testing::Eq(noOp)),
+                    AD_FIELD(Completion, result, ::testing::Eq(0)))));
+    EXPECT_THAT(buffers, Each(std::string(4, '-')));
   }
-  EXPECT_THAT(ring->cancelQueued(noOp), ElementsAre(0, 1, 2));
-  // No-ops that are cancelled again are not reported again.
-  EXPECT_THAT(ring->cancelQueued(noOp), IsEmpty());
-  ASSERT_EQ(ring->submit(), static_cast<int>(NUMBER_OF_READS));
-  ASSERT_EQ(ring->waitForCompletions(NUMBER_OF_READS), 0);
-  std::array<Completion, 8> completions{};
-  ASSERT_EQ(ring->popCompletions(completions), NUMBER_OF_READS);
-  // Every cancelled read completes as a no-op with result 0.
-  // A vector, not a `take` view: gtest would print the view with range-v3's
-  // `operator<<`, which GCC 11 fails to compile for this element type.
-  const std::vector<Completion> reaped(completions.begin(),
-                                       completions.begin() + NUMBER_OF_READS);
-  EXPECT_THAT(reaped, ::testing::Each(::testing::AllOf(
-                          AD_FIELD(Completion, requestId, ::testing::Eq(noOp)),
-                          AD_FIELD(Completion, result, ::testing::Eq(0)))));
-  EXPECT_THAT(buffers, Each(std::string(4, '-')));
 }
 
 // A model-based test of `IoUringPolicy` on `FakeIoUring`, which takes only
