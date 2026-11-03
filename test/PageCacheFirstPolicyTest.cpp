@@ -323,6 +323,34 @@ int64_t firstRunCached(int fd, const ::iovec* iov, int iovcnt,
   return pageCacheReadTestHelpers::nothingCached(fd, iov, iovcnt, offset);
 }
 
+// `SelectedReads` copies the reads at the given positions, in their order, and
+// rejects positions that are out of range or not ascending.
+TEST(PageCacheFirstPolicy, selectedReadsTakeTheReadsAtThePositions) {
+  using ad_utility::detail::SelectedReads;
+  std::vector<size_t> numBytes{1, 2, 3, 4};
+  std::vector<uint64_t> offsets{10, 20, 30, 40};
+  std::string buffer(4, '-');
+  std::vector<char*> buffers{buffer.data(), buffer.data() + 1,
+                             buffer.data() + 2, buffer.data() + 3};
+  const std::vector<size_t> positions{1, 3};
+  SelectedReads selected{numBytes, offsets, buffers, positions};
+  EXPECT_THAT(selected.numBytes_, ElementsAre(2, 4));
+  EXPECT_THAT(selected.offsets_, ElementsAre(20, 40));
+  EXPECT_THAT(selected.buffers_, ElementsAre(buffers[1], buffers[3]));
+  // No position selects nothing.
+  EXPECT_THAT((SelectedReads{numBytes, offsets, buffers, {}}.numBytes_),
+              IsEmpty());
+
+  const std::vector<size_t> outOfRange{1, 4};
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      (SelectedReads{numBytes, offsets, buffers, outOfRange}),
+      HasSubstr("must be in range"), ad_utility::Exception);
+  const std::vector<size_t> descending{3, 1};
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      (SelectedReads{numBytes, offsets, buffers, descending}),
+      HasSubstr("must be ascending"), ad_utility::Exception);
+}
+
 // The reads that the page-cache read serves are not passed on to the decorated
 // policy; the others are, in their original order. The offsets `0, 4` are
 // adjacent and form one run, `12` and `8` are runs of their own.
