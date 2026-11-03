@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -317,7 +318,7 @@ TEST(ReadPageCacheHits, emptyBatchAndContract) {
   std::string buffer(8, '-');
   std::vector<char*> targets{buffer.data(), buffer.data() + 4};
   AD_EXPECT_THROW_WITH_MESSAGE(
-      reader.readPageCacheHits(fd, numBytes, offsets, targets),
+      std::ignore = reader.readPageCacheHits(fd, numBytes, offsets, targets),
       HasSubstr("offsets.size() == numBytes.size()"));
 }
 
