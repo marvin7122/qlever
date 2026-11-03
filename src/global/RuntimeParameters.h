@@ -296,16 +296,17 @@ struct RuntimeParameters {
   Bool parallelCsvTsvExport_{false, "parallel-csv-tsv-export"};
 
   // If set, the rows of the result of a CONSTRUCT query that is exported as
-  // Turtle, N-Triples, CSV or TSV are copied into chunks of
+  // Turtle, N-Triples, CSV or TSV are cut into chunks of
   // `ConstructTripleGenerator::MAX_NUMBER_OF_ROWS_PER_CHUNK` rows (across the
-  // blocks of a lazy result), whose triples are instantiated and formatted
-  // concurrently on the executor of the query, instead of one after the other
-  // on the thread that produces the response body. At most
-  // `2 * max-num-threads-per-query` chunks are in flight per query. Their
-  // memory counts towards the `memory-for-queries` budget that all queries
-  // share; an allocation that does not fit first evicts unpinned cache entries
-  // and then fails the export. It has no effect with a
-  // `construct-deduplication`. The output of a successful export is the same.
+  // blocks of a lazy result, whose rows are copied for this), whose triples
+  // are instantiated and formatted concurrently on the executor of the query,
+  // instead of one after the other on the thread that produces the response
+  // body. At most `2 * max-num-threads-per-query` chunks are in flight per
+  // query, plus the next chunk and the one that is being yielded. Their memory
+  // counts towards the `memory-for-queries` budget that all queries share; an
+  // allocation that does not fit first evicts unpinned cache entries and then
+  // fails the export. It has no effect with a `construct-deduplication`. The
+  // output of a successful export is the same.
   Bool parallelConstructExport_{false, "parallel-construct-export"};
 
   // ___________________________________________________________________________

@@ -5,6 +5,7 @@
 //          Hannah Bast <bast@cs.uni-freiburg.de>
 
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_split.h>
 #include <gmock/gmock.h>
 
 #include "./WordsAndDocsFileLineCreator.h"
@@ -20,6 +21,7 @@
 #include "util/ConcurrencyLimitedExecutor.h"
 #include "util/Forward.h"
 #include "util/GTestHelpers.h"
+#include "util/HashSet.h"
 #include "util/IdTableHelpers.h"
 #include "util/IdTestHelpers.h"
 #include "util/IndexTestHelpers.h"
@@ -840,6 +842,11 @@ TEST(ExportQueryExecutionTrees, ParallelConstructExport) {
     size_t sequential = numberOfTasks(false);
     return numberOfTasks(true) - sequential;
   };
+  // The 20,000 rows are two full chunks and a partial one.
+  static_assert(numberOfSubjectsForParallelExport >
+                    2 * maxNumberOfRowsPerConstructChunk &&
+                numberOfSubjectsForParallelExport <
+                    3 * maxNumberOfRowsPerConstructChunk);
   EXPECT_EQ(numberOfExportTasks(orderedScan), 3);
   EXPECT_EQ(numberOfExportTasks(lazyScan), 3);
   EXPECT_EQ(numberOfExportTasks(absl::StrCat(orderedScan, " LIMIT ",
@@ -932,6 +939,18 @@ TEST(ExportQueryExecutionTrees, ParallelConstructExportOfSeveralBlocks) {
                     ntriples, true),
                 '\n'),
             numberOfRows + (numberOfRows - (numberOfRows + 6) / 7));
+
+  // The OFFSET ends inside the first block, and still every row gets a blank
+  // node of its own, numbered from the OFFSET (see #367).
+  auto withOffset = exportBlocks(
+      "CONSTRUCT { _:n <q> ?a } WHERE { ?a ?b ?c } OFFSET 8000 LIMIT 25000",
+      ntriples, true);
+  EXPECT_THAT(withOffset, ::testing::StartsWith("_:u8000_n "));
+  ad_utility::HashSet<std::string> blankNodes;
+  for (auto line : absl::StrSplit(withOffset, '\n', absl::SkipEmpty())) {
+    blankNodes.emplace(line.substr(0, line.find(' ')));
+  }
+  EXPECT_EQ(blankNodes.size(), 25000);
 }
 
 // _____________________________________________________________________________
