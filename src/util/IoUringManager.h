@@ -270,8 +270,9 @@ class IoUringPolicy : public ad_utility::NoCopyNoMove {
   }
 
   // Record a read of batch `handle` and prepare its SQE (not yet submitted).
-  void recordAndPrepareRead(int fd, char* targetBuffer, size_t numBytesToRead,
-                            uint64_t fileOffset, BatchHandle handle);
+  void recordAndPrepareRead(int fd, char* targetBuffer,
+                            size_t numberOfBytesToRead, uint64_t fileOffset,
+                            BatchHandle handle);
 
   // Submit every queued read and no-op. Retries an interrupted submit, and a
   // submit that took no SQE (after reaping a completion, or backing off). If

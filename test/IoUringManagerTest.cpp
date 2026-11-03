@@ -233,11 +233,11 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
 // so a wave is reaped in several chunks. The other policies have no ring and
 // read synchronously.
 TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanRing) {
-  constexpr std::array<std::pair<unsigned, size_t>, 3> ringSizeAndNumReads{
+  constexpr std::array<std::pair<unsigned, size_t>, 3> ringSizeAndNumberOfReads{
       {{4, 80}, {8, 80}, {256, 600}}};
-  for (const auto& [ringSize, numReads] : ringSizeAndNumReads) {
+  for (const auto& [ringSize, numberOfReads] : ringSizeAndNumberOfReads) {
     SequentialReadScenarioForTesting scenario;
-    for (size_t i : ql::views::iota(size_t{0}, numReads)) {
+    for (size_t i : ql::views::iota(size_t{0}, numberOfReads)) {
       // Distinct chunks, so that a completion in the wrong buffer is detected.
       scenario.addRead(absl::StrFormat("%04d", i));
     }
@@ -264,14 +264,15 @@ TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
   std::string fileContent;
   std::vector<std::vector<std::string>> expected(M);
   std::vector<ReadBatchForTesting> batches(M);
-  size_t numChunks = 0;
+  size_t numberOfChunks = 0;
   for (auto&& [i, batchAndExpected] :
        ::ranges::views::enumerate(::ranges::views::zip(batches, expected))) {
     auto& [batch, expectedOfBatch] = batchAndExpected;
-    const size_t numReads = 2 * (static_cast<size_t>(i) % 3) + 1;
-    for ([[maybe_unused]] size_t j : ql::views::iota(size_t{0}, numReads)) {
+    const size_t numberOfReads = 2 * (static_cast<size_t>(i) % 3) + 1;
+    for ([[maybe_unused]] size_t j :
+         ql::views::iota(size_t{0}, numberOfReads)) {
       // Distinct chunks, so that a completion in the wrong buffer is detected.
-      std::string chunk = absl::StrFormat("%03d", numChunks++);
+      std::string chunk = absl::StrFormat("%03d", numberOfChunks++);
       batch.add(fileContent.size(), chunk.size());
       fileContent.append(chunk);
       expectedOfBatch.push_back(std::move(chunk));
