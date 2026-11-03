@@ -236,13 +236,14 @@ TEST(ReadPageCacheHits, switchingOffInTheMiddleOfABatch) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   size_t numberOfReads = 0;
-  PageCacheReader reader{
-      [&numberOfReads](int fd, const ::iovec* iov, int iovcnt, int64_t offset) {
-        if (numberOfReads++ == 0) {
-          return fullyCached(fd, iov, iovcnt, offset);
-        }
-        return notSupported(fd, iov, iovcnt, offset);
-      }};
+  PageCacheReader reader{[&numberOfReads](int fileDescriptor,
+                                          const ::iovec* iov, int iovcnt,
+                                          int64_t offset) {
+    if (numberOfReads++ == 0) {
+      return fullyCached(fileDescriptor, iov, iovcnt, offset);
+    }
+    return notSupported(fileDescriptor, iov, iovcnt, offset);
+  }};
   auto [notServed, buffers] =
       notServedAndBuffers(reader, fd, {{0, 4}, {8, 4}, {4, 4}});
   EXPECT_THAT(notServed, remainingPositions({1, 2}));
@@ -270,12 +271,14 @@ TEST(ReadPageCacheHits, aShortChunkDoesNotStopTheNextChunk) {
   size_t numberOfReads = 0;
   // The first chunk only gets 1 byte (its first read), the second one is
   // served completely.
-  PageCacheReader reader{
-      [&numberOfReads](int fd, const ::iovec* iov, int iovcnt, int64_t offset) {
-        const int64_t numBytesRead = fullyCached(fd, iov, iovcnt, offset);
-        return numberOfReads++ == 0 ? std::min<int64_t>(numBytesRead, 1)
-                                    : numBytesRead;
-      }};
+  PageCacheReader reader{[&numberOfReads](int fileDescriptor,
+                                          const ::iovec* iov, int iovcnt,
+                                          int64_t offset) {
+    const int64_t numBytesRead =
+        fullyCached(fileDescriptor, iov, iovcnt, offset);
+    return numberOfReads++ == 0 ? std::min<int64_t>(numBytesRead, 1)
+                                : numBytesRead;
+  }};
   auto [notServed, buffers] = notServedAndBuffers(reader, fd, reads);
   EXPECT_THAT(notServed, remainingPositions(::ranges::to<std::vector<size_t>>(
                              ::ranges::views::iota(size_t{1}, iovMax))));
