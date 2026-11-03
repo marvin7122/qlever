@@ -5,9 +5,11 @@
 //          Hannah Bast <bast@cs.uni-freiburg.de>
 
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_split.h>
 #include <gmock/gmock.h>
 
 #include "./WordsAndDocsFileLineCreator.h"
+#include "engine/ConstructTripleGenerator.h"
 #include "engine/ExportQueryExecutionTrees.h"
 #include "engine/MaterializedViews.h"
 #include "engine/NamedResultCache.h"
@@ -19,6 +21,7 @@
 #include "util/ConcurrencyLimitedExecutor.h"
 #include "util/Forward.h"
 #include "util/GTestHelpers.h"
+#include "util/HashSet.h"
 #include "util/IdTableHelpers.h"
 #include "util/IdTestHelpers.h"
 #include "util/IndexTestHelpers.h"
@@ -771,6 +774,259 @@ TEST(ExportQueryExecutionTrees, ParallelTsvExportOfTextRecords) {
   EXPECT_EQ(ql::ranges::count(sequential, '\n'), numberOfTextRecords + 1);
   EXPECT_EQ(exportQuery(parallel.qec_, query, ad_utility::MediaType::tsv, true),
             sequential);
+}
+
+namespace {
+// Export the result of the CONSTRUCT `query` on `qec` as the `mediaType`, with
+// or without `parallel-construct-export`.
+std::string exportConstructQuery(
+    QueryExecutionContext& qec, const std::string& query,
+    ad_utility::MediaType mediaType, bool inParallel,
+    std::optional<size_t> exportLimit = std::nullopt) {
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::parallelConstructExport_>(
+          inParallel);
+  return runQueryStreamableResult(&qec, query, mediaType, exportLimit);
+}
+
+// The maximal number of rows of a chunk of the parallel CONSTRUCT export.
+constexpr size_t maxNumberOfRowsPerConstructChunk = qlever::constructExport::
+    ConstructTripleGenerator::MAX_NUMBER_OF_ROWS_PER_CHUNK;
+}  // namespace
+
+// _____________________________________________________________________________
+// The parallel CONSTRUCT export on four threads gives the same output as the
+// sequential export, for each format. The cases are: blank nodes and unbound
+// values (OPTIONAL) in a single block (`ORDER BY` forces an `OrderBy`), a lazy
+// scan of many small blocks (`rowsPerBlock = 2`), whose rows are copied into
+// chunks across the block boundaries, terms of the `LocalVocab` (BIND), blank
+// nodes after an OFFSET, exactly one chunk, one chunk plus one row, one row, no
+// row, and an export limit of one chunk plus 808 rows. With
+// `max-num-threads-per-query` = 1, only two chunks are in flight. The number of
+// tasks on the executor shows that every chunk is a task, also for a lazy
+// result, and that a `construct-deduplication` uses the sequential export.
+TEST(ExportQueryExecutionTrees, ParallelConstructExport) {
+  auto config = makeConfigWithManyRows(numberOfSubjectsForParallelExport);
+  QueryExecutionContext& sequentialQec = *ad_utility::testing::getQec(config);
+  MultiThreadQec parallel{config};
+  using enum ad_utility::MediaType;
+  const std::string orderedScan =
+      "CONSTRUCT { ?s <p> ?o } WHERE { ?s <p> ?o } ORDER BY DESC(?o)";
+  const std::string lazyScan = "CONSTRUCT { ?s <p> ?o } WHERE { ?s <p> ?o }";
+  for (const std::string& query : {
+           "CONSTRUCT { ?s <p> ?o . _:x <q> ?b . ?s <r> _:x } WHERE { ?s <p> "
+           "?o OPTIONAL { ?s <q> ?b } } ORDER BY DESC(?s)"s,
+           lazyScan,
+           "CONSTRUCT { ?s <l> ?l } WHERE { ?s <p> ?o BIND(CONCAT(STR(?s), "
+           "\"-x\") AS ?l) }"s,
+           "CONSTRUCT { _:x <p> ?o } WHERE { ?s <p> ?o } OFFSET 7 LIMIT 9000"s,
+           absl::StrCat(orderedScan, " LIMIT ",
+                        maxNumberOfRowsPerConstructChunk),
+           absl::StrCat(orderedScan, " LIMIT ",
+                        maxNumberOfRowsPerConstructChunk + 1),
+           absl::StrCat(orderedScan, " LIMIT 1"),
+           absl::StrCat(orderedScan, " LIMIT 0"),
+           "CONSTRUCT { ?s <p> ?o } WHERE { ?s <p> <nonexistent> }"s,
+       }) {
+    for (auto mediaType : {turtle, ntriples, csv, tsv}) {
+      auto trace = generateLocationTrace(AD_CURRENT_SOURCE_LOC(), query);
+      auto sequential =
+          exportConstructQuery(sequentialQec, query, mediaType, false);
+      EXPECT_EQ(exportConstructQuery(parallel.qec_, query, mediaType, true),
+                sequential);
+      const size_t exportLimit = maxNumberOfRowsPerConstructChunk + 808;
+      EXPECT_EQ(exportConstructQuery(parallel.qec_, query, mediaType, true,
+                                     exportLimit),
+                exportConstructQuery(sequentialQec, query, mediaType, false,
+                                     exportLimit));
+      auto oneThread = setRuntimeParameterForTest<
+          &RuntimeParameters::maxNumThreadsPerQuery_>(1);
+      EXPECT_EQ(exportConstructQuery(parallel.qec_, query, mediaType, true),
+                sequential);
+    }
+  }
+  // The number of tasks that an export adds to those of the operations.
+  auto numberOfExportTasks = [&parallel](const std::string& query) {
+    auto numberOfTasks = [&parallel, &query](bool inParallel) {
+      size_t before = *parallel.numberOfTasks_;
+      exportConstructQuery(parallel.qec_, query, turtle, inParallel);
+      return *parallel.numberOfTasks_ - before;
+    };
+    size_t sequential = numberOfTasks(false);
+    return numberOfTasks(true) - sequential;
+  };
+  // The 20,000 rows are two full chunks and a partial one.
+  static_assert(numberOfSubjectsForParallelExport >
+                    2 * maxNumberOfRowsPerConstructChunk &&
+                numberOfSubjectsForParallelExport <
+                    3 * maxNumberOfRowsPerConstructChunk);
+  EXPECT_EQ(numberOfExportTasks(orderedScan), 3);
+  EXPECT_EQ(numberOfExportTasks(lazyScan), 3);
+  EXPECT_EQ(numberOfExportTasks(absl::StrCat(orderedScan, " LIMIT ",
+                                             maxNumberOfRowsPerConstructChunk)),
+            1);
+  EXPECT_EQ(numberOfExportTasks(absl::StrCat(
+                orderedScan, " LIMIT ", maxNumberOfRowsPerConstructChunk + 1)),
+            2);
+  EXPECT_EQ(numberOfExportTasks(absl::StrCat(orderedScan, " LIMIT 0")), 0);
+  {
+    auto deduplication =
+        setRuntimeParameterForTest<&RuntimeParameters::constructDeduplication_>(
+            ad_utility::DeduplicationMode::full());
+    EXPECT_EQ(numberOfExportTasks(lazyScan), 0);
+  }
+
+  // One line per subject.
+  EXPECT_EQ(
+      ql::ranges::count(
+          exportConstructQuery(parallel.qec_, lazyScan, ntriples, true), '\n'),
+      numberOfSubjectsForParallelExport);
+}
+
+// _____________________________________________________________________________
+// A lazy result with blocks of 9000, 20000, 3 and 17000 rows, each with a
+// `LocalVocab` of its own: the chunks consist of rows of several blocks, which
+// are copied together with their `LocalVocab`, and OFFSET and LIMIT cut across
+// block boundaries. The blank nodes depend on the position of the row in the
+// whole result.
+TEST(ExportQueryExecutionTrees, ParallelConstructExportOfSeveralBlocks) {
+  using ad_utility::testing::IntId;
+  MultiThreadQec parallel{ad_utility::testing::TestIndexConfig{}};
+  // The first column has the row number, the second one a `LocalVocab` literal
+  // of the block, except in every seventh row, where it is unbound.
+  auto makeBlocks = [&parallel]() {
+    std::vector<Result::IdTableVocabPair> blocks;
+    int64_t rowNumber = 0;
+    for (size_t numberOfRows : {9000, 20000, 3, 17000}) {
+      LocalVocab localVocab;
+      IdTable block{2, ad_utility::testing::makeAllocator()};
+      for (size_t i = 0; i < numberOfRows; ++i, ++rowNumber) {
+        Id literal =
+            Id::makeFromLocalVocabIndex(localVocab.getIndexAndAddIfNotContained(
+                LocalVocabEntry::literalWithoutQuotes(
+                    absl::StrCat("literal \"", rowNumber, "\""),
+                    parallel.qec_.getLocalVocabContext())));
+        block.push_back({IntId(rowNumber),
+                         rowNumber % 7 == 0 ? Id::makeUndefined() : literal});
+      }
+      blocks.emplace_back(std::move(block), std::move(localVocab));
+    }
+    return blocks;
+  };
+  auto exportBlocks = [&](std::string query, ad_utility::MediaType mediaType,
+                          bool inParallel) {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::parallelConstructExport_>(inParallel);
+    auto qet = ad_utility::makeExecutionTree<ValuesForTesting>(
+        &parallel.qec_, makeBlocks(),
+        std::vector<std::optional<Variable>>{Variable{"?a"}, Variable{"?b"}},
+        true);
+    parallel.qec_.clearCacheUnpinnedOnly();
+    auto pq = parseQuery(std::move(query));
+    ad_utility::Timer timer{ad_utility::Timer::Started};
+    std::string result;
+    for (const auto& batch : ExportQueryExecutionTrees::computeResult(
+             pq, *qet, mediaType, timer,
+             std::make_shared<ad_utility::CancellationHandle<>>())) {
+      result += batch;
+    }
+    return result;
+  };
+  using enum ad_utility::MediaType;
+  for (std::string query : {
+           "CONSTRUCT { <s> <p> ?b . _:n <q> ?a } WHERE { ?a ?b ?c }",
+           "CONSTRUCT { _:n <p> ?b } WHERE { ?a ?b ?c } OFFSET 8000 LIMIT "
+           "25000",
+       }) {
+    for (auto mediaType : {turtle, ntriples, csv, tsv}) {
+      auto trace = generateLocationTrace(AD_CURRENT_SOURCE_LOC(), query);
+      auto sequential = exportBlocks(query, mediaType, false);
+      EXPECT_EQ(exportBlocks(query, mediaType, true), sequential);
+    }
+  }
+  // One triple per row with a bound `?b`, and one per row.
+  const size_t numberOfRows = 9000 + 20000 + 3 + 17000;
+  EXPECT_EQ(ql::ranges::count(
+                exportBlocks(
+                    "CONSTRUCT { <s> <p> ?b . _:n <q> ?a } WHERE { ?a ?b ?c }",
+                    ntriples, true),
+                '\n'),
+            numberOfRows + (numberOfRows - (numberOfRows + 6) / 7));
+
+  // The OFFSET ends inside the first block, and still every row gets a blank
+  // node of its own, numbered from the OFFSET (see #367).
+  auto withOffset = exportBlocks(
+      "CONSTRUCT { _:n <q> ?a } WHERE { ?a ?b ?c } OFFSET 8000 LIMIT 25000",
+      ntriples, true);
+  EXPECT_THAT(withOffset, ::testing::StartsWith("_:u8000_n "));
+  ad_utility::HashSet<std::string> blankNodes;
+  for (auto line : absl::StrSplit(withOffset, '\n', absl::SkipEmpty())) {
+    blankNodes.emplace(line.substr(0, line.find(' ')));
+  }
+  EXPECT_EQ(blankNodes.size(), 25000);
+}
+
+// _____________________________________________________________________________
+// A cancellation while the chunks of a parallel CONSTRUCT export are formatted
+// is thrown by the consumer or a worker, and the consumer of `computeResult`
+// receives the output so far, followed by an error message (see
+// `convertStreamGeneratorForChunkedTransfer`). A consumer that stops early (as
+// on a client disconnect) can destroy the export while chunks are in flight.
+TEST(ExportQueryExecutionTrees,
+     ParallelConstructExportCancellationAndEarlyStop) {
+  auto config = makeConfigWithManyRows(numberOfSubjectsForParallelExport);
+  MultiThreadQec parallel{config};
+  auto inParallel =
+      setRuntimeParameterForTest<&RuntimeParameters::parallelConstructExport_>(
+          true);
+  // Two chunks in flight, so the third chunk (and with it the end of the
+  // export) is only formatted after the first one has been consumed.
+  auto oneThread =
+      setRuntimeParameterForTest<&RuntimeParameters::maxNumThreadsPerQuery_>(1);
+  std::string query =
+      "CONSTRUCT { ?s <p> ?o } WHERE { ?s <p> ?o } ORDER BY DESC(?s)";
+  const std::string completeExport = runQueryStreamableResult(
+      &parallel.qec_, query, ad_utility::MediaType::turtle);
+  auto pq = parseQuery(query);
+  ad_utility::Timer timer{ad_utility::Timer::Started};
+  auto startExport = [&parallel, &pq,
+                      &timer](ad_utility::SharedCancellationHandle handle) {
+    QueryPlanner qp{&parallel.qec_, handle};
+    auto qet = qp.createExecutionTree(pq);
+    return std::pair{qet, ExportQueryExecutionTrees::computeResult(
+                              pq, *qet, ad_utility::MediaType::turtle, timer,
+                              std::move(handle))};
+  };
+
+  // Each chunk has more than 3 MB (8192 triples of more than 400 bytes), so
+  // the first batch of 1 MB of the export ends inside the first chunk, while
+  // the second chunk is in flight. After the cancellation, either the consumer
+  // (before it yields the second chunk) or the task of the third chunk (which
+  // is submitted only then) throws.
+  {
+    auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
+    auto [qet, generator] = startExport(handle);
+    auto it = generator.begin();
+    ASSERT_TRUE(it != generator.end());
+    std::string output = *it;
+    handle->cancel(ad_utility::CancellationState::MANUAL);
+    for (++it; it != generator.end(); ++it) {
+      output += *it;
+    }
+    EXPECT_THAT(output, ::testing::HasSubstr("!!!!>># An error has occurred"));
+    EXPECT_THAT(output, ::testing::HasSubstr("cancelled"));
+    EXPECT_LT(output.size(), completeExport.size());
+  }
+
+  // Stop after the first batch; destroying the generator stops the chunks in
+  // flight and waits for them.
+  {
+    auto [qet, generator] =
+        startExport(std::make_shared<ad_utility::CancellationHandle<>>());
+    auto it = generator.begin();
+    ASSERT_TRUE(it != generator.end());
+    EXPECT_THAT(*it, ::testing::StartsWith("<s"));
+  }
 }
 
 TEST(ExportQueryExecutionTrees, Integers) {
