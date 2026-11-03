@@ -186,9 +186,9 @@ class IoUringPolicy {
   // (CQE). `addBatch` keeps it at most `ringSize_`, so that a free SQE is
   // always available and the completion queue (twice as large as the
   // submission queue) cannot overflow. Invariant outside of `addBatch`: it
-  // equals the sum of the counts in `numOutstandingReadRequestsPerBatch_` and
-  // the size of `outstandingReadsByRequestId_`. (`addBatch` records the count
-  // of a batch up front and increments this total per prepared read.)
+  // equals both the sum of the counts in `numOutstandingReadRequestsPerBatch_`
+  // and the size of `outstandingReadsByRequestId_`. (`addBatch` records the
+  // count of a batch up front and increments this total per prepared read.)
   size_t numOutstandingReadRequests_ = 0;
 
   // The same outstanding reads as `numOutstandingReadRequests_`, but broken
@@ -280,7 +280,8 @@ class IoUringPolicy {
   // `wait()` for the same handle returns normally. Also throws, possibly
   // before all reads of the batch are reaped, if waiting for completions fails
   // (see `reapWave`). A `wait()` for a handle without outstanding reads (a
-  // batch that is already reaped, was empty, or is unknown) returns at once.
+  // batch that is already reaped, was empty, or is unknown) returns at once,
+  // unless the batch has a failure that was not yet thrown.
   void wait(BatchHandle handle);
 };
 
