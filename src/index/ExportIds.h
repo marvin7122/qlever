@@ -296,12 +296,12 @@ class IdToStringAndTypeCache {
   // Log the statistics of an export that used the cache.
   ~IdToStringAndTypeCache() {
     if (stats().totalLookups() + bypassed_ > 0) {
-      AD_LOG_INFO << "SELECT export term cache: capacity "
-                  << (cache_.has_value() ? cache_->capacity() : 0) << ", "
-                  << stats().hits_ << " hits, " << stats().misses_
-                  << " misses, " << bypassed_ << " bypassed, "
-                  << (enabled_ ? "enabled" : "disabled") << " at the end"
-                  << std::endl;
+      AD_LOG_DEBUG << "SELECT export term cache: capacity "
+                   << (cache_.has_value() ? cache_->capacity() : 0) << ", "
+                   << stats().hits_ << " hits, " << stats().misses_
+                   << " misses, " << bypassed_ << " bypassed, "
+                   << (enabled_ ? "enabled" : "disabled") << " at the end"
+                   << std::endl;
     }
   }
 
