@@ -16,6 +16,7 @@
 #include <string_view>
 #include <vector>
 
+#include "index/vocabulary/OffsetRuns.h"
 #include "index/vocabulary/VocabularyBinarySearchMixin.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Algorithm.h"
@@ -229,18 +230,11 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // deduced, so this function can only be used within `VocabularyOnDisk.cpp`.
   auto chunkToWords(ql::span<const uint64_t> offsets) const;
 
-  // A word's start offset and the start offset of the following word (which
-  // marks the end of the word), stored contiguously in the `.offsets` file.
-  struct OffsetPair {
-    uint64_t offset_;
-    uint64_t nextOffset_;
-  };
+  using OffsetPair = ad_utility::vocabulary::OffsetPair;
 
-  // Phase 1 of `lookupBatch`: for each requested index, return its `OffsetPair`
-  // from the `.offsets` file, read in a single batch via `manager`. The file
-  // stores `size() + 1` `uint64_t` entries (the start of each word and the end
-  // of the last one), and the pair of index `i` is entries `i` and `i + 1`, so
-  // a run of `k` consecutive indices is read as one range of `k + 1` entries.
+  // Phase 1 of `lookupBatch`: return the `OffsetPair` of each of the `indices`
+  // (in the order of `indices`), read from the `.offsets` file in a single
+  // batch via `manager` (see `ad_utility::vocabulary::readOffsetPairs`).
   std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
                                           ql::span<const size_t> indices) const;
 
