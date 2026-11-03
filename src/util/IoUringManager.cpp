@@ -241,12 +241,12 @@ void IoUringPolicy::addBatch(int fd,
                              ql::span<const uint64_t> fileOffsetPerRequest,
                              ql::span<char*> targetBufferPerRequest,
                              BatchHandle handle) {
-  if (numBytesToReadPerRequest.empty()) {
-    return;
-  }
   AD_CONTRACT_CHECK(!batches_.contains(handle),
                     "A batch handle must not be reused while its batch has "
                     "outstanding reads or a failure that was not yet thrown.");
+  if (numBytesToReadPerRequest.empty()) {
+    return;
+  }
 
   try {
     for (const auto& [numBytesToRead, fileOffset, targetBuf] :
