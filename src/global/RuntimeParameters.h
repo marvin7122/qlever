@@ -284,6 +284,12 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // If set to false, a CONSTRUCT query does not use its LRU cache of the
+  // evaluated `Id`s (see `ConstructTripleGenerator::makeIdCache`). The cache
+  // only pays off when `Id`s repeat across batches; equal `Id`s within a batch
+  // are resolved once either way.
+  Bool constructIdCache_{true, "construct-id-cache"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.

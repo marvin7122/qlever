@@ -8,6 +8,7 @@
 
 #include "engine/ConstructBatchEvaluator.h"
 
+#include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
 
 namespace qlever::constructExport {
@@ -66,8 +67,13 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
   std::vector<Id> missIds;
   // For each entry in `missIds`, the batch row indices that hold that `Id`.
   std::vector<absl::InlinedVector<size_t, 3>> missRows;
+  // With `construct-id-cache` set to false, `idCache` is neither read nor
+  // filled, so every `Id` is a miss.
+  const bool useIdCache =
+      getRuntimeParameter<&RuntimeParameters::constructIdCache_>();
   for (const auto& [rowInBatch, id] : sortedIndices) {
-    auto cached = idCache.tryGet(id);
+    auto cached =
+        useIdCache ? idCache.tryGet(id) : decltype(idCache.tryGet(id)){};
     if (cached) {
       // Note that a `LocalVocabIndex` Id may well produce a hit here, even
       // though such Ids are never inserted into `idCache` (see the comment in
@@ -106,7 +112,7 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
           std::move(resolved));
     };
     const std::optional<EvaluatedTerm> evaluated =
-        id.getDatatype() == Datatype::LocalVocabIndex
+        !useIdCache || id.getDatatype() == Datatype::LocalVocabIndex
             ? evaluate(id)
             : idCache.getOrCompute(id, evaluate);
     for (const size_t row : rows) {
