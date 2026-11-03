@@ -21,7 +21,7 @@
 #include <vector>
 
 #include "util/Exception.h"
-#include "util/IoUringManager.h"
+#include "util/IoUringPolicy.h"
 
 #ifdef QLEVER_HAS_IO_URING
 

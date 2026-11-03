@@ -15,20 +15,21 @@
 #include <memory>
 
 #include "backports/span.h"
-#include "util/Algorithm.h"
 #include "util/BatchHandle.h"
-#include "util/IoUringManagerConcepts.h"
-#include "util/IoUringPolicy.h"
-#include "util/MonotonicCounter.h"
-#include "util/NoCopyNoMove.h"
-#include "util/PageCacheFirstPolicy.h"
 #include "util/RingSize.h"
-#include "util/SyncIoPolicy.h"
+
+// The interface of the batched reads of `VocabularyOnDisk::lookupBatch`: a
+// `BatchManagerBase`, built by `makeBatchManager`. The implementation is in
+// `BatchManager.h` (the manager) and in `IoUringPolicy.h`, `SyncIoPolicy.h`
+// and `PageCacheFirstPolicy.h` (the backends); only `IoUringManager.cpp` and
+// the tests include those, so that the includers of this header do not see
+// liburing.
 
 namespace ad_utility {
 
-// Abstract base of `BatchManager` so a pool can hold managers of different
-// `ReadPolicy`s behind a unified interface and pick the backend at runtime.
+// Abstract base of `BatchManager` (see `BatchManager.h`) so a pool can hold
+// managers of different `ReadPolicy`s behind a unified interface and pick the
+// backend at runtime.
 class BatchManagerBase {
  public:
   using BatchHandle = ::ad_utility::BatchHandle;
@@ -48,57 +49,6 @@ class BatchManagerBase {
   // `PageCacheFirstPolicy`). Takes effect for the batches added afterwards.
   // Managers without a page-cache fast path ignore it.
   virtual void setPageCacheFastPath([[maybe_unused]] bool enabled) noexcept {}
-};
-
-// `BatchManager` owns the batch bookkeeping (minting a `BatchHandle` per batch,
-// validating the input spans) and delegates the reads from the underlying
-// Vocabulary to the `ReadPolicy`, which must satisfy
-// `detail::ReadPolicyConcept` from `IoUringManagerConcepts.h`. Neither copyable
-// nor movable: it owns its policy (for `IoUringPolicy` the io_uring ring), and
-// the pool holds managers by `std::unique_ptr`.
-template <typename ReadPolicy>
-class BatchManager final : public BatchManagerBase, NoCopyNoMove {
-  static_assert(
-      detail::ReadPolicyConcept<ReadPolicy>,
-      "BatchManager's ReadPolicy must satisfy the ReadPolicyConcept.");
-
- public:
-  using BatchHandle = ::ad_utility::BatchHandle;
-
-  // `explicit`, so that a bare ring size cannot silently convert to a
-  // manager where a `BatchManager` is expected.
-  explicit BatchManager(RingSize ringSize = RingSize{}) : policy_(ringSize) {}
-
-  [[nodiscard]] BatchHandle addBatch(int fd, ql::span<const size_t> numBytes,
-                                     ql::span<const uint64_t> offsets,
-                                     ql::span<char*> buffers) override {
-    validateSameLength(numBytes, offsets, buffers);
-
-    BatchHandle handle{nextBatchHandle_.mintNext()};
-
-    // Delegate the I/O work to the policy.
-    policy_.addBatch(fd, numBytes, offsets, buffers, handle);
-
-    return handle;
-  }
-
-  // Block until every read in `handle` has completed.
-  void wait(BatchHandle handle) override { policy_.wait(handle); }
-
-  // Forward the switch to the policy if it has one.
-  void setPageCacheFastPath([[maybe_unused]] bool enabled) noexcept override {
-    if constexpr (CPP_requires_ref(detail::HasPageCacheFastPathSwitch,
-                                   ReadPolicy)) {
-      policy_.setPageCacheFastPath(enabled);
-    }
-  }
-
- private:
-  [[no_unique_address]] ReadPolicy policy_;
-
-  // Mints the handles that `addBatch` returns. They only identify batches, so
-  // uniqueness, which `MonotonicCounter` guarantees, is all that is needed.
-  MonotonicCounter nextBatchHandle_;
 };
 
 // Build a batch manager. Which backend is used is a runtime decision:

@@ -32,14 +32,19 @@
 #include <vector>
 
 #include "index/vocabulary/VocabularyTypes.h"
+#include "util/BatchManager.h"
 #include "util/Exception.h"
 #include "util/FakeIoUring.h"
 #include "util/File.h"
 #include "util/GTestHelpers.h"
 #include "util/IoUringManager.h"
 #include "util/IoUringManagerTestHelpers.h"
+#include "util/IoUringPolicy.h"
 #include "util/Log.h"
+#include "util/MonotonicCounter.h"
+#include "util/PageCacheFirstPolicy.h"
 #include "util/PageCacheReadTestHelpers.h"
+#include "util/SyncIoPolicy.h"
 #include "util/Views.h"
 
 namespace {

@@ -17,7 +17,7 @@
 #include <utility>
 
 #include "./PageCacheReadHook.h"
-#include "util/IoUringManager.h"
+#include "util/PageCacheFirstPolicy.h"
 
 namespace pageCacheReadTestHelpers {
 

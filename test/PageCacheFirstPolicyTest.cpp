@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include "util/BatchManager.h"
 #include "util/Exception.h"
 #include "util/GTestHelpers.h"
 #include "util/IoUringManager.h"
@@ -25,6 +26,7 @@
 #include "util/PageCacheFirstPolicy.h"
 #include "util/PageCacheReadHook.h"
 #include "util/PageCacheReadTestHelpers.h"
+#include "util/SyncIoPolicy.h"
 #include "util/Views.h"
 
 namespace {

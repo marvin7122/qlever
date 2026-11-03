@@ -23,6 +23,7 @@
 #include "GTestHelpers.h"
 #include "backports/algorithm.h"
 #include "backports/span.h"
+#include "util/BatchHandle.h"
 #include "util/File.h"
 
 namespace ioUringManagerTestHelpers {

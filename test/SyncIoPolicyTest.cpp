@@ -14,8 +14,8 @@
 #include <vector>
 
 #include "util/GTestHelpers.h"
-#include "util/IoUringManager.h"
 #include "util/IoUringManagerTestHelpers.h"
+#include "util/SyncIoPolicy.h"
 
 namespace {
 
