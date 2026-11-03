@@ -63,9 +63,8 @@ PageCacheRead& pageCacheRead() noexcept {
 
 //______________________________________________________________________________
 std::atomic<bool>& pageCacheFastPathSupported() noexcept {
-  // A best-effort hint without associated data; the default sequential
-  // consistency (Sonar cpp:S8417) keeps the publication of the disabled state
-  // obvious.
+  // The flag guards no other data. It uses the default sequential consistency
+  // anyway, so that its publication needs no reasoning about memory orders.
   static std::atomic<bool> supported{true};
   return supported;
 }
@@ -81,7 +80,7 @@ bool pageCacheFastPathIsSupported() noexcept {
 }
 
 // The fast-path helpers below only exist where `preadv2(RWF_NOWAIT)` is
-// compiled in; without it, `readPageCacheHits` returns every position.
+// compiled in; without it, `readPageCacheHits` serves nothing.
 #ifdef QL_PAGE_CACHE_FAST_PATH
 namespace {
 // The elements of the range of reads in `readPageCacheHits`: the position of a

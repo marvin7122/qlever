@@ -49,7 +49,8 @@ struct IndexRun {
 // second index) are split into many runs of one index each. Up to some gap
 // size, it is probably cheaper to read them as one range and skip the entries
 // in between; that threshold has to be measured.
-std::vector<IndexRun> splitIntoRuns(ql::span<const size_t> indices);
+[[nodiscard]] std::vector<IndexRun> splitIntoRuns(
+    ql::span<const size_t> indices);
 
 // Read the `OffsetPair` of each of the `indices` from the `.offsets` file `fd`
 // of a vocabulary with `numWords` words, with one batch of `manager`, and
@@ -57,9 +58,9 @@ std::vector<IndexRun> splitIntoRuns(ql::span<const size_t> indices);
 // `numWords`. Reading each run of consecutive indices (see `splitIntoRuns`) as
 // one range is only an optimization: a run of `k` indices needs `k + 1`
 // entries instead of `2 * k`, in one read instead of `k`.
-std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
-                                        int fd, ql::span<const size_t> indices,
-                                        size_t numWords);
+[[nodiscard]] std::vector<OffsetPair> readOffsetPairs(
+    ad_utility::BatchManagerBase& manager, int fd,
+    ql::span<const size_t> indices, size_t numWords);
 
 }  // namespace ad_utility::vocabulary
 
