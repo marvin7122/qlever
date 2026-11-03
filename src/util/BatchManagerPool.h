@@ -1,9 +1,9 @@
-// Copyright 2026, The QLever Authors, in particular:
+// Copyright 2026 The QLever Authors, in particular:
 //
 // 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
-
+//
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
@@ -46,11 +46,11 @@ class BatchManagerPool : public NoCopyNoMove {
     Lease& operator=(Lease&&) = delete;
     ~Lease();
 
-    // `true` iff this lease holds a manager, which only a moved-from lease
-    // does not.
+    // Return `true` iff this lease holds a manager, which only a moved-from
+    // lease does not.
     bool isValid() const noexcept { return manager_ != nullptr; }
 
-    // Access the manager. The lease has to be valid, see `isValid`.
+    // Return the manager. The lease has to be valid, see `isValid`.
     BatchManagerBase& operator*() const {
       AD_CONTRACT_CHECK(isValid());
       return *manager_;
@@ -64,6 +64,8 @@ class BatchManagerPool : public NoCopyNoMove {
     friend class BatchManagerPool;
     Lease(BatchManagerPool* pool, std::unique_ptr<BatchManagerBase> manager);
 
+    // The pool that the manager goes back to, and the manager itself. Both
+    // are `nullptr` after a move.
     BatchManagerPool* pool_;
     std::unique_ptr<BatchManagerBase> manager_;
   };
@@ -75,13 +77,14 @@ class BatchManagerPool : public NoCopyNoMove {
   // and `usesIoUring()` is `false`.
   BatchManagerPool(size_t numManagers, bool preferIoUring);
 
-  // Borrow a manager. Wait while all managers are in use.
+  // Borrow a manager and return the lease that gives it back. Wait while all
+  // managers are in use.
   Lease acquire();
 
-  // The number of managers of the pool, idle or in use.
+  // Return the number of managers of the pool, idle or in use.
   size_t size() const { return numManagers_; }
 
-  // `true` iff all managers use io_uring.
+  // Return `true` iff all managers use io_uring.
   bool usesIoUring() const { return usesIoUring_; }
 
  private:
@@ -89,8 +92,12 @@ class BatchManagerPool : public NoCopyNoMove {
   // for all managers and this runs in the destructor of `Lease`.
   void release(std::unique_ptr<BatchManagerBase> manager) noexcept;
 
+  // The number of managers, and whether all of them use io_uring. Both are
+  // fixed in the constructor.
   size_t numManagers_;
   bool usesIoUring_ = false;
+  // The managers that are not on loan, guarded by `mutex_`. `release` notifies
+  // `managerReturned_` when it puts a manager back.
   std::mutex mutex_;
   std::condition_variable managerReturned_;
   std::vector<std::unique_ptr<BatchManagerBase>> idle_;
@@ -100,10 +107,11 @@ class BatchManagerPool : public NoCopyNoMove {
 // `VocabularyOnDisk::lookupBatch`). It is created on the first call of
 // `globalBatchManagerPool()`, with the configuration that was set by
 // `trySetGlobalBatchManagerPoolConfig` before, or by default with one manager
-// per hardware thread and io_uring preferred. The server sets one manager per
-// query thread and creates the pool at startup, so the rings exist and the
-// io_uring probe has run before the first query. Other programs (the index
-// builder, tests) get the default pool on their first batched read.
+// per hardware thread and io_uring preferred. The constructor of `Qlever`
+// creates the pool (see `setUpGlobalBatchManagerPool`), with one manager per
+// query thread in the server, so the rings exist and the io_uring probe has
+// run before the first query. Programs without an engine (the index builder,
+// tests) get the default pool on their first batched read.
 //
 // NOTE: Like `globalExecutor` (see the TODO in `util/GlobalExecutor.h`), this
 // is a mutable process-wide singleton whose configuration can only be set

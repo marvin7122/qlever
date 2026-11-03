@@ -424,8 +424,8 @@ int main(int argc, char** argv) {
                             ad_utility::ResourceMonitor::Mode::Append,
                             std::chrono::seconds{resourceUsageIntervalS});
     }
-    // One batch I/O manager per query thread (but at least one, the pool must
-    // not be empty), see `EngineConfig`.
+    // One batch I/O manager per query thread, see `EngineConfig`. The option
+    // accepts `-j 0`, but the pool needs at least one manager.
     config.numBatchIoManagers_ =
         std::max<size_t>(1, static_cast<size_t>(numSimultaneousQueries));
     auto metricsReader = ad_utility::metrics::initialize(metricsEnabled);
