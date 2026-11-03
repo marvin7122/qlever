@@ -51,6 +51,7 @@ using ThreeSplitVocabulary =
 namespace {
 using namespace splitVocabTestHelpers;
 using namespace ad_utility;
+using ::testing::ElementsAre;
 
 // The position of the lowest marker bit for a vocabulary with two and with
 // three underlying vocabularies (one and two marker bits). The marker takes the
@@ -70,6 +71,24 @@ auto getFileCleanup(VocabularyType type, const std::string& filename) {
 // Same as above, for a `TwoSplitVocabulary`, which most of the tests below use.
 auto getFileCleanup(const std::string& filename) {
   return vocabulary_test::makeVocabFileCleanup<TwoSplitVocabulary>(filename);
+}
+
+// The words of `vocab.lookupBatch(indices)`, as owning strings.
+template <typename Vocab>
+std::vector<std::string> lookupBatchAsVector(const Vocab& vocab,
+                                             std::vector<size_t> indices) {
+  auto result = vocab.lookupBatch(indices);
+  return {result->begin(), result->end()};
+}
+
+// Expect that `vocab.lookupBatch(indices)` yields the same words as the
+// per-word path (`sequentialLookupBatch`, one `operator[]` per index).
+template <typename Vocab>
+void expectLookupBatchMatchesPerWordPath(const Vocab& vocab,
+                                         std::vector<size_t> indices) {
+  auto perWord = ad_utility::vocabulary::sequentialLookupBatch(vocab, indices);
+  EXPECT_THAT(lookupBatchAsVector(vocab, indices),
+              ::testing::ElementsAreArray(perWord->begin(), perWord->end()));
 }
 
 // _____________________________________________________________________________
@@ -561,6 +580,18 @@ TEST(SplitVocabulary, geoCellGridIndicesThroughSplitVocabulary) {
   EXPECT_ANY_THROW(vocab[SGV::addMarker(
       grid.indexFromCellAndPosition(grid.sentinelCell(), 0), 1)]);
 
+  // The same for a batch lookup with mixed markers.
+  const uint64_t idx3 = SGV::addMarker(grid.indexFromCellAndPosition(3, 0), 1);
+  const uint64_t idx12 =
+      SGV::addMarker(grid.indexFromCellAndPosition(12, 1), 1);
+  EXPECT_THAT(lookupBatchAsVector(vocab, {idx12, 0, idx3, 0}),
+              ElementsAre(wkt12, iri, wkt3, iri));
+  EXPECT_THAT(lookupBatchAsVector(vocab, {idx3, idx12}),
+              ElementsAre(wkt3, wkt12));
+  EXPECT_ANY_THROW(vocab.lookupBatch(std::vector<size_t>{
+      0, SGV::addMarker(grid.indexFromCellAndPosition(grid.sentinelCell(), 0),
+                        1)}));
+
   // Exact lookup returns the index and its successor as bounds.
   auto [lo3, hi3] = vocab.getPositionOfWord(wkt3, comparator);
   EXPECT_EQ(lo3, SGV::addMarker(grid.indexFromCellAndPosition(3, 0), 1));
@@ -572,6 +603,109 @@ TEST(SplitVocabulary, geoCellGridIndicesThroughSplitVocabulary) {
   auto [loM, hiM] = vocab.getPositionOfWord(wktMissing, comparator);
   EXPECT_EQ(loM, hiM);
   EXPECT_GT(loM, SGV::addMarker(grid.indexFromCellAndPosition(12, 1), 1));
+}
+
+// _____________________________________________________________________________
+TEST(SplitVocabulary, lookupBatchMatchesPerWordPath) {
+  TwoSplitVocabulary sv;
+  const std::string filename = gtestCurrentTestName();
+  auto cleanup = getFileCleanup(filename);
+  {
+    auto ww = sv.makeDiskWriterPtr(filename);
+    (*ww)("\"\"", false);
+    (*ww)("\"abc\"", false);
+    (*ww)("\"axyz\"", false);
+    (*ww)("\"xyz\"", false);
+    ww->readableName() = "test";
+    ww->finish();
+  }
+  sv.readFromFile(filename);
+  const size_t a0 = TwoSplitVocabulary::addMarker(0, 1);
+  const size_t a1 = TwoSplitVocabulary::addMarker(1, 1);
+
+  // Mixed markers, in any order and with duplicates.
+  expectLookupBatchMatchesPerWordPath(sv, {a1, 0, a0, 1, a1, 0});
+  expectLookupBatchMatchesPerWordPath(sv, {0, a0});
+  // A single marker (also not marker 0) and a single index.
+  expectLookupBatchMatchesPerWordPath(sv, {1, 0, 1});
+  expectLookupBatchMatchesPerWordPath(sv, {a1, a0});
+  expectLookupBatchMatchesPerWordPath(sv, {a1});
+
+  // The result of a batch with mixed markers keeps the results of the
+  // underlying vocabularies alive.
+  auto result = sv.lookupBatch(std::vector<size_t>{a1, 1, a0});
+  sv.close();
+  EXPECT_THAT(*result, ElementsAre("\"axyz\"", "\"xyz\"", "\"abc\""));
+
+  // Invalid input is rejected, as by `operator[]`.
+  sv.readFromFile(filename);
+  EXPECT_ANY_THROW(sv.lookupBatch(ql::span<const size_t>{}));
+  EXPECT_ANY_THROW(sv.lookupBatch(std::vector<size_t>{0, 2}));
+  EXPECT_ANY_THROW(
+      sv.lookupBatch(std::vector<size_t>{TwoSplitVocabulary::addMarker(2, 1)}));
+}
+
+// _____________________________________________________________________________
+TEST(SplitVocabulary, lookupBatchWithThreeVocabs) {
+  ThreeSplitVocabulary sv;
+  const std::string filename = gtestCurrentTestName();
+  auto cleanup =
+      vocabulary_test::makeVocabFileCleanup<ThreeSplitVocabulary>(filename);
+  {
+    auto ww = sv.makeDiskWriterPtr(filename);
+    (*ww)("\"a\"", false);
+    (*ww)("\"b\"^^<blabliblu>", false);
+    (*ww)("\"c\"^^<http://example.com>", false);
+    (*ww)("\"d\"^^<http://example.com>", false);
+    (*ww)("<e>", false);
+    ww->readableName() = "test";
+    ww->finish();
+  }
+  sv.readFromFile(filename);
+  // The words with the suffix `<http://example.com>` have the marker 1, the
+  // one with the suffix `<blabliblu>` has the marker 2.
+  const size_t example0 = ThreeSplitVocabulary::addMarker(0, 1);
+  const size_t example1 = ThreeSplitVocabulary::addMarker(1, 1);
+  const size_t blabliblu0 = ThreeSplitVocabulary::addMarker(0, 2);
+
+  expectLookupBatchMatchesPerWordPath(
+      sv, {blabliblu0, example1, 1, 0, example0, blabliblu0});
+  // Two of the three markers.
+  expectLookupBatchMatchesPerWordPath(sv, {example1, blabliblu0, example0});
+  EXPECT_THAT(
+      lookupBatchAsVector(sv, {blabliblu0, example1, 1}),
+      ElementsAre("\"b\"^^<blabliblu>", "\"d\"^^<http://example.com>", "<e>"));
+  // The marker 3 is not used (there are only three vocabularies).
+  EXPECT_ANY_THROW(sv.lookupBatch(std::vector<size_t>{
+      0, uint64_t{3} << ThreeSplitVocabulary::markerShift}));
+}
+
+// The geo split vocabulary of an index (on disk, compressed), through
+// `Vocabulary::lookupBatch`.
+TEST(SplitVocabulary, lookupBatchOfGeoSplitVocabulary) {
+  HashSet<std::string> s{
+      "a",
+      "ab",
+      "ba",
+      "car",
+      "\"POLYGON((1 2, 3 "
+      "4))\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>",
+      "\"LINESTRING(1 2, 3 "
+      "4)\"^^<http://www.opengis.net/ont/geosparql#wktLiteral>"};
+  RdfsVocabulary v;
+  v.resetToType(geoSplitVocabType);
+  const std::string filename = gtestCurrentTestName();
+  auto cleanup = getFileCleanup(geoSplitVocabType, filename);
+  v.createFromSet(s, filename);
+
+  const size_t geo0 = size_t{1} << markerShiftTwo;
+  const size_t geo1 = geo0 | 1;
+  const std::vector<size_t> indices{geo1, 3, 0, geo0, 2, geo1, 1};
+  auto result = v.lookupBatch(indices);
+  ASSERT_EQ(result->size(), indices.size());
+  for (const auto& [word, index] : ::ranges::views::zip(*result, indices)) {
+    EXPECT_EQ(word, v[VocabIndex::make(index)]);
+  }
 }
 
 }  // namespace
