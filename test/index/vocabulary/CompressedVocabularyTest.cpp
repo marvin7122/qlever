@@ -152,6 +152,12 @@ TYPED_TEST(CompressedVocabularyF, AccessOperator) {
 // of the indices, for a batch that spans several decoder blocks (the block
 // size of the fixture is 4), for a reordered batch with duplicates, and for a
 // single index, and that it rejects the empty batch.
+// Only the FSST wrappers decompress a batch with reused buffers (see
+// `CompressedVocabulary::decompressBatchIntoArena`).
+static_assert(::detail::DecompressesWithScratch<FsstCompressionWrapper>);
+static_assert(::detail::DecompressesWithScratch<FsstSquaredCompressionWrapper>);
+static_assert(!::detail::DecompressesWithScratch<PrefixCompressionWrapper>);
+
 TYPED_TEST(CompressedVocabularyF, LookupBatch) {
   // Many more words than the block size of the fixture (4), so that the full
   // batch spans many decoder blocks. The first word is empty.
