@@ -703,6 +703,87 @@ class JsonAnswerTest(unittest.TestCase):
                 os.environ["OCR_APPLY_LLM_URL"] = saved_url
 
 
+class AlreadyAppliedTest(unittest.TestCase):
+    """r4444039306 on #323 (run 41525959244): the finding's change was already
+    on the branch (a suggestion-button commit), the edit was a no-op, and
+    `git commit` failed with an empty stderr."""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir)
+        shutil.copy(os.path.join(REPO_ROOT, ".clang-format"), self.dir)
+        os.makedirs(os.path.join(self.dir, "src"))
+        self.content = "int f(int x) {\n  validateSameLength(x);\n  return x;\n}\n"
+        with open(os.path.join(self.dir, "src", "a.cpp"), "w") as f:
+            f.write(self.content)
+        for args in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"],
+                     ["add", "-A"], ["commit", "-q", "-m", "base"]):
+            a.git(self.dir, *args)
+        self.run_ = a.Run.__new__(a.Run)
+        self.run_.repo, self.run_.number, self.run_.repo_dir, self.run_.results = "o/r", 1, self.dir, []
+        self.run_.applied, self.run_.proposals = [], []
+        self.run_.kinds, self.run_.statements, self.run_.spend = a.load_kinds(), {}, a.Spend(1.0)
+        self.task = a.Task(thread(rule="PP10", path="src/a.cpp", line=2), a.Action.IMPLEMENT,
+                           a.Signal(a.Action.IMPLEMENT, "", "👍", "t"), "PP10")
+        self.saved_format = os.environ.get("CLANG_FORMAT")
+        os.environ["CLANG_FORMAT"] = "clang-format"
+
+    def tearDown(self):
+        if self.saved_format is None:
+            os.environ.pop("CLANG_FORMAT", None)
+        else:
+            os.environ["CLANG_FORMAT"] = self.saved_format
+
+    def head(self):
+        return a.git(self.dir, "rev-parse", "HEAD")
+
+    def test_no_op_edit(self):
+        before = self.head()
+        with self.assertRaises(a.AlreadyApplied):
+            self.run_.commit_change(self.task, self.content, self.content, "m")
+        self.assertEqual(self.head(), before, "no commit")
+
+    def test_change_that_formatting_undoes(self):
+        before = self.head()
+        with self.assertRaises(a.AlreadyApplied):
+            self.run_.commit_change(self.task, self.content, self.content.replace("return x;", "return  x ;"), "m")
+        self.assertEqual(self.head(), before)
+        self.assertEqual(a.git(self.dir, "status", "--porcelain"), "", "the file is as before")
+
+    def test_real_change_is_committed(self):
+        before = self.head()
+        sha = self.run_.commit_change(self.task, self.content, self.content.replace("return x;", "return x + 1;"), "m")
+        self.assertNotEqual(sha, before)
+
+    def test_git_error_includes_stdout(self):
+        with self.assertRaisesRegex(RuntimeError, "nothing to commit"):
+            a.git(self.dir, "commit", "-q", "-m", "empty")
+
+    def test_implement_no_op_is_reported_as_already_applied(self):
+        # The model's edit reproduces what is already there (the #323 case).
+        original_harness = a.harness
+        a.harness = lambda: (lambda task, content, statement, spend: a.EditResult(
+            [a.Edit("src/a.cpp", 2, 2, "  validateSameLength(x);")], "mechanical", "check the lengths", {}), None)
+        posted = []
+        saved = a.reply, a.resolve
+        a.reply = lambda repo, number, thread, text, state: posted.append(state)
+        a.resolve = lambda thread: posted.append("resolved")
+        before = self.head()
+        try:
+            with self.assertRaises(a.AlreadyApplied):
+                self.run_.implement(self.task)
+            self.run_.already_applied(self.task)
+        finally:
+            a.harness = original_harness
+            a.reply, a.resolve = saved
+        self.assertEqual(self.head(), before)
+        self.assertEqual(self.run_.applied, [])
+        self.assertEqual(self.run_.results, [("already applied", "u", "PP10", "the change is already on the branch")])
+        self.assertEqual(posted, [{"state": "applied", "via": "already on the branch"}, "resolved"])
+
+
 class ConfigTest(unittest.TestCase):
     def test_backend_override(self):
         env = {"OCR_LLM_URL": "u", "OCR_LLM_MODEL": "m", "OCR_LLM_AUTH_TOKEN": "t", "OCR_APPLY_LLM_MODEL": "m2"}

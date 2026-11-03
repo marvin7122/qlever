@@ -1121,8 +1121,15 @@ def resolve(thread):
 def git(repo_dir, *args):
     result = subprocess.run(["git", *args], cwd=repo_dir, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args[:2])} failed: {result.stderr.strip()[:400]}")
+        # Some failures are explained on stdout only (`git commit`: "nothing to commit").
+        output = " ".join(part for part in (result.stderr.strip(), result.stdout.strip()) if part)
+        raise RuntimeError(f"git {' '.join(args[:2])} failed: {output[:400] or f'exit code {result.returncode}'}")
     return result.stdout.strip()
+
+
+class AlreadyApplied(Exception):
+    """The change makes no difference to the file at the PR head (after
+    formatting): it is already on the branch."""
 
 
 # _____________________________________________________________________________
@@ -1191,9 +1198,16 @@ class Run:
             f.write(content)
 
     def commit_change(self, task, old, new, message):
+        """Commit the change of the task's file; AlreadyApplied (nothing
+        written) if it leaves the file as it is, e.g. because the owner
+        already committed it with a suggestion button."""
         path = task.thread["path"]
+        if new == old:
+            raise AlreadyApplied()
         self.write_file(path, new)
         clang_format_lines(self.repo_dir, path, changed_lines(old, new))
+        if not git(self.repo_dir, "status", "--porcelain", "--", path):
+            raise AlreadyApplied()
         git(self.repo_dir, "add", path)
         git(self.repo_dir, "commit", "-q", "-m",
             f"{message}\n\nFinding: {task.thread['comments'][0]['url']}\nRule: {task.rule}")
@@ -1223,14 +1237,28 @@ class Run:
         head = git(self.repo_dir, "rev-parse", "HEAD")
         branch = self.new_branch(f"apply/{self.number}-{task.thread['comments'][0]['id']}")
         git(self.repo_dir, "switch", "-q", "-c", branch)
+        pushed = False
         try:
             sha = self.commit_change(task, old, new, f"apply-replies (proposal): {summary}")
             git(self.repo_dir, "push", "-q", "origin", f"{branch}:{branch}")
+            pushed = True
             committed = self.file_content(task.thread["path"])
         finally:
             git(self.repo_dir, "switch", "-q", self.head_ref)
             git(self.repo_dir, "reset", "-q", "--hard", head)
+            if not pushed:
+                git(self.repo_dir, "branch", "-q", "-D", branch)
         return sha, branch, committed, head
+
+    def already_applied(self, task):
+        """Report a change that makes no difference at the PR head: resolve, no commit."""
+        reply(self.repo, self.number, task.thread,
+              "Already on the branch: the change for this finding leaves the file at the PR head as it is (for "
+              "example, it was committed with a suggestion button). Resolving.",
+              {"state": "applied", "via": "already on the branch"})
+        if not task.thread["isResolved"]:
+            resolve(task.thread)
+        self.record("already applied", task, "the change is already on the branch")
 
     def commit_url(self, sha):
         return f"https://github.com/{self.repo}/commit/{sha}"
@@ -1431,6 +1459,8 @@ class Run:
         for proposal in self.proposals:
             try:
                 self.post_proposal(proposal, head_sha, hunks)
+            except AlreadyApplied:
+                self.already_applied(proposal.task)
             except Exception as error:  # noqa: BLE001 - one failed thread must not stop the others
                 log(f"{proposal.task.thread['path']}:{proposal.task.thread['line']}: {error!r}")
                 self.record("failed", proposal.task, str(error)[:200])
@@ -1569,6 +1599,8 @@ class Run:
         for task in tasks:
             try:
                 self.handle(task)
+            except AlreadyApplied:
+                self.already_applied(task)
             except BudgetExhausted:
                 self.record("skipped", task, "the budget is used up")
             except Exception as error:  # noqa: BLE001 - one failed thread must not stop the others
