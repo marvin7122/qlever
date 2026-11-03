@@ -29,6 +29,7 @@
 #include <utility>
 #include <vector>
 
+#include "backports/algorithm.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Exception.h"
 #include "util/File.h"
@@ -304,8 +305,10 @@ TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
        ql::span<const typename TypeParam::BatchHandle>{handles}.first(M - 1)) {
     manager.wait(handle);
   }
-  for (size_t i : ql::views::iota(size_t{0}, M)) {
-    EXPECT_THAT(batches[i].result(), ::testing::ElementsAreArray(expected[i]))
+  for (const auto& [i, batchAndExpected] :
+       ::ranges::views::enumerate(::ranges::views::zip(batches, expected))) {
+    const auto& [batch, expectedOfBatch] = batchAndExpected;
+    EXPECT_THAT(batch.result(), ::testing::ElementsAreArray(expectedOfBatch))
         << "mismatch at batch " << i;
   }
 }
