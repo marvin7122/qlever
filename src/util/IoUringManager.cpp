@@ -90,6 +90,8 @@ namespace {
 // `IoUringInterface` via liburing.
 class LiburingRing final : public IoUringInterface {
  public:
+  // Set up a ring with `ringSize` SQEs. `explicit`, because a ring size is not
+  // a ring. Throws if `io_uring_queue_init` fails.
   explicit LiburingRing(unsigned ringSize) {
     // Set up the submission and completion queues, shared between this
     // process and the kernel, with (at least) `ringSize` submission slots.
