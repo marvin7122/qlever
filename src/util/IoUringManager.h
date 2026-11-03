@@ -14,13 +14,16 @@
 #include <gtest/gtest_prod.h>
 
 #include <cstdint>
+#include <memory>
 #include <unordered_map>
+#include <vector>
 
 #include "backports/algorithm.h"
 #include "backports/concepts.h"
 #include "util/Exception.h"
 #include "util/HashMap.h"
 #include "util/Log.h"
+#include "util/NoCopyNoMove.h"
 
 #ifdef QLEVER_HAS_IO_URING
 #include <liburing.h>
@@ -167,20 +170,88 @@ struct SyncIoPolicy {
                                uint64_t fileOffset);
 };
 
+#ifdef QLEVER_HAS_IO_URING
+
+// The operations of an io_uring instance that `IoUringPolicy` uses. An
+// interface so that unit tests can run the policy against a simulated ring
+// (`test/util/FakeIoUring.h`) that takes only some of the submitted requests,
+// fails submits and completes requests in any order.
+class IoUringInterface {
+ public:
+  // A reaped completion: the request id of its SQE and its result (the
+  // CQE's `res`): for a read, the number of bytes read on success, or
+  // `-errno` on failure.
+  struct Completion {
+    uint64_t requestId;
+    int result;
+  };
+
+  // Virtual, because `IoUringPolicy` owns its ring as
+  // `std::unique_ptr<IoUringInterface>`.
+  virtual ~IoUringInterface() = default;
+
+  // Fill a free SQE with a read of `numberOfBytes` bytes at `offset` of `fd`
+  // into `buffer`, tagged with `requestId`. Return false if no SQE is free. An
+  // implementation must have a free SQE whenever fewer requests than
+  // `sqCapacity()` are queued or in the kernel: `IoUringPolicy` never exceeds
+  // that bound and treats a `false` as a broken invariant.
+  virtual bool prepareRead(int fd, char* buffer, size_t numberOfBytes,
+                           uint64_t offset, uint64_t requestId) = 0;
+
+  // The number of prepared SQEs that the kernel has not taken yet.
+  virtual size_t numberOfQueued() const = 0;
+
+  // Return the number of SQEs, and of CQEs, that the ring has room for.
+  virtual size_t sqCapacity() const = 0;
+  virtual size_t cqCapacity() const = 0;
+
+  // `io_uring_submit`: hand the queued SQEs to the kernel, which takes them in
+  // the order in which they were prepared. Return the number of SQEs taken, or
+  // `-errno`.
+  virtual int submit() = 0;
+
+  // Block until at least `minComplete` completions are ready. Return 0 or
+  // `-errno`. Must neither hand queued SQEs to the kernel nor consume
+  // completions: `IoUringPolicy` learns which SQEs the kernel took only from
+  // `submit`, and counts every completion that `popCompletions` returns.
+  virtual int waitForCompletions(unsigned minComplete) = 0;
+
+  // Move up to `completions.size()` ready completions into `completions` and
+  // release their CQ slots. Return how many were moved.
+  virtual size_t popCompletions(ql::span<Completion> completions) = 0;
+
+  // Rewrite every queued SQE into a no-op tagged with `noOpRequestId`, so that
+  // it no longer refers to a buffer. Return the request ids of the rewritten
+  // SQEs that were not no-ops already, in queue order.
+  virtual std::vector<uint64_t> cancelQueued(uint64_t noOpRequestId) = 0;
+
+  // Wait a moment before a submit that failed with `EAGAIN` is retried
+  // without any completion to wait for.
+  virtual void backOff() = 0;
+};
+
+// Return an `IoUringInterface` backed by liburing with (at least) `ringSize`
+// SQEs; liburing rounds the size up to a power of two. Throw if the ring
+// cannot be set up, for example because `io_uring_setup` is blocked by
+// seccomp, so that `makeBatchManager` falls back to synchronous reads.
+std::unique_ptr<IoUringInterface> makeLiburingRing(unsigned ringSize);
+
 // Persistent io_uring manager that accepts multiple named batches of indices to
 // be read from the underlying storage medium, submits all SQEs in `addBatch`
 // (blocking if the ring is full), and lets the caller block on a specific batch
 // via `wait()`. Single-threaded use only. See https://github.com/axboe/liburing
 // for more details.
-#ifdef QLEVER_HAS_IO_URING
-
-class IoUringPolicy {
+//
+// Neither copyable nor movable: the policy owns the ring, whose kernel-side
+// state cannot be duplicated, and it lives inside its `BatchManager`.
+class IoUringPolicy : public NoCopyNoMove {
  public:
   using BatchHandle = uint64_t;
 
  private:
-  io_uring ring_{};
-  unsigned ringSize_;
+  std::unique_ptr<IoUringInterface> ring_;
+  // The most reads that the policy keeps in the ring.
+  size_t ringSize_;
 
   // Total number of reads that occupy a ring slot but have not yet been reaped
   // via a completion queue entry (CQE), i.e. that are prepared or submitted but
@@ -216,11 +287,14 @@ class IoUringPolicy {
   void drainOneCqe();
 
  public:
-  IoUringPolicy(const IoUringPolicy&) = delete;
-  IoUringPolicy& operator=(const IoUringPolicy&) = delete;
-
-  // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
+  // Set up a liburing ring with (at least) `ringSize` SQEs. `ringSize` must be
+  // > 0 (power of 2 preferred; liburing rounds up).
   explicit IoUringPolicy(unsigned ringSize);
+
+  // Run on `ring` instead of a liburing ring, for tests. The policy keeps at
+  // most `ring->sqCapacity()` reads in the ring. Throws if `ring` is null, has
+  // no SQE, or has fewer CQEs than SQEs.
+  explicit IoUringPolicy(std::unique_ptr<IoUringInterface> ring);
   ~IoUringPolicy();
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
