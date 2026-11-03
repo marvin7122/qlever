@@ -102,39 +102,35 @@ void warnOnceThatTheFastPathIsOff(int errorCode) {
   if (!warned.exchange(true)) {
     AD_LOG_WARN << "preadv2 with RWF_NOWAIT failed ("
                 << std::strerror(errorCode)
-                << "); the vocabulary reads of this batch manager, and of "
-                   "every other one that hits this error, are done without "
-                   "the page-cache fast path from now on"
+                << "); page-cache-first reads are switched off for this batch "
+                   "manager (logged only once per process)"
                 << std::endl;
   }
 }
+}  // namespace
 
 //______________________________________________________________________________
-// Read a `run` of adjacent reads with one call of `read` and return how many of
-// its reads, from the front, were read completely. `EAGAIN`, a short read and
-// any other error leave the remaining reads unserved; an error for which
-// `failsForGood` is true also clears `supported`. `iovecs` is scratch space
-// for the call that the caller keeps across the runs of a batch, so that a
-// batch of many short runs does not allocate once per run.
+// `EAGAIN`, a short read and any other error leave the remaining reads of the
+// run unserved; an error for which `failsForGood` is true also switches the
+// reader off.
 template <typename Run>
-size_t serveRun(int fd, Run run, const PageCacheRead& read, bool& supported,
-                std::vector<::iovec>& iovecs) {
-  iovecs.clear();
-  ::ranges::push_back(iovecs, run | ::ranges::views::transform(toIovec));
+size_t PageCacheReader::serveRun(int fd, Run run) {
+  iovecs_.clear();
+  ::ranges::push_back(iovecs_, run | ::ranges::views::transform(toIovec));
   const int64_t numBytesRead =
-      read(fd, iovecs.data(), static_cast<int>(iovecs.size()),
-           static_cast<int64_t>(fileOffsetOf(*::ranges::begin(run))));
+      read_(fd, iovecs_.data(), static_cast<int>(iovecs_.size()),
+            static_cast<int64_t>(fileOffsetOf(*::ranges::begin(run))));
   if (numBytesRead < 0) {
     // Read `errno` before any other library call can change it.
     const int errorCode = errno;
     if (failsForGood(errorCode)) {
-      supported = false;
+      supported_ = false;
       warnOnceThatTheFastPathIsOff(errorCode);
     }
     return 0;
   }
   // The end of each read within the run; a read is served if its end was read.
-  auto readEnds = iovecs | ::ranges::views::transform(&::iovec::iov_len) |
+  auto readEnds = iovecs_ | ::ranges::views::transform(&::iovec::iov_len) |
                   ::ranges::views::partial_sum;
   const auto numBytesReadUnsigned = static_cast<size_t>(numBytesRead);
   return static_cast<size_t>(
@@ -142,7 +138,6 @@ size_t serveRun(int fd, Run run, const PageCacheRead& read, bool& supported,
         return end <= numBytesReadUnsigned;
       }));
 }
-}  // namespace
 #endif
 
 //______________________________________________________________________________
@@ -181,17 +176,13 @@ UnservedReads PageCacheReader::readPageCacheHits(
   auto reads = ::ranges::views::zip(positions, numBytes, offsets, buffers);
   std::vector<size_t> notServed;
   notServed.reserve(numBytes.size());
-  // The `iovec`s of the run that is currently served; at most `IOV_MAX`.
-  std::vector<::iovec> iovecs;
-  iovecs.reserve(std::min(numBytes.size(), static_cast<size_t>(IOV_MAX)));
   // One `preadv2` call reads one contiguous range, so reads are grouped
   // into maximal runs of adjacent file ranges and served run by run.
   for (auto adjacentReads : reads | ::ranges::views::chunk_by(areAdjacent)) {
     // One `preadv2` call takes at most `IOV_MAX` buffers.
     for (auto run :
          adjacentReads | ::ranges::views::chunk(static_cast<size_t>(IOV_MAX))) {
-      const size_t numServed =
-          supported_ ? serveRun(fd, run, read_, supported_, iovecs) : 0;
+      const size_t numServed = supported_ ? serveRun(fd, run) : 0;
       ::ranges::push_back(notServed,
                           run | ::ranges::views::drop(numServed) |
                               ::ranges::views::transform(positionOf));

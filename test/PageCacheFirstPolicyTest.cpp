@@ -152,12 +152,16 @@ TEST(ReadPageCacheHits, mixedBatchWithShortRead) {
 TEST(ReadPageCacheHits, notCachedReadsAreReturned) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
-  PageCacheReader reader{&nothingCached};
+  size_t numberOfReads = 0;
+  PageCacheReader reader{counted(numberOfReads, &nothingCached)};
   auto [notServed, buffers] =
       notServedAndBuffers(reader, fd, {{0, 4}, {4, 4}, {12, 4}});
   EXPECT_TRUE(nothingRead(notServed));
   EXPECT_EQ(buffers[0], "----");
-  EXPECT_TRUE(reader.isSupported());
+  EXPECT_EQ(numberOfReads, 2u);
+  // The next batch tries again.
+  std::ignore = notServedAndBuffers(reader, fd, {{0, 4}});
+  EXPECT_EQ(numberOfReads, 3u);
 }
 
 // _____________________________________________________________________________
@@ -197,14 +201,12 @@ TEST(ReadPageCacheHits, permanentErrorsSwitchTheReaderOff) {
         notServedAndBuffers(reader, fd, {{0, 4}, {8, 4}, {12, 2}});
     EXPECT_TRUE(nothingRead(notServed));
     EXPECT_EQ(numberOfReads, 1u);
-    EXPECT_FALSE(reader.isSupported());
     auto [notServed2, unusedBuffers] =
         notServedAndBuffers(reader, fd, {{0, 4}});
     EXPECT_TRUE(nothingRead(notServed2));
     EXPECT_EQ(numberOfReads, 1u);
   }
   PageCacheReader otherReader{&fullyCached};
-  EXPECT_TRUE(otherReader.isSupported());
   EXPECT_TRUE(allRead(notServedAndBuffers(otherReader, fd, {{0, 4}}).first));
 }
 
@@ -221,7 +223,6 @@ TEST(ReadPageCacheHits, otherErrorsAreRetried) {
       notServedAndBuffers(reader, fd, {{0, 4}, {8, 4}, {12, 2}});
   EXPECT_TRUE(nothingRead(notServed));
   EXPECT_EQ(numberOfReads, 2u);
-  EXPECT_TRUE(reader.isSupported());
   auto [notServed2, unusedBuffers] = notServedAndBuffers(reader, fd, {{0, 4}});
   EXPECT_TRUE(nothingRead(notServed2));
   EXPECT_EQ(numberOfReads, 3u);
