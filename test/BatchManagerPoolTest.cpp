@@ -15,13 +15,16 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <range/v3/range/conversion.hpp>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "backports/algorithm.h"
 #include "util/BatchManagerPool.h"
 #include "util/Exception.h"
+#include "util/Views.h"
 
 using ad_utility::BatchManagerBase;
 using ad_utility::BatchManagerPool;
@@ -65,6 +68,7 @@ bool usesSyncBackend(BatchManagerBase& manager) {
 
 }  // namespace
 
+// _____________________________________________________________________________
 // The pool has the requested number of managers, and they perform reads.
 TEST(BatchManagerPool, managersReadThroughTheBackend) {
   BatchManagerPool pool{3, /*preferIoUring=*/false};
@@ -77,6 +81,7 @@ TEST(BatchManagerPool, managersReadThroughTheBackend) {
   EXPECT_EQ(readFourBytesAt(*lease, file, 8), "CCCC");
 }
 
+// _____________________________________________________________________________
 // With io_uring preferred, the managers use io_uring iff it is compiled in and
 // works at runtime (it can be blocked, e.g. by seccomp inside Docker), and
 // `usesIoUring()` tells which backend the managers have.
@@ -97,6 +102,7 @@ TEST(BatchManagerPool, backendMatchesUsesIoUring) {
   EXPECT_EQ(readFourBytesAt(*lease, file, 0), "AAAA");
 }
 
+// _____________________________________________________________________________
 // A manager goes back to the pool when its lease ends, also after an
 // exception, and is handed out again.
 TEST(BatchManagerPool, leaseGivesTheManagerBack) {
@@ -120,6 +126,7 @@ TEST(BatchManagerPool, leaseGivesTheManagerBack) {
   EXPECT_EQ(&*lease, manager);
 }
 
+// _____________________________________________________________________________
 // A moved-from lease does not give the manager back; the moved-to lease does.
 TEST(BatchManagerPool, leaseIsMovable) {
   BatchManagerPool pool{1, /*preferIoUring=*/false};
@@ -138,6 +145,7 @@ TEST(BatchManagerPool, leaseIsMovable) {
   EXPECT_EQ(&*lease, manager);
 }
 
+// _____________________________________________________________________________
 // When all managers are in use, `acquire` waits until one is given back and
 // then receives exactly that one.
 TEST(BatchManagerPool, acquireWaitsWhileAllManagersAreInUse) {
@@ -163,6 +171,7 @@ TEST(BatchManagerPool, acquireWaitsWhileAllManagersAreInUse) {
   EXPECT_EQ(managerOfWaiter, manager);
 }
 
+// _____________________________________________________________________________
 // Many threads share few managers, and no manager is in use by two threads at
 // the same time.
 TEST(BatchManagerPool, noManagerIsUsedByTwoThreadsAtOnce) {
@@ -175,27 +184,29 @@ TEST(BatchManagerPool, noManagerIsUsedByTwoThreadsAtOnce) {
   std::vector<BatchManagerBase*> managers;
   {
     std::vector<BatchManagerPool::Lease> leases;
-    for (size_t i = 0; i < numManagers; ++i) {
+    for ([[maybe_unused]] size_t i : ad_utility::integerRange(numManagers)) {
       leases.push_back(pool.acquire());
-      managers.push_back(&*leases.back());
     }
+    managers = ::ranges::to_vector(
+        leases |
+        ql::views::transform([](const auto& lease) { return &*lease; }));
   }
   auto indexOf = [&managers](BatchManagerBase* manager) {
-    for (size_t i = 0; i < managers.size(); ++i) {
-      if (managers[i] == manager) {
-        return i;
-      }
+    auto it = ql::ranges::find(managers, manager);
+    if (it == managers.end()) {
+      ADD_FAILURE() << "unknown manager";
+      return size_t{0};
     }
-    ADD_FAILURE() << "unknown manager";
-    return size_t{0};
+    return static_cast<size_t>(it - managers.begin());
   };
 
   std::array<std::atomic<int>, numManagers> inUse{};
   std::atomic<int> overlaps = 0;
   std::vector<std::thread> threads;
-  for (size_t t = 0; t < numThreads; ++t) {
+  for ([[maybe_unused]] size_t t : ad_utility::integerRange(numThreads)) {
     threads.emplace_back([&]() {
-      for (size_t round = 0; round < numRoundsPerThread; ++round) {
+      for ([[maybe_unused]] size_t round :
+           ad_utility::integerRange(numRoundsPerThread)) {
         auto lease = pool.acquire();
         auto& counter = inUse[indexOf(&*lease)];
         if (counter.fetch_add(1) != 0) {
@@ -212,12 +223,14 @@ TEST(BatchManagerPool, noManagerIsUsedByTwoThreadsAtOnce) {
   EXPECT_EQ(overlaps, 0);
 }
 
+// _____________________________________________________________________________
 // A pool without managers is rejected.
 TEST(BatchManagerPool, zeroManagersAreRejected) {
   EXPECT_THROW((BatchManagerPool{0, /*preferIoUring=*/false}),
                ad_utility::Exception);
 }
 
+// _____________________________________________________________________________
 // The process-wide pool takes its configuration from the calls before its
 // creation and keeps it afterwards, when it rejects another configuration.
 // NOTE: The process-wide pool cannot be reset. When this test runs in its own
