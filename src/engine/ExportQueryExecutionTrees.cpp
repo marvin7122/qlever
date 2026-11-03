@@ -112,11 +112,11 @@ STREAMABLE_GENERATOR_TYPE computeResultForAsk(
 template <ad_utility::MediaType format>
 auto idToCsvOrTsvField(const Index& index, Id id,
                        const LocalVocab& localVocab) {
-  using enum ad_utility::MediaType;
-  constexpr auto& escapeFunction =
-      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
-  return ql::exportIds::idToStringAndType<format == csv>(index, id, localVocab,
-                                                         escapeFunction);
+  constexpr auto& escapeFunction = format == ad_utility::MediaType::tsv
+                                       ? RdfEscaping::escapeForTsv
+                                       : RdfEscaping::escapeForCsv;
+  return ql::exportIds::idToStringAndType<format == ad_utility::MediaType::csv>(
+      index, id, localVocab, escapeFunction);
 }
 }  // namespace
 
@@ -132,7 +132,9 @@ ExportQueryExecutionTrees::csvOrTsvRows(
     const ad_utility::AllocatorWithLimit<char>& allocator,
     ad_utility::CancellationHandle<>& cancellationHandle,
     ad_utility::AsyncTransformStopFlag stop) {
-  static constexpr char separator = format == tsv ? '\t' : ',';
+  // NOTE: The `MediaType` is spelled out: GCC 11 had an internal compiler
+  // error on the name from the `using enum` of the class at this place.
+  constexpr char separator = format == ad_utility::MediaType::tsv ? '\t' : ',';
   CsvOrTsvChunk lines{allocator};
   for (uint64_t row : rows) {
     if (stop.isRequested()) {
@@ -618,7 +620,8 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
        getRowIndices(limitAndOffset, *result, resultSize)) {
     // The binary formats have returned above, but the code below is still
     // instantiated for them; the parallel path is only needed for CSV and TSV.
-    if constexpr (format == csv || format == tsv) {
+    if constexpr (format == ad_utility::MediaType::csv ||
+                  format == ad_utility::MediaType::tsv) {
       if (inParallel &&
           range.size() > MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK) {
         // The rows of the block are cut into chunks of (almost) equal size,
