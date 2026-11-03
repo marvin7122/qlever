@@ -101,12 +101,14 @@ class FakeIoUring final : public IoUringInterface {
         std::count_if(completions_.begin(), completions_.end(), isRead));
   }
 
-  bool prepareRead([[maybe_unused]] int fd, char* buffer, size_t numBytes,
-                   uint64_t offset, uint64_t requestId) override {
+  bool prepareRead([[maybe_unused]] int fd, char* buffer,
+                   size_t numberOfBytesToRead, uint64_t offset,
+                   uint64_t requestId) override {
     if (queue_.size() >= sqCapacity_) {
       return false;
     }
-    queue_.push_back(Request{false, buffer, numBytes, offset, requestId});
+    queue_.push_back(
+        Request{false, buffer, numberOfBytesToRead, offset, requestId});
     return true;
   }
 
@@ -196,7 +198,7 @@ class FakeIoUring final : public IoUringInterface {
   struct Request {
     bool isNoOp;
     char* buffer;
-    size_t numBytes;
+    size_t numberOfBytesToRead;
     uint64_t offset;
     uint64_t requestId;
   };
@@ -235,20 +237,21 @@ class FakeIoUring final : public IoUringInterface {
       ++faultCounts_.faultyReads;
       return -EIO;
     }
-    size_t numBytes =
-        std::min(request.numBytes,
+    size_t numberOfBytesRead =
+        std::min(request.numberOfBytesToRead,
                  file_.size() - std::min<size_t>(file_.size(), request.offset));
-    if (numBytes > 0 && happens(faults_.shortRead)) {
-      numBytes = uniform(0, numBytes - 1);
+    if (numberOfBytesRead > 0 && happens(faults_.shortRead)) {
+      numberOfBytesRead = uniform(0, numberOfBytesRead - 1);
     }
-    if (numBytes != request.numBytes) {
+    if (numberOfBytesRead != request.numberOfBytesToRead) {
       injectedReadFault_ = true;
       ++faultCounts_.faultyReads;
     }
-    if (numBytes > 0) {
-      std::memcpy(request.buffer, file_.data() + request.offset, numBytes);
+    if (numberOfBytesRead > 0) {
+      std::memcpy(request.buffer, file_.data() + request.offset,
+                  numberOfBytesRead);
     }
-    return static_cast<int>(numBytes);
+    return static_cast<int>(numberOfBytesRead);
   }
 
   std::string file_;
