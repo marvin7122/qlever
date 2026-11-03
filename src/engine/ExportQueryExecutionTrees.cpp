@@ -960,11 +960,37 @@ ExportQueryExecutionTrees::constructQueryResultToStream(
   auto rowIndices = getRowIndices(limitAndOffset, *result, resultSize,
                                   constructTriples.size());
 
-  auto triples = qlever::constructExport::ConstructTripleGenerator::
-      generateFormattedTriples(
-          constructTriples, qet.getVariableColumns(), std::move(rowIndices),
-          limitAndOffset._offset, format,
-          makeConstructEvaluationConfig(qet, std::move(cancellationHandle)));
+  using qlever::constructExport::ConstructTripleGenerator;
+  const auto config =
+      makeConstructEvaluationConfig(qet, std::move(cancellationHandle));
+  // If the runtime parameter `parallel-construct-export` is set, the triples
+  // are instantiated and formatted in chunks of rows on the executor of the
+  // query. This needs the triples of different chunks to be independent, so it
+  // is not done with a `construct-deduplication`.
+  if (getRuntimeParameter<&RuntimeParameters::parallelConstructExport_>() &&
+      std::holds_alternative<ad_utility::DeduplicationMode::None>(
+          config.mode_.value_)) {
+    // A thread can format the next chunk while its previous one waits to be
+    // yielded. How many chunks are formatted at the same time is bounded by
+    // the executor (in the server, a `ConcurrencyLimitedExecutor` with
+    // `max-num-threads-per-query`).
+    const size_t maxNumberOfChunksInFlight =
+        2 * getRuntimeParameter<&RuntimeParameters::maxNumThreadsPerQuery_>();
+    auto chunks = ConstructTripleGenerator::generateFormattedChunksInParallel(
+        constructTriples, qet.getVariableColumns(), std::move(rowIndices),
+        limitAndOffset._offset, format, config, maxNumberOfChunksInFlight);
+    for (const auto& chunk : chunks) {
+      // The chunks in flight may have been formatted before a cancellation,
+      // so check it here too.
+      config.cancellationHandle_->throwIfCancelled();
+      STREAMABLE_YIELD(std::string_view{chunk});
+    }
+    STREAMABLE_RETURN;
+  }
+
+  auto triples = ConstructTripleGenerator::generateFormattedTriples(
+      constructTriples, qet.getVariableColumns(), std::move(rowIndices),
+      limitAndOffset._offset, format, config);
 
   for (const std::string& triple : triples) {
     STREAMABLE_YIELD(triple);
