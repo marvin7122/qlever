@@ -265,12 +265,17 @@ class IdToStringAndTypeCache {
   };
 
  private:
-  // Empty iff the cache is disabled by `capacity_ == 0`.
+  // The configured capacity, only used in the log message.
+  size_t capacity_;
+  // Empty iff the cache is disabled, either by `capacity_ == 0` or because a
+  // window's hit rate fell below `minHitRate_`. In the second case the cached
+  // values are destroyed right away, so that the memory is freed for the rest
+  // of the export.
   std::optional<ad_utility::util::LRUCacheWithStatistics<Id, Value>> cache_;
+  // The statistics of `cache_` at the moment it was switched off.
+  ad_utility::util::LRUCacheStats statsWhenSwitchedOff_;
   size_t windowSize_;
   double minHitRate_;
-  // False once a window's hit rate fell below `minHitRate_`.
-  bool enabled_;
   // Number of hits at the start of the current window.
   uint64_t hitsAtWindowStart_ = 0;
   // Lookups computed directly because the cache is disabled (excludes the
@@ -283,11 +288,11 @@ class IdToStringAndTypeCache {
 
  public:
   explicit IdToStringAndTypeCache(const Config& config)
-      : windowSize_{config.windowSize_},
-        minHitRate_{config.minHitRate_},
-        enabled_{config.capacity_ > 0} {
-    if (enabled_) {
-      cache_.emplace(config.capacity_);
+      : capacity_{config.capacity_},
+        windowSize_{config.windowSize_},
+        minHitRate_{config.minHitRate_} {
+    if (capacity_ > 0) {
+      cache_.emplace(capacity_);
     }
   }
   explicit IdToStringAndTypeCache(size_t capacity)
@@ -296,11 +301,10 @@ class IdToStringAndTypeCache {
   // Log the statistics of an export that used the cache.
   ~IdToStringAndTypeCache() {
     if (stats().totalLookups() + bypassed_ > 0) {
-      AD_LOG_DEBUG << "SELECT export term cache: capacity "
-                   << (cache_.has_value() ? cache_->capacity() : 0) << ", "
+      AD_LOG_DEBUG << "SELECT export term cache: capacity " << capacity_ << ", "
                    << stats().hits_ << " hits, " << stats().misses_
                    << " misses, " << bypassed_ << " bypassed, "
-                   << (enabled_ ? "enabled" : "disabled") << " at the end"
+                   << (enabled() ? "enabled" : "disabled") << " at the end"
                    << std::endl;
     }
   }
@@ -318,47 +322,49 @@ class IdToStringAndTypeCache {
       uncached_ = compute();
       return uncached_;
     }
-    if (!enabled_) {
+    if (!enabled()) {
       ++bypassed_;
       uncached_ = compute();
       return uncached_;
     }
     const Value& result =
         cache_->getOrCompute(id, [&compute](const Id&) { return compute(); });
-    // Only the admission flag changes below, the cached entry and therefore
-    // `result` stay valid.
-    checkWindow();
-    return result;
+    if (!isWindowHitRateTooLow()) {
+      return result;
+    }
+    // Switching off destroys `result`, so return it via `uncached_`.
+    uncached_ = result;
+    statsWhenSwitchedOff_ = cache_->stats();
+    cache_.reset();
+    return uncached_;
   }
 
   // True while lookups go through the cache.
-  bool enabled() const { return enabled_; }
+  bool enabled() const { return cache_.has_value(); }
 
   // Lookups computed directly because the cache was disabled.
   uint64_t bypassed() const { return bypassed_; }
 
   const ad_utility::util::LRUCacheStats& stats() const {
-    static constexpr ad_utility::util::LRUCacheStats noStats{};
-    return cache_.has_value() ? cache_->stats() : noStats;
+    return cache_.has_value() ? cache_->stats() : statsWhenSwitchedOff_;
   }
 
  private:
-  // At the end of each window of `windowSize_` cached lookups, disable the
-  // cache if the window's hit rate is below `minHitRate_`.
-  void checkWindow() {
+  // True iff the last lookup completed a window of `windowSize_` cached
+  // lookups whose hit rate is below `minHitRate_`. A completed window also
+  // starts the next one.
+  bool isWindowHitRateTooLow() {
     if (windowSize_ == 0 || minHitRate_ <= 0.0) {
-      return;
+      return false;
     }
     const auto& s = cache_->stats();
     if (s.totalLookups() % windowSize_ != 0) {
-      return;
+      return false;
     }
     auto windowHits = s.hits_ - hitsAtWindowStart_;
     hitsAtWindowStart_ = s.hits_;
-    if (static_cast<double>(windowHits) <
-        minHitRate_ * static_cast<double>(windowSize_)) {
-      enabled_ = false;
-    }
+    return static_cast<double>(windowHits) <
+           minHitRate_ * static_cast<double>(windowSize_);
   }
 };
 
