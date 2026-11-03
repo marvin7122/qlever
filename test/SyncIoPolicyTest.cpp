@@ -22,6 +22,7 @@ namespace {
 using namespace ::testing;
 using namespace ioUringManagerTestHelpers;
 
+// _____________________________________________________________________________
 // A read that is fully satisfied returns the requested bytes from the requested
 // offset.
 TEST(ReadFullyOrThrow, FullReadSucceeds) {
@@ -31,6 +32,7 @@ TEST(ReadFullyOrThrow, FullReadSucceeds) {
   EXPECT_EQ(std::string(targetBuffer.data(), 4), "BBBB");
 }
 
+// _____________________________________________________________________________
 // An invalid file descriptor makes the underlying `pread` call fail (return
 // -1), which must cause a throw.
 TEST(ReadFullyOrThrow, PreadFailureThrows) {
@@ -41,6 +43,7 @@ TEST(ReadFullyOrThrow, PreadFailureThrows) {
                                HasSubstr("pread failed"));
 }
 
+// _____________________________________________________________________________
 // Requesting more bytes than the file contains (read past EOF) is a short read
 // and must throw.
 TEST(ReadFullyOrThrow, ShortReadThrows) {
