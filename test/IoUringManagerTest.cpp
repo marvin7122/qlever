@@ -243,10 +243,11 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
 }
 
 // A batch much larger than the ring completes with every read in its own
-// buffer. Ring 4 is smaller than a `REAP_WAVE`, so the ring-full wait is
-// clamped to the outstanding reads; ring 8 is exactly one wave; with ring 256,
-// more than 64 CQEs can be ready at once, so a wave is reaped in several
-// chunks.
+// buffer. For `IoUringPolicy`: ring 4 is smaller than a `REAP_WAVE`, so the
+// ring-full wait is clamped to the outstanding reads; ring 8 is exactly one
+// wave; with ring 256, more than 64 CQEs can be ready at once, so a wave is
+// reaped in several chunks. The other policies have no ring and read
+// synchronously.
 TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanRing) {
   constexpr std::array<std::pair<unsigned, size_t>, 3> ringSizeAndNumReads{
       {{4, 80}, {8, 80}, {256, 600}}};
@@ -254,12 +255,13 @@ TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanRing) {
     SequentialReadScenarioForTesting scenario;
     for (size_t i : ql::views::iota(size_t{0}, numReads)) {
       // Distinct chunks, so that a completion in the wrong buffer is detected.
-      scenario.addRead(absl::StrFormat("%04zu", i));
+      scenario.addRead(absl::StrFormat("%04d", i));
     }
     auto [tmp, fd] = makeTempFile(scenario.content());
     TypeParam manager(ringSize);
-    // All reads are page-cache hits, so switch the fast path off to force them
-    // through the ring (the wrapped policy).
+    // The reads would be page-cache hits. Switch the fast path off (a no-op for
+    // the policies without it) so that they go through the wrapped policy, the
+    // ring for `IoUringPolicy`.
     manager.setPageCacheFastPath(false);
     manager.wait(scenario.submitTo(manager, fd));
     EXPECT_THAT(scenario.results(),
@@ -279,21 +281,24 @@ TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
   std::vector<std::vector<std::string>> expected(M);
   std::vector<ReadBatchForTesting> batches(M);
   size_t numChunks = 0;
-  for (size_t i : ql::views::iota(size_t{0}, M)) {
-    const size_t numReads = 2 * (i % 3) + 1;
+  for (auto&& [i, batchAndExpected] :
+       ::ranges::views::enumerate(::ranges::views::zip(batches, expected))) {
+    auto& [batch, expectedOfBatch] = batchAndExpected;
+    const size_t numReads = 2 * (static_cast<size_t>(i) % 3) + 1;
     for ([[maybe_unused]] size_t j : ql::views::iota(size_t{0}, numReads)) {
       // Distinct chunks, so that a completion in the wrong buffer is detected.
-      std::string chunk = absl::StrFormat("%03zu", numChunks++);
-      batches[i].add(fileContent.size(), chunk.size());
+      std::string chunk = absl::StrFormat("%03d", numChunks++);
+      batch.add(fileContent.size(), chunk.size());
       fileContent.append(chunk);
-      expected[i].push_back(std::move(chunk));
+      expectedOfBatch.push_back(std::move(chunk));
     }
   }
   auto [tmp, fd] = makeTempFile(fileContent);
 
   TypeParam manager(64);
-  // All reads are page-cache hits, so switch the fast path off to force them
-  // through the ring (the wrapped policy).
+  // The reads would be page-cache hits. Switch the fast path off (a no-op for
+  // the policies without it) so that they go through the wrapped policy, the
+  // ring for `IoUringPolicy`.
   manager.setPageCacheFastPath(false);
   std::vector<typename TypeParam::BatchHandle> handles;
   for (auto& batch : batches) {
@@ -326,8 +331,9 @@ TYPED_TEST(IoUringManagerTest, ErrorInWaveKeepsOtherBatchesConsistent) {
   // Declared after the batches, so that their buffers outlive the drain in the
   // destructor of `IoUringPolicy` if the test unwinds early.
   TypeParam manager(64);
-  // The reads are page-cache hits, so switch the fast path off to force them
-  // through the ring (the wrapped policy), where `good` and `bad` share it.
+  // The reads would be page-cache hits. Switch the fast path off (a no-op for
+  // the policies without it) so that they go through the wrapped policy, the
+  // ring for `IoUringPolicy`, which `good` and `bad` then share.
   manager.setPageCacheFastPath(false);
 
   // `SyncIoPolicy` reads in `addBatch`, so its throw happens on submission.

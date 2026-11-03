@@ -18,6 +18,7 @@
 #include <cerrno>
 #include <climits>
 #include <cstring>
+#include <exception>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -212,32 +213,46 @@ void IoUringPolicy::drainAtLeastCqes(unsigned minComplete) {
   // `io_uring_cq_advance` releases a whole chunk with one CQ-head update
   // instead of one `io_uring_cqe_seen` per CQE. The result and the request id
   // of each CQE are copied out and the chunk is released before any of them is
-  // applied to the bookkeeping: `processCqe` can throw (its correctness checks,
-  // or the allocation of a failure message), and a CQE that stayed in the
-  // completion queue would be processed a second time by the next drain. Every
-  // CQE of the wave is applied to the bookkeeping, so the outstanding counts
-  // stay consistent.
+  // applied to the bookkeeping, and every CQE of the chunk is applied even if
+  // `processCqe` throws for one of them (its correctness checks, or the
+  // allocation of a failure message): a CQE that stayed in the completion
+  // queue would be processed a second time by the next drain, and a CQE that
+  // left the queue without being applied would leave the outstanding counts
+  // too high, so that the next `wait()` or the destructor would block forever.
+  // The first exception is rethrown once the chunk is applied.
   std::array<io_uring_cqe*, 64> cqes{};
   std::array<std::pair<int, uint64_t>, 64> resultAndRequestIdPerCqe{};
   size_t numReaped = 0;
+  std::exception_ptr firstException;
   while (true) {
     const unsigned n = io_uring_peek_batch_cqe(
         &ring_, cqes.data(), static_cast<unsigned>(cqes.size()));
     if (n == 0) {
       break;
     }
-    for (size_t i : ql::views::iota(size_t{0}, static_cast<size_t>(n))) {
+    for (auto [cqe, resultAndRequestId] :
+         ::ranges::views::zip(ql::span<io_uring_cqe* const>(cqes.data(), n),
+                              ql::span<std::pair<int, uint64_t>>(
+                                  resultAndRequestIdPerCqe.data(), n))) {
       // Recover the id via the 64-bit `user_data` field, see `addBatch`.
-      resultAndRequestIdPerCqe[i] = {cqes[i]->res,
-                                     io_uring_cqe_get_data64(cqes[i])};
+      resultAndRequestId = {cqe->res, io_uring_cqe_get_data64(cqe)};
     }
     io_uring_cq_advance(&ring_, n);
     for (const auto& [numBytesRead, requestId] :
          ql::span<const std::pair<int, uint64_t>>(
              resultAndRequestIdPerCqe.data(), n)) {
-      processCqe(numBytesRead, requestId);
+      try {
+        processCqe(numBytesRead, requestId);
+      } catch (...) {
+        if (!firstException) {
+          firstException = std::current_exception();
+        }
+      }
     }
     numReaped += n;
+  }
+  if (firstException) {
+    std::rethrow_exception(firstException);
   }
   // `io_uring_wait_cqes` returned with at least `minComplete` CQEs ready, and
   // the loop above reaps every ready CQE.
