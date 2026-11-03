@@ -226,7 +226,7 @@ void VocabularyInternalExternal::open(const std::string& filename) {
       absl::StrCat(filename, internalSuffix),
       getRuntimeParameter<
           &RuntimeParameters::vocabularyInternalRankDirectory_>()
-          ? VocabularyInMemoryBinSearch::PositionLookup::RankDirectory
+          ? VocabularyInMemoryBinSearch::PositionLookup::RankDirectoryIfSmaller
           : VocabularyInMemoryBinSearch::PositionLookup::BinarySearch);
   externalVocab_.open(absl::StrCat(filename, externalSuffix));
   AD_LOG_INFO << "Done, number of words: " << size() << std::endl;

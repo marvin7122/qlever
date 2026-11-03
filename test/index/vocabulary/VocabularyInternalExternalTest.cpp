@@ -254,7 +254,7 @@ TEST(VocabularyInternalExternal, RankDirectoryOfInternalVocabulary) {
     const auto vocab =
         createVocabulary("RankDirectoryOfInternalVocabulary")(words);
     // `[0, 1000)` fits in 3 blocks of 448 indices.
-    EXPECT_EQ(vocab.internalVocab().numBytesOfRankDirectory(),
+    EXPECT_EQ(vocab.internalVocab().numberOfBytesOfRankDirectory(),
               useRankDirectory ? 3 * 64 : 0);
     for (const size_t index : {0, 1, 2, 447, 448, 449, 998, 999}) {
       EXPECT_EQ(isInternal(vocab, index), index == 0 || index % 2 == 1)

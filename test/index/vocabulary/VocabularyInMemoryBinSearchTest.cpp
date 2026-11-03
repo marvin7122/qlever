@@ -181,10 +181,11 @@ VocabularyInMemoryBinSearch createVocabularyWithIndices(
   return vocabulary;
 }
 
-// Both ways to find the position of an index.
+// All ways to find the position of an index.
 constexpr std::array positionLookups{
     VocabularyInMemoryBinSearch::PositionLookup::BinarySearch,
-    VocabularyInMemoryBinSearch::PositionLookup::RankDirectory};
+    VocabularyInMemoryBinSearch::PositionLookup::RankDirectory,
+    VocabularyInMemoryBinSearch::PositionLookup::RankDirectoryIfSmaller};
 
 // An `absl::Cleanup` that deletes all the files that a
 // `VocabularyInMemoryBinSearch` with the given base `filename` consists of.
@@ -256,13 +257,13 @@ TEST(VocabularyInMemoryBinSearch, rankDirectory) {
   auto vocab = createVocabularyWithIndices(filename, wordsWithHoles,
                                            indicesWithHoles, RankDirectory);
   // One block of 448 indices covers `[0, endIndex()) = [0, 10)`.
-  EXPECT_EQ(vocab.numBytesOfRankDirectory(), 64);
+  EXPECT_EQ(vocab.numberOfBytesOfRankDirectory(), 64);
   EXPECT_EQ(createVocabularyWithIndices(filename, wordsWithHoles,
                                         indicesWithHoles, BinarySearch)
-                .numBytesOfRankDirectory(),
+                .numberOfBytesOfRankDirectory(),
             0);
   EXPECT_EQ(createVocabularyWithIndices(filename, {}, {}, RankDirectory)
-                .numBytesOfRankDirectory(),
+                .numberOfBytesOfRankDirectory(),
             0);
 
   // The batch lookup (which finds the positions via `positionOfIndex`) yields
@@ -285,9 +286,9 @@ TEST(VocabularyInMemoryBinSearch, rankDirectory) {
       std::move(writeSerializer).data()};
   readSerializer >> readVocab;
   expectVocabulariesAreEqual(vocab, readVocab);
-  EXPECT_EQ(readVocab.numBytesOfRankDirectory(), 0);
+  EXPECT_EQ(readVocab.numberOfBytesOfRankDirectory(), 0);
   vocab.close();
-  EXPECT_EQ(vocab.numBytesOfRankDirectory(), 0);
+  EXPECT_EQ(vocab.numberOfBytesOfRankDirectory(), 0);
   EXPECT_EQ(vocab.positionOfIndex(3), std::nullopt);
 }
 

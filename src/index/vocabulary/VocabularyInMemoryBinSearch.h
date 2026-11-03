@@ -101,8 +101,8 @@ class VocabularyInMemoryBinSearch
 
   // The number of bytes of the rank directory, `0` if there is none (see
   // `open`).
-  size_t numBytesOfRankDirectory() const {
-    return indices_.numBytesOfRankDirectory();
+  size_t numberOfBytesOfRankDirectory() const {
+    return indices_.numberOfBytesOfRankDirectory();
   }
 
   // A share of the ownership of the words, for a batch-lookup result that
@@ -111,11 +111,16 @@ class VocabularyInMemoryBinSearch
   std::shared_ptr<const Words> sharedWords() const { return words_; }
 
   // Read the vocabulary from a file. The file must have been created using a
-  // `WordWriter`. With `PositionLookup::RankDirectory`, `positionOfIndex` (and
-  // hence every lookup by index) takes constant time instead of a binary
-  // search, for 8/7 bits of memory per index in `[0, endIndex())`.
-  void open(const std::string& fileName,
-            PositionLookup positionLookup = PositionLookup::BinarySearch);
+  // `WordWriter`. The `positionLookup` decides how `positionOfIndex` (and hence
+  // every lookup by index) works: a binary search, or a constant-time rank
+  // directory that costs 8/7 bits of memory per index in `[0, endIndex())`.
+  void open(const std::string& fileName, PositionLookup positionLookup);
+
+  // The `open` of the generic vocabulary interface, with
+  // `PositionLookup::BinarySearch`.
+  void open(const std::string& fileName) {
+    open(fileName, PositionLookup::BinarySearch);
+  }
 
   // Return the total number of words
   [[nodiscard]] size_t size() const {
@@ -126,7 +131,7 @@ class VocabularyInMemoryBinSearch
   // Return the position (i.e. the offset into the words) of the word with the
   // given vocabulary `index`, or `std::nullopt` if `index` is not contained in
   // this vocabulary (which can happen because of the "holes", see above).
-  // Constant time with the rank directory, a binary search otherwise (see
+  // Constant time with a rank directory, a binary search otherwise (see
   // `open`).
   std::optional<size_t> positionOfIndex(uint64_t index) const {
     return indices_.positionOf(index);

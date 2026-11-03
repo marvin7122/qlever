@@ -14,6 +14,7 @@
 #include <limits>
 #include <optional>
 #include <random>
+#include <utility>
 #include <vector>
 
 #include "../../util/GTestHelpers.h"
@@ -82,7 +83,7 @@ TEST(SortedVocabIndices, Empty) {
   const SortedVocabIndices defaultConstructed;
   EXPECT_EQ(defaultConstructed.endIndex(), 0);
   EXPECT_EQ(defaultConstructed.positionOf(0), std::nullopt);
-  EXPECT_EQ(defaultConstructed.numBytesOfRankDirectory(), 0);
+  EXPECT_EQ(defaultConstructed.numberOfBytesOfRankDirectory(), 0);
 }
 
 // _____________________________________________________________________________
@@ -92,11 +93,49 @@ TEST(SortedVocabIndices, MemoryOfRankDirectory) {
   // per 448 indices.
   const std::vector<uint64_t> indices{448 * 10 - 1};
   EXPECT_EQ(SortedVocabIndices(Storage{indices}, PositionLookup::RankDirectory)
-                .numBytesOfRankDirectory(),
+                .numberOfBytesOfRankDirectory(),
             10 * 64);
   EXPECT_EQ(SortedVocabIndices(Storage{indices}, PositionLookup::BinarySearch)
-                .numBytesOfRankDirectory(),
+                .numberOfBytesOfRankDirectory(),
             0);
+}
+
+// _____________________________________________________________________________
+TEST(SortedVocabIndices, RankDirectoryIfSmaller) {
+  using Storage = SortedVocabIndices::Storage;
+  auto numberOfBytesOfRankDirectory = [](std::vector<uint64_t> indices) {
+    return SortedVocabIndices(Storage{std::move(indices)},
+                              PositionLookup::RankDirectoryIfSmaller)
+        .numberOfBytesOfRankDirectory();
+  };
+  // 448 possible indices cost 64 bytes, as much as 8 indices. So the directory
+  // is built for 9 indices, but not for 8.
+  std::vector<uint64_t> nineIndices{0, 1, 2, 3, 4, 5, 6, 7, 447};
+  EXPECT_EQ(numberOfBytesOfRankDirectory(nineIndices), 64);
+  nineIndices.erase(nineIndices.begin());
+  EXPECT_EQ(numberOfBytesOfRankDirectory(nineIndices), 0);
+  // No indices, and an index for which `endIndex()` would overflow (no
+  // exception, the binary search is used).
+  EXPECT_EQ(numberOfBytesOfRankDirectory({}), 0);
+  EXPECT_EQ(
+      numberOfBytesOfRankDirectory({0, std::numeric_limits<uint64_t>::max()}),
+      0);
+
+  // Both choices find the same positions.
+  std::mt19937_64 randomEngine{99};
+  for (const double fractionContained : {0.005, 0.5}) {
+    const auto indices =
+        randomIndicesWithHoles(randomEngine, 5000, fractionContained);
+    const SortedVocabIndices ifSmaller{Storage{indices},
+                                       PositionLookup::RankDirectoryIfSmaller};
+    EXPECT_EQ(ifSmaller.numberOfBytesOfRankDirectory() > 0,
+              fractionContained > 1.0 / 56);
+    const SortedVocabIndices binarySearch{Storage{indices},
+                                          PositionLookup::BinarySearch};
+    for (uint64_t index = 0; index < 5002; ++index) {
+      ASSERT_EQ(ifSmaller.positionOf(index), binarySearch.positionOf(index));
+    }
+  }
 }
 
 // _____________________________________________________________________________

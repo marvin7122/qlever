@@ -32,6 +32,11 @@ enum class PositionLookup {
   // built once by the constructor. Constant time (one cache line), but costs
   // 8/7 bits per index of `[0, endIndex())`, also for the holes.
   RankDirectory,
+  // `RankDirectory` if the directory takes fewer bytes than the indices
+  // themselves (8 bytes each), else `BinarySearch`. So the directory at most
+  // doubles the memory of the indices. It is smaller if more than 1/56 (1.8 %)
+  // of the indices in `[0, endIndex())` are contained.
+  RankDirectoryIfSmaller,
 };
 
 // The strictly ascending vocabulary indices of the words of a vocabulary with
@@ -57,6 +62,10 @@ class SortedVocabIndices : public ad_utility::NoCopy {
   // for `PositionLookup::RankDirectory`), with the given `positionLookup`.
   SortedVocabIndices(Storage storage, PositionLookup positionLookup)
       : storage_{std::move(storage)} {
+    if (positionLookup == PositionLookup::RankDirectoryIfSmaller) {
+      positionLookup = isRankDirectorySmaller() ? PositionLookup::RankDirectory
+                                                : PositionLookup::BinarySearch;
+    }
     if (positionLookup == PositionLookup::RankDirectory) {
       const auto indices = view();
       // `endIndex()` would overflow otherwise. Vocabulary indices are much
@@ -93,10 +102,20 @@ class SortedVocabIndices : public ad_utility::NoCopy {
     return std::nullopt;
   }
 
-  // The number of bytes of the rank directory, `0` for
-  // `PositionLookup::BinarySearch`.
-  size_t numBytesOfRankDirectory() const {
-    return rankDirectory_.has_value() ? rankDirectory_->numBytes() : 0;
+  // The number of bytes of the rank directory, `0` if there is none.
+  size_t numberOfBytesOfRankDirectory() const {
+    return rankDirectory_.has_value() ? rankDirectory_->numberOfBytes() : 0;
+  }
+
+ private:
+  // Whether a rank directory over `[0, endIndex())` takes fewer bytes than the
+  // indices (see `PositionLookup::RankDirectoryIfSmaller`).
+  bool isRankDirectorySmaller() const {
+    const auto indices = view();
+    return !indices.empty() &&
+           indices.back() < std::numeric_limits<uint64_t>::max() &&
+           ad_utility::BitVectorWithRank::numberOfBytesForUniverse(endIndex()) <
+               indices.size() * sizeof(uint64_t);
   }
 };
 
