@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -196,10 +197,8 @@ class IoUringPolicy {
 
   // Batches with a failed or short read, mapped to the message of their first
   // failure. `addBatch` and the `wait()` of another batch also reap CQEs, so a
-  // failure is kept here until the `wait()` of its own batch throws it. The
-  // message must stay valid until then; `processCqe` only stores string
-  // literals.
-  ad_utility::HashMap<BatchHandle, const char*> failedBatches_;
+  // failure is kept here until the `wait()` of its own batch throws it.
+  ad_utility::HashMap<BatchHandle, std::string> failedBatches_;
 
   // Per-read metadata needed when a completion is reaped: which batch the read
   // belongs to, and how many bytes it was supposed to read (so that reading
@@ -230,7 +229,7 @@ class IoUringPolicy {
   // CQE. `minComplete` must be > 0 and at most the number of submitted reads
   // that are not yet reaped: a read that is only prepared (SQE filled in, not
   // yet submitted) never completes, so both callers submit before they drain.
-  void drainAtLeast(unsigned minComplete);
+  void drainAtLeastCqes(unsigned minComplete);
 
   // Apply one completion to the bookkeeping of the outstanding reads. Always
   // updates the counts, also for a failed read, and records a failed or short
@@ -263,7 +262,7 @@ class IoUringPolicy {
   // of its reads are reaped; the failure is reported only once, so a later
   // `wait()` for the same handle returns normally. Also throws, possibly
   // before all reads of the batch are reaped, if waiting for completions fails
-  // (see `drainAtLeast`).
+  // (see `drainAtLeastCqes`).
   void wait(BatchHandle handle);
 };
 
