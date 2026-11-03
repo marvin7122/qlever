@@ -17,6 +17,7 @@
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
+#include "../../util/PageCacheReadHook.h"
 #include "../../util/PageCacheReadTestHelpers.h"
 #include "../../util/RuntimeParametersTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
@@ -27,7 +28,6 @@
 #include "util/File.h"
 #include "util/Forward.h"
 #include "util/MmapVector.h"
-#include "util/PageCacheReadHook.h"
 #include "util/jthread.h"
 
 namespace {

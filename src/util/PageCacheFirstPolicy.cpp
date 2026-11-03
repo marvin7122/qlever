@@ -24,7 +24,6 @@
 #include "util/Algorithm.h"
 #include "util/Exception.h"
 #include "util/Log.h"
-#include "util/PageCacheReadHook.h"
 
 namespace ad_utility {
 
@@ -45,7 +44,17 @@ std::atomic<bool> pageCacheFastPathSupported{true};
 #endif
 }  // namespace
 
+// The test seam of the fast path. It is declared in the test header
+// `test/util/PageCacheReadHook.h`, because only tests use it; the signatures
+// here must stay identical to the ones there.
 namespace detail {
+using PageCacheRead = int64_t (*)(int fd, const ::iovec* iov, int iovcnt,
+                                  int64_t offset) noexcept;
+int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
+                            int64_t offset) noexcept;
+PageCacheRead& pageCacheRead() noexcept;
+void resetPageCacheFastPathSupport() noexcept;
+
 //______________________________________________________________________________
 int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
                             int64_t offset) noexcept {

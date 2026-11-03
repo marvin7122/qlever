@@ -8,23 +8,22 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_UTIL_PAGECACHEREADHOOK_H
-#define QLEVER_SRC_UTIL_PAGECACHEREADHOOK_H
+#ifndef QLEVER_TEST_UTIL_PAGECACHEREADHOOK_H
+#define QLEVER_TEST_UTIL_PAGECACHEREADHOOK_H
 
 #include <sys/uio.h>
 
 #include <cstdint>
 
-namespace ad_utility {
-
-// In `detail` because production code must call `readPageCacheHits` and
-// must not call or replace this hook; it exists only for the tests.
-namespace detail {
-// The one page-cache read call per run that
-// `readPageCacheHits` makes, with the same contract (the number of bytes read,
-// or -1 with `errno` set). A replaceable function pointer so that unit tests
-// can inject `EAGAIN`, short reads and `EOPNOTSUPP`; production code never
-// changes it.
+// The test seam of the page-cache fast path. Production code calls
+// `ad_utility::readPageCacheHits` and never touches these, so they are
+// declared only here, for the tests; `src/util/PageCacheFirstPolicy.cpp`
+// defines them with the same signatures.
+namespace ad_utility::detail {
+// The one page-cache read call per run that `readPageCacheHits` makes, with
+// the contract of `preadv2(fd, iov, iovcnt, offset, RWF_NOWAIT)` (the number of
+// bytes read, or -1 with `errno` set). A replaceable function pointer so that
+// unit tests can inject `EAGAIN`, short reads and `EOPNOTSUPP`.
 using PageCacheRead = int64_t (*)(int fd, const ::iovec* iov, int iovcnt,
                                   int64_t offset) noexcept;
 // The default: the system call. Where it is not available it fails with
@@ -36,8 +35,6 @@ PageCacheRead& pageCacheRead() noexcept;
 // Undo the effect of an `EOPNOTSUPP` on `pageCacheFastPathIsSupported()`, for
 // tests that injected one.
 void resetPageCacheFastPathSupport() noexcept;
-}  // namespace detail
+}  // namespace ad_utility::detail
 
-}  // namespace ad_utility
-
-#endif  // QLEVER_SRC_UTIL_PAGECACHEREADHOOK_H
+#endif  // QLEVER_TEST_UTIL_PAGECACHEREADHOOK_H
