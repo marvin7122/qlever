@@ -13,16 +13,18 @@
 
 #include <sys/uio.h>
 
+#include <atomic>
 #include <cstdint>
 
-// The seam between `readPageCacheHits` (in `PageCacheFirstPolicy.cpp`) and the
-// system call it makes. Whether a read is served from the page cache depends on
-// the kernel, the file system and the state of the page cache, so tests cannot
+// The two seams between `readPageCacheHits` (in `PageCacheFirstPolicy.cpp`)
+// and the kernel. Whether a read is served from the page cache depends on the
+// kernel, the file system and the state of the page cache, so tests cannot
 // produce `EAGAIN`, short reads or `EOPNOTSUPP` with real files. Instead, they
-// replace the call through this hook (see `ScopedPageCacheRead` in
-// `test/util/PageCacheReadTestHelpers.h`). Production code only includes this
-// header in `PageCacheFirstPolicy.cpp`, which calls the hook and never
-// replaces it.
+// replace the system call through `pageCacheRead()`, and re-arm the
+// process-wide support latch after injecting `EOPNOTSUPP` (see
+// `test/util/PageCacheReadTestHelpers.h`). Production code only uses this
+// header in `PageCacheFirstPolicy.cpp`, which calls the hook and clears the
+// latch, but never replaces the hook or sets the latch.
 
 namespace ad_utility::detail {
 // The signature of the one page-cache read per run of adjacent reads that
@@ -48,10 +50,11 @@ int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
 // read runs; it must never be `nullptr`, because it is called unconditionally.
 PageCacheRead& pageCacheRead() noexcept;
 
-// Undo the effect of an `EOPNOTSUPP` or `ENOSYS` on
-// `pageCacheFastPathIsSupported()`, for tests that injected one. A no-op where
-// the fast path is not compiled in.
-void resetPageCacheFastPathSupport() noexcept;
+// The process-wide latch behind `pageCacheFastPathIsSupported()`: initially
+// true, and cleared by `readPageCacheHits` once a page-cache read fails with
+// `EOPNOTSUPP` or `ENOSYS`. Where the fast path is not compiled in,
+// `pageCacheFastPathIsSupported()` is false regardless of the latch.
+std::atomic<bool>& pageCacheFastPathSupported() noexcept;
 }  // namespace ad_utility::detail
 
 #endif  // QLEVER_SRC_UTIL_IO_URING_PAGECACHEREADHOOK_H
