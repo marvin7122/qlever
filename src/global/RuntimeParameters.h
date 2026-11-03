@@ -289,9 +289,10 @@ struct RuntimeParameters {
   // rows is cut into chunks of at most that many rows, which are serialized
   // concurrently on the executor of the query, instead of cell by cell on the
   // thread that produces the response body. At most
-  // `2 * max-num-threads-per-query` chunks are in flight per query; their
-  // memory counts towards the memory limit of the query. The output of a
-  // successful export is the same.
+  // `2 * max-num-threads-per-query` chunks are in flight per query. Their
+  // memory counts towards the `memory-for-queries` budget that all queries
+  // share; an allocation that does not fit first evicts unpinned cache entries
+  // and then fails the export. The output of a successful export is the same.
   Bool parallelCsvTsvExport_{false, "parallel-csv-tsv-export"};
 
   // ___________________________________________________________________________
