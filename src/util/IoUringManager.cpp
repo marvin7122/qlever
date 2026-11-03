@@ -85,8 +85,8 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
 IoUringPolicy::~IoUringPolicy() {
   if (!failedBatches_.empty()) {
     AD_LOG_WARN << "IoUringPolicy destroyed with " << failedBatches_.size()
-                << " failed batch(es) that were never `wait()`ed; the first "
-                   "failure is: "
+                << " failed batch(es) that were never `wait()`ed; one of the "
+                   "failures is: "
                 << failedBatches_.begin()->second << "\n";
   }
   if (numOutstandingReadRequests_ > 0) {
