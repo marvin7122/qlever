@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <chrono>
 #include <exception>
@@ -229,7 +230,7 @@ IoUringPolicy::~IoUringPolicy() {
   ad_utility::terminateIfThrows(
       [this]() {
         while (numberOfRequestsInKernel() > 0) {
-          drainOneCqe();
+          reapWave(numberOfRequestsInKernel());
         }
       },
       "The destructor of IoUringPolicy must not throw while the kernel may "
@@ -265,22 +266,24 @@ void IoUringPolicy::addBatch(
                                   fileOffsetPerRequest,
                                   targetBufferPerRequest)) {
           // The ring has no free slot, so make room: submit what we have
-          // prepared so far and block until enough completions have been
-          // drained.
+          // prepared so far and reap completions until a slot is free. The
+          // reaping waits for a wave of completions instead of one, so that a
+          // large batch refills the ring in waves rather than one SQE per
+          // reaped CQE.
           if (ringIsFull()) {
             submitFailure = submitQueued();
             if (submitFailure.has_value()) {
               break;
             }
             while (ringIsFull()) {
-              drainOneCqe();
+              reapWave(numberOfRequestsInKernel());
             }
           }
 
           // Tag the read with a unique request id and record its metadata
           // (the batch it belongs to and how many bytes it should read).
           // io_uring copies the request id verbatim into the matching
-          // completion, so `drainOneCqe` can recover it.
+          // completion, so `processCompletion` can recover it.
           const uint64_t requestId = nextRequestIdToAssign_++;
           inFlightReadsByRequestId_[requestId] =
               InFlightRead{handle, numberOfBytesToRead};
@@ -413,13 +416,17 @@ void IoUringPolicy::cancelQueuedReads() {
 
 //______________________________________________________________________________
 void IoUringPolicy::drainBatch(BatchHandle handle) {
-  // `drainOneCqe` may erase the batch, so look it up anew after each CQE.
+  // `reapWave` may erase the batch, so look it up anew after each wave. A wave
+  // for at most the batch's remaining reads never waits longer than the batch
+  // needs: the batch cannot finish before they complete, and every CQE (also of
+  // other batches) counts towards the wave. They are all in the kernel: a
+  // batch keeps no read queued once `addBatch` returns or cancels them.
   while (true) {
     auto it = batches_.find(handle);
     if (it == batches_.end() || it->second.numberOfInFlightReads == 0) {
       return;
     }
-    drainOneCqe();
+    reapWave(it->second.numberOfInFlightReads);
   }
 }
 
@@ -461,35 +468,61 @@ void IoUringPolicy::wait(BatchHandle handle) {
 }
 
 //______________________________________________________________________________
-void ad_utility::IoUringPolicy::drainOneCqe() {
-  // A wait for a completion when the kernel holds no request would block
+void IoUringPolicy::reapWave(size_t numberOfRequestsToComplete) {
+  // A wait for more completions than requests in the kernel would block
   // forever.
-  AD_CORRECTNESS_CHECK(numberOfRequestsInKernel() > 0);
-  // Block until at least one completion queue entry (CQE) is available. A wait
-  // that a signal interrupts is retried. If waiting fails otherwise, the
-  // kernel may still write into the buffers of the reads that it holds, and
-  // there is no way to learn when it is done, so neither throwing (the callers
-  // would free the buffers while unwinding) nor tearing down the ring is safe.
-  int result = 0;
-  do {
-    result = ring_->waitForCompletions(1);
-  } while (result == -EINTR);
-  if (result < 0) {
-    const std::string message = absl::StrCat(
-        "io_uring_wait_cqes failed in IoUringPolicy: ", errorText(-result),
-        ". The kernel may still write into the buffers of submitted reads, so "
-        "the process cannot continue safely. Terminating");
-    // `std::endl` on purpose: `std::terminate` does not flush the streams, so
-    // without the flush the reason for the termination could be lost.
-    AD_LOG_ERROR << message << std::endl;
-    std::cerr << message << std::endl;
-    std::terminate();
+  AD_CORRECTNESS_CHECK(numberOfRequestsToComplete > 0);
+  AD_CORRECTNESS_CHECK(numberOfRequestsToComplete <=
+                       numberOfRequestsInKernel());
+  std::array<IoUringInterface::Completion, REAP_CHUNK> completions{};
+  size_t numberOfReady = ring_->popCompletions(completions);
+
+  // Only if no completion queue entry (CQE) is ready, block until a wave of
+  // them is ready, which typically costs one `io_uring_enter` for the whole
+  // wave. A signal ends the wait early: with an empty completion queue, the
+  // wait returns `-EINTR` and is retried. With a ready CQE, the kernel reports
+  // success (see `io_cqring_wait`); liburing then waits once more, and if a
+  // signal also ends that wait, it returns 0 with fewer CQEs than the wave,
+  // which are reaped. If waiting fails otherwise, the kernel may still write
+  // into the buffers of the reads that it holds, and there is no way to learn
+  // when it is done, so neither throwing (the callers would free the buffers
+  // while unwinding) nor tearing down the ring is safe.
+  if (numberOfReady == 0) {
+    const auto waveSize = static_cast<unsigned>(
+        std::min<size_t>(REAP_WAVE, numberOfRequestsToComplete));
+    int result = 0;
+    do {
+      result = ring_->waitForCompletions(waveSize);
+    } while (result == -EINTR);
+    if (result < 0) {
+      const std::string message = absl::StrCat(
+          "io_uring_wait_cqes failed in IoUringPolicy: ", errorText(-result),
+          ". The kernel may still write into the buffers of submitted reads, "
+          "so the process cannot continue safely. Terminating");
+      // `std::endl` on purpose: `std::terminate` does not flush the streams,
+      // so without the flush the reason for the termination could be lost.
+      AD_LOG_ERROR << message << std::endl;
+      std::cerr << message << std::endl;
+      std::terminate();
+    }
+    numberOfReady = ring_->popCompletions(completions);
+    // The wait returned 0, so at least one CQE is ready.
+    AD_CORRECTNESS_CHECK(numberOfReady > 0);
   }
 
-  // Recover the read's result and the request id we stored in the SQE, and
-  // consume the CQE so its slot is freed.
-  IoUringInterface::Completion completion{};
-  AD_CORRECTNESS_CHECK(ring_->popCompletions({&completion, 1}) == 1);
+  // Reap every ready CQE, in chunks of up to `REAP_CHUNK`.
+  while (numberOfReady > 0) {
+    for (const auto& completion : ql::span<const IoUringInterface::Completion>(
+             completions.data(), numberOfReady)) {
+      processCompletion(completion);
+    }
+    numberOfReady = ring_->popCompletions(completions);
+  }
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::processCompletion(
+    const IoUringInterface::Completion& completion) {
   if (completion.requestId == NO_OP_REQUEST_ID) {
     --numberOfNoOpsInKernel_;
     return;

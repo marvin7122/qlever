@@ -182,6 +182,9 @@ struct SyncIoPolicy {
 // completions in any order).
 class IoUringInterface {
  public:
+  // The most completions that `popCompletions` moves per call.
+  static constexpr size_t MAX_COMPLETIONS_PER_POP = 64;
+
   // A reaped completion: the request id of its SQE and its result (the CQE's
   // `res`): the number of bytes read on success, or `-errno` on failure.
   struct Completion {
@@ -217,8 +220,9 @@ class IoUringInterface {
   // completions.
   virtual int waitForCompletions(unsigned minComplete) = 0;
 
-  // Move up to `completions.size()` ready completions into `completions` and
-  // release their CQ slots. Return how many were moved; 0 if none is ready.
+  // Move up to `completions.size()` (at most `MAX_COMPLETIONS_PER_POP`) ready
+  // completions into `completions` and release their CQ slots. Return how many
+  // were moved; 0 if none is ready.
   virtual size_t popCompletions(ql::span<Completion> completions) = 0;
 
   // Rewrite every prepared SQE that the kernel has not taken yet into a no-op
@@ -266,6 +270,12 @@ class IoUringPolicy : public NoCopyNoMove {
   // `ENOMEM` (or takes no SQE) is retried, after a back-off, before the queued
   // reads are cancelled.
   static constexpr unsigned MAX_SUBMIT_RETRIES = 16;
+
+  // The size of a wave: when the ring is full or `wait()` blocks and no
+  // completion is ready, wait for up to this many completions at once, then
+  // reap all ready ones (see `reapWave`). This amortizes the `io_uring_enter`
+  // call of the wait over the wave. The value is not tuned.
+  static constexpr unsigned REAP_WAVE = 8;
 
  private:
   // The request id of a no-op (the no-ops of cancelled reads keep this id). The
@@ -337,7 +347,7 @@ class IoUringPolicy : public NoCopyNoMove {
 
   // Maps a read's request id to its metadata. An entry is inserted when the
   // read is prepared in `addBatch` and erased when its completion is reaped in
-  // `drainOneCqe`, or when the read is cancelled.
+  // `processCompletion`, or when the read is cancelled.
   ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
 
   // The requests (reads and no-ops) that the kernel has taken and whose
@@ -355,11 +365,25 @@ class IoUringPolicy : public NoCopyNoMove {
            ringSize_;
   }
 
-  // Wait for one CQE and update the in-flight bookkeeping. A failed or short
-  // read is recorded in its batch, not thrown, so that the caller can reap the
-  // batch's other reads first. Retries an interrupted wait and terminates if
-  // waiting fails otherwise.
-  void drainOneCqe();
+  // The number of CQEs that `reapWave` takes out of the completion queue at
+  // once; a wave with more ready CQEs is reaped in several chunks.
+  static constexpr size_t REAP_CHUNK =
+      IoUringInterface::MAX_COMPLETIONS_PER_POP;
+
+  // Reap every ready CQE and update the in-flight bookkeeping. If none is
+  // ready, first block until a wave of `min(REAP_WAVE,
+  // numberOfRequestsToComplete)` CQEs is ready. `numberOfRequestsToComplete` is
+  // the number of requests the caller waits for; it must be > 0 and at most
+  // `numberOfRequestsInKernel()`, so that the wave never waits for more
+  // completions than will arrive. Reaps at least one CQE, but possibly fewer
+  // than the wave if a signal ends the wait early, so the callers loop until
+  // their condition holds. A failed or short read is recorded in its batch, not
+  // thrown, so that the caller can reap the batch's other reads first. Retries
+  // an interrupted wait and terminates if waiting fails otherwise.
+  void reapWave(size_t numberOfRequestsToComplete);
+
+  // Apply one reaped completion to the in-flight bookkeeping (see `reapWave`).
+  void processCompletion(const IoUringInterface::Completion& completion);
 
   // Reap completions until no read of the batch `handle` is in flight.
   void drainBatch(BatchHandle handle);

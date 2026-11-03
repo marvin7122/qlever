@@ -10,13 +10,16 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_format.h>
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <array>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <optional>
@@ -649,6 +652,9 @@ struct RingScript {
   size_t numberOfWaitsToInterrupt = 0;
   // If nonzero, every wait fails with this `errno`.
   int brokenWaitErrno = 0;
+  // Called before every wait that reaches the real ring, e.g. to write the
+  // bytes that the reads of a pipe wait for.
+  std::function<void()> beforeRealWait;
 
   // The requests (reads and no-ops) that the kernel took, and the completions
   // that the policy reaped. Every request that reached the kernel is reaped
@@ -706,6 +712,9 @@ class ScriptedRing final : public ad_utility::IoUringInterface {
     if (script_.numberOfReapedCompletions + minComplete >
         script_.numberOfTakenRequests) {
       return -ETIME;
+    }
+    if (script_.beforeRealWait) {
+      script_.beforeRealWait();
     }
     return ring_->waitForCompletions(minComplete);
   }
@@ -805,9 +814,10 @@ TEST_F(IoUringPolicyFailureTest, failedReadIsThrownAfterAllReadsOfItsBatch) {
 // _____________________________________________________________________________
 // A submit keeps failing with `EAGAIN` in the middle of a batch that is larger
 // than the ring, while earlier reads of the batch are in the kernel.
-// `addBatch` reaps them before it throws, and the queued read is rewritten
-// into a no-op: the next batch hands it to the kernel, and it does not touch
-// its buffer.
+// `addBatch` reaps them before it throws, and the queued reads are rewritten
+// into no-ops: the next batch hands them to the kernel, and they do not touch
+// their buffers. (How many reads are queued when the submit fails depends on
+// how many completions the wave that freed their slots reaped.)
 TEST_F(IoUringPolicyFailureTest, failedSubmitCancelsQueuedReadsIntoNoOps) {
   constexpr size_t numberOfReads = 100;
   constexpr size_t ringSize = 64;
@@ -836,16 +846,19 @@ TEST_F(IoUringPolicyFailureTest, failedSubmitCancelsQueuedReadsIntoNoOps) {
           << i;
     }
 
-    // The next batch hands the no-op of the cancelled read to the kernel.
+    // The next batch hands the no-ops of the cancelled reads to the kernel.
     next.addTo(policy, fd, 1);
     policy.wait(1);
     EXPECT_THAT(next.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
-    EXPECT_EQ(script.numberOfTakenRequests, ringSize + 1 + 3);
+    EXPECT_GT(script.numberOfTakenRequests, ringSize + 3);
+    EXPECT_LE(script.numberOfTakenRequests, numberOfReads + 3);
   }
-  // The no-op completed (in `wait()` or in the destructor) without touching
-  // the buffer of the cancelled read.
-  EXPECT_EQ(script.numberOfReapedCompletions, ringSize + 1 + 3);
-  EXPECT_EQ(failing.result()[ringSize], std::string(4, '\0'));
+  // The no-ops completed (in `wait()` or in the destructor) without touching
+  // the buffers of the cancelled reads.
+  EXPECT_EQ(script.numberOfReapedCompletions, script.numberOfTakenRequests);
+  for (size_t i = ringSize; i < numberOfReads; ++i) {
+    EXPECT_EQ(failing.result()[i], std::string(4, '\0')) << i;
+  }
 }
 
 // _____________________________________________________________________________
@@ -864,15 +877,17 @@ TEST_F(IoUringPolicyFailureTest, transientSubmitFailuresAreRetried) {
   EXPECT_EQ(script.numberOfBackOffs, 3U);
 
   // Ten failures, progress, ten more failures: 20 in total, but never more
-  // than `MAX_SUBMIT_RETRIES` in a row.
+  // than `MAX_SUBMIT_RETRIES` in a row. The ring of 8 makes `addBatch` submit
+  // at least 1 + (100 - 8) / `REAP_WAVE` times, so the script is used up.
   auto [content2, large] = chunkedFileAndBatch(100);
   auto [tmp2, fd2] = makeTempFile(content2);
+  auto smallRingPolicy = makePolicy(8, script);
   script.submitResults = {std::nullopt};
   script.submitResults.insert(script.submitResults.end(), 10, -EAGAIN);
   script.submitResults.push_back(std::nullopt);
   script.submitResults.insert(script.submitResults.end(), 10, -ENOMEM);
-  large.addTo(policy, fd2, 1);
-  policy.wait(1);
+  large.addTo(smallRingPolicy, fd2, 1);
+  smallRingPolicy.wait(1);
   EXPECT_TRUE(script.submitResults.empty());
   EXPECT_EQ(::ranges::to_vector(large.result() | ql::views::join),
             ::ranges::to_vector(content2));
@@ -989,44 +1004,72 @@ TEST_F(IoUringPolicyFailureTest, brokenSubmitThrowsAfterReapingTheKernelReads) {
 // A wait that fails with an error other than `EINTR` terminates the process:
 // the kernel may still write into the buffers of the reads it holds.
 TEST_F(IoUringPolicyFailureTest, brokenWaitTerminates) {
-  auto [content, batch] = chunkedFileAndBatch(3);
-  auto [tmp, fd] = makeTempFile(content);
+  // The reads come from a pipe that is still empty, so that `wait()` finds no
+  // completion ready and has to wait. (A ready completion is reaped without a
+  // wait, and the child of the death test would consume it from the
+  // completion queue, which it shares with this process.)
+  std::array<int, 2> pipeFds{};
+  ASSERT_EQ(pipe(pipeFds.data()), 0);
+  absl::Cleanup closePipe{[&pipeFds] {
+    close(pipeFds[0]);
+    close(pipeFds[1]);
+  }};
+  ReadBatchForTesting batch;
+  batch.add({{0, 4}});
   RingScript script;
   auto policy = makePolicy(64, script);
-  batch.addTo(policy, fd, 0);
+  batch.addTo(policy, pipeFds[0], 0);
   script.brokenWaitErrno = EIO;
   EXPECT_DEATH_IF_SUPPORTED(policy.wait(0), "io_uring_wait_cqes failed");
   script.brokenWaitErrno = 0;
+  ASSERT_EQ(write(pipeFds[1], "AAAA", 4), 4);
   policy.wait(0);
-  EXPECT_THAT(batch.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
+  EXPECT_THAT(batch.result(), ElementsAre("AAAA"));
 }
 
 // _____________________________________________________________________________
 // A wait that a signal interrupts is retried, both in `wait()` and in the
 // destructor.
 TEST_F(IoUringPolicyFailureTest, interruptedWaitsAreRetried) {
-  auto [content, waited] = chunkedFileAndBatch(2);
-  auto [tmp, fd] = makeTempFile(content);
+  // The reads come from a pipe that is filled only right before a wait reaches
+  // the real ring, so that no completion is ready before and the policy has to
+  // wait. (A ready completion is reaped without a wait.)
+  std::array<int, 2> pipeFds{};
+  ASSERT_EQ(pipe(pipeFds.data()), 0);
+  absl::Cleanup closePipe{[&pipeFds] {
+    close(pipeFds[0]);
+    close(pipeFds[1]);
+  }};
   RingScript script;
+  ReadBatchForTesting waited;
+  waited.add({{0, 4}, {0, 4}});
   ReadBatchForTesting unwaited;
-  unwaited.add({{4, 4}, {0, 4}, {4, 4}});
+  unwaited.add({{0, 4}, {0, 4}, {0, 4}});
   {
     auto policy = makePolicy(64, script);
-    waited.addTo(policy, fd, 0);
+    waited.addTo(policy, pipeFds[0], 0);
     script.numberOfWaitsToInterrupt = 2;
+    script.beforeRealWait = [&pipeFds, &script] {
+      ASSERT_EQ(write(pipeFds[1], "AAAAAAAA", 8), 8);
+      script.beforeRealWait = nullptr;
+    };
     policy.wait(0);
-    EXPECT_THAT(waited.result(), ElementsAre("AAAA", "BBBB"));
+    EXPECT_THAT(waited.result(), ElementsAre("AAAA", "AAAA"));
 
-    unwaited.addTo(policy, fd, 1);
+    unwaited.addTo(policy, pipeFds[0], 1);
     // Set only after `addTo`, which does not wait here, so that the interrupt
     // hits the wait of the destructor.
     script.numberOfWaitsToInterrupt = 1;
+    script.beforeRealWait = [&pipeFds, &script] {
+      ASSERT_EQ(write(pipeFds[1], "BBBBBBBBBBBB", 12), 12);
+      script.beforeRealWait = nullptr;
+    };
   }
   // The destructor reaped all three reads of the unwaited batch.
   EXPECT_EQ(script.numberOfWaitsToInterrupt, 0U);
   EXPECT_EQ(script.numberOfTakenRequests, 5U);
   EXPECT_EQ(script.numberOfReapedCompletions, 5U);
-  EXPECT_THAT(unwaited.result(), ElementsAre("BBBB", "AAAA", "BBBB"));
+  EXPECT_THAT(unwaited.result(), ElementsAre("BBBB", "BBBB", "BBBB"));
 }
 
 // _____________________________________________________________________________
