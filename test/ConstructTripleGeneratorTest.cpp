@@ -489,7 +489,10 @@ INSTANTIATE_TEST_SUITE_P(
 // also from the `IdCache` after their batch), `LocalVocab` literals (one of
 // which is escaped), integers (typed in N-Triples), and UNDEF (no triple).
 TEST_F(ConstructTripleGeneratorTest, formattedChunksAreTheSerializedTriples) {
-  constexpr size_t numberOfRows = 2 * ConstructTripleGenerator::BATCH_SIZE + 7;
+  // Five of six rows yield a triple of at least 13 bytes (`<q> <p> 42 .\n`),
+  // so these rows yield more than two chunks (and span 17 batches).
+  constexpr size_t numberOfRows =
+      ConstructTripleGenerator::FORMATTED_CHUNK_BYTES / 4 + 7;
   LocalVocab localVocab;
   const auto& context = qec_->getLocalVocabContext();
   auto localLiteral = [&localVocab, &context](const std::string& content) {
