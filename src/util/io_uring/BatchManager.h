@@ -29,7 +29,7 @@ namespace ad_utility {
 // nor movable: it owns its policy (for `IoUringPolicy` the io_uring ring), and
 // the pool holds managers by `std::unique_ptr`.
 template <typename ReadPolicy>
-class BatchManager final : public BatchManagerBase, NoCopyNoMove {
+class BatchManager final : public BatchManagerBase, public NoCopyNoMove {
   static_assert(
       detail::ReadPolicyConcept<ReadPolicy>,
       "BatchManager's ReadPolicy must satisfy the ReadPolicyConcept.");

@@ -116,7 +116,7 @@ std::unique_ptr<IoUringInterface> makeLiburingRing(RingSize ringSize);
 //
 // Neither copyable nor movable: the policy owns the ring, whose kernel-side
 // state cannot be duplicated, and it lives inside its `BatchManager`.
-class IoUringPolicy : NoCopyNoMove {
+class IoUringPolicy : public NoCopyNoMove {
  public:
   // Set up a liburing ring with `ringSize` SQEs.
   explicit IoUringPolicy(RingSize ringSize);

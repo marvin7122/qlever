@@ -88,7 +88,7 @@ struct SelectedReads {
 // only the others on to `ReadPolicy`. Neither copyable nor movable, like the
 // `BatchManager` that holds it.
 template <typename ReadPolicy>
-class PageCacheFirstPolicy : NoCopyNoMove {
+class PageCacheFirstPolicy : public NoCopyNoMove {
   static_assert(detail::ReadPolicyConcept<ReadPolicy>,
                 "PageCacheFirstPolicy's ReadPolicy must satisfy the "
                 "ReadPolicyConcept.");

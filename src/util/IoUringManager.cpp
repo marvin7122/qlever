@@ -43,6 +43,7 @@
 #include "util/Exception.h"
 #include "util/ExceptionHandling.h"
 #include "util/Log.h"
+#include "util/NoCopyNoMove.h"
 #include "util/PageCacheFirstPolicy.h"
 #include "util/io_uring/BatchManager.h"
 #include "util/io_uring/IoUringPolicy.h"
@@ -103,8 +104,9 @@ namespace {
   std::terminate();
 }
 
-// `IoUringInterface` via liburing.
-class LiburingRing final : public IoUringInterface {
+// `IoUringInterface` via liburing. Neither copyable nor movable: it owns a
+// kernel ring.
+class LiburingRing final : public IoUringInterface, public NoCopyNoMove {
  public:
   // Set up a ring with `ringSize` SQEs. `explicit`, because a `RingSize` is not
   // a ring. Throws if `io_uring_queue_init` fails or the kernel does not
@@ -132,9 +134,6 @@ class LiburingRing final : public IoUringInterface {
   // `IoUringPolicy` leaves no read in the ring between batches, only no-ops,
   // so no read can write into a buffer after the ring is torn down.
   ~LiburingRing() override { io_uring_queue_exit(&ring_); }
-
-  LiburingRing(const LiburingRing&) = delete;
-  LiburingRing& operator=(const LiburingRing&) = delete;
 
   bool prepareRead(int fd, char* buffer, size_t numBytes, uint64_t offset,
                    uint64_t requestId) override {

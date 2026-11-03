@@ -23,7 +23,7 @@ namespace ad_utility {
 // available. Schedules pread calls in a synchronous (blocking) manner.
 // Single-threaded use only. Neither copyable nor movable, like the other
 // policies: a policy lives inside its `BatchManager`.
-struct SyncIoPolicy : NoCopyNoMove {
+struct SyncIoPolicy : public NoCopyNoMove {
   // `ringSize` is ignored; it exists only so the policy is constructible the
   // same way as `IoUringPolicy`.
   //
