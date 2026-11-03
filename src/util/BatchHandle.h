@@ -20,13 +20,12 @@ namespace ad_utility {
 // The handle of a batch of reads, minted by `BatchManager::addBatch` and passed
 // back to `wait` (see `IoUringManager.h`). A wrapper type, not an alias for
 // `uint64_t`, so that a request id, a byte count or any other number cannot
-// silently be passed where a batch handle is expected.
+// silently be passed where a batch handle is expected. There is no default
+// handle: it would wrap some number and thus alias the batch that was minted
+// with it, so every handle comes from `addBatch` (or, in tests, from an
+// explicit number).
 class BatchHandle {
  public:
-  // The handle that wraps 0, so that handles can be stored in
-  // default-constructed containers.
-  BatchHandle() = default;
-
   // `explicit`, so that a bare integer cannot silently convert to a
   // `BatchHandle` where a handle is expected.
   explicit BatchHandle(uint64_t value) : value_{value} {}
@@ -38,7 +37,7 @@ class BatchHandle {
   QL_DEFINE_DEFAULTED_EQUALITY_OPERATOR(BatchHandle, value_)
 
  private:
-  uint64_t value_ = 0;
+  uint64_t value_;
 };
 
 }  // namespace ad_utility

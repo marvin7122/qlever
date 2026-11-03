@@ -31,6 +31,7 @@
 #include <utility>
 #include <vector>
 
+#include "backports/algorithm.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/BatchManager.h"
 #include "util/Exception.h"
@@ -358,13 +359,13 @@ TYPED_TEST(IoUringManagerTest, MultipleSmallBatches) {
   TypeParam manager{ad_utility::RingSize{64}};
 
   // Add all M batches (one read each); each completes inside `addBatch`.
-  std::vector<typename TypeParam::BatchHandle> batchHandles(M);
-  for (size_t i = 0; i < M; ++i) {
-    batchHandles[i] = batches[i].submitTo(manager, fd);
-  }
+  const auto batchHandles = ::ranges::to<std::vector>(
+      batches | ql::views::transform([&manager, fd = fd](auto& batch) {
+        return batch.submitTo(manager, fd);
+      }));
   // Wait on each handle, in submission order.
-  for (size_t i = 0; i < M; ++i) {
-    manager.wait(batchHandles[i]);
+  for (const auto& handle : batchHandles) {
+    manager.wait(handle);
   }
 
   // Each batch's read must have landed in its own buffer; a completion routed
@@ -782,10 +783,11 @@ TEST(MonotonicCounter, mintsConsecutiveValuesFromZero) {
   EXPECT_EQ(counter.mintNext(), 2u);
 }
 
-// Handles compare by the number they wrap; the default handle wraps 0.
+// Handles compare by the number they wrap, and there is no default handle that
+// could alias a minted one.
 TEST(BatchHandle, comparesByWrappedValue) {
   using ad_utility::BatchHandle;
-  EXPECT_EQ(BatchHandle{}.value(), 0u);
+  static_assert(!std::is_default_constructible_v<BatchHandle>);
   EXPECT_EQ(BatchHandle{7}.value(), 7u);
   EXPECT_EQ(BatchHandle{7}, BatchHandle{7});
   EXPECT_NE(BatchHandle{7}, BatchHandle{8});
