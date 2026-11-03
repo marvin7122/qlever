@@ -79,7 +79,7 @@ class BatchManagerPool : public NoCopyNoMove {
 
   // Borrow a manager and return the lease that gives it back. Wait while all
   // managers are in use.
-  Lease acquire();
+  [[nodiscard]] Lease acquire();
 
   // Return the number of managers of the pool, idle or in use.
   size_t size() const { return numManagers_; }
@@ -94,7 +94,7 @@ class BatchManagerPool : public NoCopyNoMove {
 
   // The number of managers, and whether all of them use io_uring. Both are
   // fixed in the constructor.
-  size_t numManagers_;
+  const size_t numManagers_;
   bool usesIoUring_ = false;
   // The managers that are not on loan, guarded by `mutex_`. `release` notifies
   // `managerReturned_` when it puts a manager back.
