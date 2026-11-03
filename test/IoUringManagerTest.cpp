@@ -11,11 +11,17 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
+#include <unistd.h>
 
+#include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <initializer_list>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -107,15 +113,16 @@ class ReadBatchForTesting {
   // handle.
   template <typename Manager>
   typename Manager::BatchHandle submitTo(Manager& manager, int fd) {
-    // Build the buffer pointers here, after all buffers have been added, so the
-    // addresses are stable (no further `add` will reallocate `targetBuffers_`).
-    // `addBatch` copies each address into its read request, so this temporary
-    // vector need not outlive the call.
-    std::vector<char*> pointers = ::ranges::to_vector(
-        targetBuffers_ | ql::views::transform([](std::string& buffer) {
-          return buffer.data();
-        }));
+    std::vector<char*> pointers = targetBufferPointers();
     return manager.addBatch(fd, numBytes_, offsets_, pointers);
+  }
+
+  // Add all accumulated reads to the read policy `policy` (not a manager) for
+  // file `fd`, under the batch handle `handle`.
+  template <typename Policy>
+  void addTo(Policy& policy, int fd, typename Policy::BatchHandle handle) {
+    std::vector<char*> pointers = targetBufferPointers();
+    policy.addBatch(fd, numBytes_, offsets_, pointers, handle);
   }
 
   // The bytes read by each read, in request order (valid once the batch has
@@ -123,6 +130,17 @@ class ReadBatchForTesting {
   const std::vector<std::string>& result() const { return targetBuffers_; }
 
  private:
+  // Build the buffer pointers only after all buffers have been added, so the
+  // addresses are stable (no further `add` will reallocate `targetBuffers_`).
+  // `addBatch` copies each address into its read request, so the returned
+  // vector need not outlive the call.
+  std::vector<char*> targetBufferPointers() {
+    return ::ranges::to_vector(targetBuffers_ |
+                               ql::views::transform([](std::string& buffer) {
+                                 return buffer.data();
+                               }));
+  }
+
   std::vector<size_t> numBytes_;
   std::vector<uint64_t> offsets_;
   std::vector<std::string> targetBuffers_;
@@ -153,6 +171,12 @@ class SequentialReadScenarioForTesting {
   template <typename Manager>
   typename Manager::BatchHandle submitTo(Manager& manager, int fd) {
     return batch_.submitTo(manager, fd);
+  }
+
+  // Add all reads to the read policy `policy` under the handle `handle`.
+  template <typename Policy>
+  void addTo(Policy& policy, int fd, typename Policy::BatchHandle handle) {
+    batch_.addTo(policy, fd, handle);
   }
 
   // The bytes actually read (valid once the batch has completed).
@@ -610,4 +634,263 @@ TEST(MakeBatchManager, backendMatchesFlagWhenIoUringPreferred) {
 #endif
   expectManagerWorks(*manager);
 }
+#ifdef QLEVER_HAS_IO_URING
+// The real liburing calls of an `IoUringPolicy`, wrapped so that a test can
+// inject the failures that a real kernel produces only rarely, and count what
+// reached the kernel. Must outlive the policy that uses `calls()`.
+class FaultInjectingLiburingCalls {
+ public:
+  // The number of the next waits that fail with `-EINTR` (as when a signal
+  // arrives) without waiting.
+  size_t numberOfWaitsToInterrupt_ = 0;
+  // The number of the next submits that fail with `-EINTR` without submitting.
+  size_t numberOfSubmitsToInterrupt_ = 0;
+  // If set, the number of submits that succeed before every submit fails
+  // with `-EAGAIN` (as when the kernel cannot allocate requests).
+  std::optional<size_t> numberOfSubmitsBeforeFailure_;
+  // The number of prepared SQEs that the next submit does not hand to the
+  // kernel, as in a partial submit.
+  unsigned numberOfSqesToHoldBack_ = 0;
+  // Called (once) by the first submit that fails.
+  std::function<void()> onFailedSubmit_;
+
+  // The number of SQEs that the kernel took, and of CQEs that the policy got
+  // from a wait (and consumed). Every read that reached the kernel is reaped
+  // iff they are equal.
+  size_t numberOfSubmittedSqes_ = 0;
+  size_t numberOfReapedCqes_ = 0;
+  // Waits that were refused because no read was in the kernel, so a real wait
+  // would have blocked forever.
+  size_t numberOfWaitsWithoutReadsInTheKernel_ = 0;
+
+  ad_utility::IoUringPolicy::LiburingCalls calls() {
+    return {[this](io_uring* ring) { return submit(ring); },
+            [this](io_uring* ring, io_uring_cqe** cqe) {
+              return waitCqe(ring, cqe);
+            }};
+  }
+
+ private:
+  int submit(io_uring* ring) {
+    if (numberOfSubmitsToInterrupt_ > 0) {
+      --numberOfSubmitsToInterrupt_;
+      return -EINTR;
+    }
+    if (numberOfSubmitsBeforeFailure_.has_value()) {
+      if (numberOfSubmitsBeforeFailure_.value() == 0) {
+        if (onFailedSubmit_) {
+          std::exchange(onFailedSubmit_, nullptr)();
+        }
+        return -EAGAIN;
+      }
+      --numberOfSubmitsBeforeFailure_.value();
+    }
+    // `io_uring_submit` hands the SQEs up to `sq.sqe_tail` to the kernel. To
+    // hold some of them back, lower the tail during the call (the held back
+    // SQEs must not have been flushed, i.e. they are after `sq.sqe_head`).
+    const unsigned numberOfHeldBack = std::min(
+        numberOfSqesToHoldBack_, ring->sq.sqe_tail - ring->sq.sqe_head);
+    numberOfSqesToHoldBack_ = 0;
+    ring->sq.sqe_tail -= numberOfHeldBack;
+    const int ret = io_uring_submit(ring);
+    ring->sq.sqe_tail += numberOfHeldBack;
+    if (ret > 0) {
+      numberOfSubmittedSqes_ += static_cast<size_t>(ret);
+    }
+    return ret;
+  }
+
+  int waitCqe(io_uring* ring, io_uring_cqe** cqe) {
+    if (numberOfWaitsToInterrupt_ > 0) {
+      --numberOfWaitsToInterrupt_;
+      return -EINTR;
+    }
+    // Refuse instead of blocking the test forever.
+    if (numberOfReapedCqes_ == numberOfSubmittedSqes_) {
+      ++numberOfWaitsWithoutReadsInTheKernel_;
+      return -ETIME;
+    }
+    const int ret = io_uring_wait_cqe(ring, cqe);
+    if (ret == 0) {
+      ++numberOfReapedCqes_;
+    }
+    return ret;
+  }
+};
+
+// Tests of `IoUringPolicy` itself for failed reads and failing liburing calls.
+// Each one checks that the kernel is done with every read of a batch before
+// the batch's error is thrown, since the callers free the target buffers when
+// they unwind.
+class IoUringPolicyFailureTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    if (!ioUringAvailableAtRuntime()) {
+      GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                      "(e.g. blocked by seccomp inside Docker)";
+    }
+  }
+};
+
+// A read past the end of the file is short. `wait()` throws its error only
+// after the other reads of the batch have completed too.
+TEST_F(IoUringPolicyFailureTest, failedReadIsThrownAfterAllReadsOfItsBatch) {
+  auto [tmp, fd] = makeTempFile("AAAABBBB");
+  auto [restoreLog, logStream] = setGlobalLoggingStreamToStringStream();
+  FaultInjectingLiburingCalls liburing;
+  {
+    ad_utility::IoUringPolicy policy(64, liburing.calls());
+    ReadBatchForTesting batch;
+    batch.add({{0, 16}, {0, 4}, {4, 4}});
+    batch.addTo(policy, fd, 0);
+    AD_EXPECT_THROW_WITH_MESSAGE(policy.wait(0),
+                                 HasSubstr("read fewer bytes than requested"));
+    EXPECT_EQ(liburing.numberOfSubmittedSqes_, 3U);
+    EXPECT_EQ(liburing.numberOfReapedCqes_, 3U);
+    EXPECT_THAT(batch.result()[1], Eq("AAAA"));
+    EXPECT_THAT(batch.result()[2], Eq("BBBB"));
+  }
+  // Nothing was left for the destructor to reap.
+  EXPECT_THAT(logStream.str(), Not(HasSubstr("still in flight")));
+}
+
+// A failed read is thrown by the `wait()` of its own batch, not by the
+// `wait()` of another batch that happens to reap its completion, and it does
+// not affect the batches after it.
+TEST_F(IoUringPolicyFailureTest, failedReadIsThrownByTheWaitOfItsOwnBatch) {
+  auto [tmp, fd] = makeTempFile("AAAABBBB");
+  ad_utility::IoUringPolicy policy(64);
+
+  ReadBatchForTesting failing;
+  failing.add({{0, 16}, {4, 16}, {8, 16}});
+  ReadBatchForTesting succeeding;
+  succeeding.add({{4, 4}});
+  failing.addTo(policy, fd, 0);
+  succeeding.addTo(policy, fd, 1);
+
+  // The completions of batch 0 are posted first, so this `wait()` reaps them.
+  policy.wait(1);
+  EXPECT_THAT(succeeding.result(), ElementsAre("BBBB"));
+  AD_EXPECT_THROW_WITH_MESSAGE(policy.wait(0),
+                               HasSubstr("read fewer bytes than requested"));
+
+  ReadBatchForTesting next;
+  next.add({{0, 4}});
+  next.addTo(policy, fd, 2);
+  policy.wait(2);
+  EXPECT_THAT(next.result(), ElementsAre("AAAA"));
+}
+
+// A wait that a signal interrupts is retried, both in `wait()` and in the
+// destructor.
+TEST_F(IoUringPolicyFailureTest, interruptedWaitsAreRetried) {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");
+  FaultInjectingLiburingCalls liburing;
+  ReadBatchForTesting waited;
+  waited.add({{0, 4}, {4, 4}});
+  ReadBatchForTesting unwaited;
+  unwaited.add({{8, 4}});
+  {
+    ad_utility::IoUringPolicy policy(64, liburing.calls());
+    waited.addTo(policy, fd, 0);
+    liburing.numberOfWaitsToInterrupt_ = 2;
+    policy.wait(0);
+    EXPECT_THAT(waited.result(), ElementsAre("AAAA", "BBBB"));
+
+    unwaited.addTo(policy, fd, 1);
+    liburing.numberOfWaitsToInterrupt_ = 1;
+  }
+  EXPECT_EQ(liburing.numberOfSubmittedSqes_, 3U);
+  EXPECT_EQ(liburing.numberOfReapedCqes_, 3U);
+  EXPECT_THAT(unwaited.result(), ElementsAre("CCCC"));
+}
+
+// A submit that a signal interrupts, or that hands only some of the prepared
+// SQEs to the kernel, is repeated until the kernel has taken all of them.
+TEST_F(IoUringPolicyFailureTest, interruptedAndPartialSubmitsAreCompleted) {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDDEEEE");
+  FaultInjectingLiburingCalls liburing;
+  ad_utility::IoUringPolicy policy(64, liburing.calls());
+
+  ReadBatchForTesting interrupted;
+  interrupted.add({{0, 4}, {4, 4}});
+  liburing.numberOfSubmitsToInterrupt_ = 1;
+  interrupted.addTo(policy, fd, 0);
+  policy.wait(0);
+  EXPECT_THAT(interrupted.result(), ElementsAre("AAAA", "BBBB"));
+
+  ReadBatchForTesting partial;
+  partial.add({{0, 4}, {4, 4}, {8, 4}, {12, 4}, {16, 4}});
+  liburing.numberOfSqesToHoldBack_ = 2;
+  partial.addTo(policy, fd, 1);
+  policy.wait(1);
+  EXPECT_THAT(partial.result(),
+              ElementsAre("AAAA", "BBBB", "CCCC", "DDDD", "EEEE"));
+  EXPECT_EQ(liburing.numberOfSubmittedSqes_, 7U);
+  EXPECT_EQ(liburing.numberOfWaitsWithoutReadsInTheKernel_, 0U);
+}
+
+// A submit fails for good in the middle of a batch that is larger than the
+// ring, while earlier reads of the same batch and a read of another batch are
+// in the kernel. `addBatch` throws only after the kernel is done with all of
+// them, the reads that were never submitted are never submitted later, and the
+// policy works again for the next batch.
+TEST_F(IoUringPolicyFailureTest, failedSubmitReapsTheReadsInTheKernelFirst) {
+  constexpr size_t numberOfReads = 10;
+  SequentialReadScenarioForTesting scenario;
+  for (size_t i = 0; i < numberOfReads; ++i) {
+    scenario.addRead(std::string(4, static_cast<char>('A' + i)));
+  }
+  auto [tmp, fd] = makeTempFile(scenario.content());
+  auto [restoreLog, logStream] = setGlobalLoggingStreamToStringStream();
+  FaultInjectingLiburingCalls liburing;
+  {
+    ad_utility::IoUringPolicy policy(4, liburing.calls());
+    // The read of the other batch is from an empty pipe, so it stays in the
+    // kernel until the failing submit writes into the pipe. Its completion
+    // therefore comes after those of the failing batch.
+    std::array<int, 2> pipeFds{};
+    ASSERT_EQ(pipe(pipeFds.data()), 0);
+    absl::Cleanup closePipe{[&pipeFds] {
+      close(pipeFds[0]);
+      close(pipeFds[1]);
+    }};
+    ReadBatchForTesting other;
+    other.add({{0, 4}});
+    other.addTo(policy, pipeFds[0], 0);
+    liburing.onFailedSubmit_ = [&pipeFds] {
+      ASSERT_EQ(write(pipeFds[1], "PIPE", 4), 4);
+    };
+
+    // The ring holds 4 reads: the first submit of the batch succeeds, the
+    // second one (when the ring is full again) fails.
+    liburing.numberOfSubmitsBeforeFailure_ = 1;
+    ReadBatchForTesting failing;
+    for (size_t i = 0; i < numberOfReads; ++i) {
+      failing.add(4 * i, 4);
+    }
+    AD_EXPECT_THROW_WITH_MESSAGE(failing.addTo(policy, fd, 1),
+                                 HasSubstr("io_uring_submit failed"));
+    EXPECT_EQ(liburing.numberOfSubmittedSqes_, 4U);
+    // Also the read of the other batch was reaped (before the ring was torn
+    // down). Otherwise, the `wait()` below would block forever.
+    ASSERT_EQ(liburing.numberOfReapedCqes_, 4U);
+    EXPECT_THAT(::ranges::to_vector(failing.result() | ql::views::take(3)),
+                ElementsAre("AAAA", "BBBB", "CCCC"));
+    policy.wait(0);
+    EXPECT_THAT(other.result(), ElementsAre("PIPE"));
+
+    // The next batch runs on a fresh ring, which never sees the SQE that was
+    // prepared but not submitted.
+    liburing.numberOfSubmitsBeforeFailure_ = std::nullopt;
+    scenario.addTo(policy, fd, 2);
+    policy.wait(2);
+    EXPECT_THAT(scenario.results(), ElementsAreArray(scenario.expected()));
+    EXPECT_EQ(liburing.numberOfSubmittedSqes_, 4 + numberOfReads);
+  }
+  EXPECT_EQ(liburing.numberOfReapedCqes_, 4 + numberOfReads);
+  EXPECT_EQ(liburing.numberOfWaitsWithoutReadsInTheKernel_, 0U);
+  EXPECT_THAT(logStream.str(), Not(HasSubstr("still in flight")));
+}
+#endif
 }  // namespace
