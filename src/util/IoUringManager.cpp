@@ -302,11 +302,15 @@ void IoUringPolicy::run(int fd, ql::span<const uint64_t> offsets,
            batch.numSlots() + numNoOpsQueued_ + numNoOpsInKernel_ <
                ringSize_.value()) {
       const size_t i = batch.numQueued;
+      ReadState& state = batch.states[i];
+      AD_CORRECTNESS_CHECK(state == ReadState::NotQueued,
+                           "Reads are queued in index order, so the next read "
+                           "to queue has not been queued yet.");
       AD_CORRECTNESS_CHECK(
           ring_->prepareRead(fd, buffers[i], batch.numBytes[i], offsets[i], i),
           "Fewer than `ringSize` requests are in the ring, so a free SQE must "
           "exist.");
-      batch.states[i] = ReadState::Queued;
+      state = ReadState::Queued;
       ++batch.numQueued;
     }
     submit(batch);
