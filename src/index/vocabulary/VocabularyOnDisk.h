@@ -17,8 +17,8 @@
 #include "util/Generator.h"
 #include "util/IoUringManager.h"
 #include "util/Iterators.h"
+#include "util/RecyclingPool.h"
 #include "util/Serializer/Serializer.h"
-#include "util/ThreadSafeQueue.h"
 #include "util/UninitializedAllocator.h"
 
 // On-disk vocabulary of strings. Each entry is a pair of <ID, String>. The IDs
@@ -46,10 +46,15 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // never reused.
   uint64_t id_ = 0;
 
-  // Pool of persistent `BatchIoManager`s for `lookupBatch`.
-  mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
-      std::unique_ptr<ad_utility::BatchManagerBase>>>
-      ioManagers_;
+  // The batch I/O managers (an io_uring ring each, or the synchronous
+  // fallback) of `lookupBatch`. A lookup takes a manager, or creates one if all
+  // are in use, and gives it back afterwards. So a lookup never waits for a
+  // manager, and the pool holds as many managers as lookups of this vocabulary
+  // ran at the same time at some point. Shared, because the lease of a manager
+  // gives it back to this pool (see `RecyclingPool::makeRecyclingOwner`).
+  using BatchManagerPool =
+      ad_utility::RecyclingPool<std::unique_ptr<ad_utility::BatchManagerBase>>;
+  std::shared_ptr<BatchManagerPool> batchManagers_;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.

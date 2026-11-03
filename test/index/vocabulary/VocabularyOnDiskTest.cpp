@@ -12,8 +12,10 @@
 #include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
 
+#include <array>
 #include <optional>
 #include <random>
+#include <vector>
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
@@ -315,6 +317,39 @@ TEST(VocabularyOnDisk, LookupBatchOutOfRangeIndexThrows) {
   auto vocab = createExampleVocabulary();
   std::array<size_t, 2> indices{0, 99};
   EXPECT_ANY_THROW(vocab->lookupBatch(indices));
+}
+
+// After a lookup that throws, the vocabulary still serves lookups (the manager
+// that the failed lookup took is given back to the pool).
+TEST(VocabularyOnDisk, LookupBatchWorksAfterAFailedLookup) {
+  auto vocab = createExampleVocabulary();
+  std::array<size_t, 2> invalidIndices{0, 99};
+  EXPECT_ANY_THROW(vocab->lookupBatch(invalidIndices));
+  std::array<size_t, 3> indices{4, 0, 2};
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, vocab->lookupBatch(indices), indices);
+}
+
+// More threads than the eight managers that the vocabulary used to have look
+// up words at the same time. A lookup creates a manager when all managers are
+// in use, so no lookup waits, and every result is correct.
+TEST(VocabularyOnDisk, LookupBatchFromManyThreadsAtOnce) {
+  constexpr size_t numberOfThreads = 32;
+  constexpr size_t numberOfRoundsPerThread = 20;
+  auto vocab = createVocabularyFromWords(makeWords(200));
+  std::vector<size_t> indices;
+  for (size_t i = 0; i < 200; i += 7) {
+    indices.push_back(199 - i);
+  }
+  std::vector<ad_utility::JThread> threads;
+  for (size_t t = 0; t < numberOfThreads; ++t) {
+    threads.emplace_back([&vocab, &indices]() {
+      for (size_t round = 0; round < numberOfRoundsPerThread; ++round) {
+        vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+            *vocab, vocab->lookupBatch(indices), indices);
+      }
+    });
+  }
 }
 
 // Test that `lookupBatch` on a vocabulary that was never opened fails with a
