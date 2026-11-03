@@ -49,12 +49,17 @@ class ConstructTripleGenerator {
  public:
   // the number of `IdTable` rows that one batch consists of.
   static constexpr size_t BATCH_SIZE = 1024;
+  // Each string of `generateFormattedTriples` but the last one holds at least
+  // this many bytes.
+  static constexpr size_t FORMATTED_CHUNK_BYTES = 1 << 16;
   // the number of entries in the `IdCache` for each variable in the construct
   // clause template.
   static constexpr size_t CACHE_ENTRIES_PER_VARIABLE = 2048;
 
   // Instantiates `templateTriples` for each row in `rowIndices` and returns a
-  // lazy range of triples serialized according to `mediaType`.
+  // lazy range of triples serialized according to `mediaType`. Each string of
+  // the range holds many consecutive triples (see `FORMATTED_CHUNK_BYTES`);
+  // their concatenation is the serialization of all triples.
   // Duplicate triples are handled according to `config.mode_`.
   static InputRangeTypeErased<std::string> generateFormattedTriples(
       const Triples& templateTriples,
