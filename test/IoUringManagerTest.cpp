@@ -10,6 +10,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cctype>
 #include <initializer_list>
 #include <memory>
 #include <sstream>
@@ -419,7 +421,9 @@ TYPED_TEST(IoUringManagerTest, waitOnNonExistingBatch) {
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
 }
 
-// A batch without reads is accepted and has nothing to wait for.
+// A batch without reads is accepted and has nothing to wait for. Every policy
+// must allow this: `BatchManager` and `PageCacheFirstPolicy` pass a caller's
+// empty batch on unchanged.
 TYPED_TEST(IoUringManagerTest, emptyBatchHasNothingToWaitFor) {
   auto [tmp, fd] = makeTempFile("AAAA");
   ReadBatchForTesting batch;
@@ -506,18 +510,42 @@ TEST(MakeBatchManager, backendMatchesFlagWhenIoUringPreferred) {
   expectManagerWorks(*manager);
 }
 
+// `read`, but the bytes it reads are turned into lowercase, so that a test can
+// tell the bytes served from the "page cache" from those that the wrapped
+// policy read (the test files are uppercase).
+ad_utility::PageCacheRead lowercased(ad_utility::PageCacheRead read) {
+  return [read = std::move(read)](int fd, const ::iovec* iov, int iovcnt,
+                                  int64_t offset) {
+    const int64_t numBytesRead = read(fd, iov, iovcnt, offset);
+    auto numBytesLeft = static_cast<size_t>(std::max<int64_t>(numBytesRead, 0));
+    for (const ::iovec& buffer :
+         ql::span<const ::iovec>{iov, static_cast<size_t>(iovcnt)}) {
+      auto* bytes = static_cast<char*>(buffer.iov_base);
+      const size_t numBytesInBuffer = std::min(numBytesLeft, buffer.iov_len);
+      std::transform(bytes, bytes + numBytesInBuffer, bytes,
+                     [](char c) { return static_cast<char>(std::tolower(c)); });
+      numBytesLeft -= numBytesInBuffer;
+    }
+    return numBytesRead;
+  };
+}
+
 // Several batches of which the page cache serves some reads, and one that it
 // serves completely, are interleaved on a `PageCacheFirstPolicy<Policy>` whose
 // ring holds only two reads, so the forwarded remainder of the first batch
 // already fills the ring. Every batch must end up with the right bytes,
-// whichever order the batches are waited for in.
+// whichever order the batches are waited for in. The served reads come back
+// in lowercase, so the expected strings show which path served each read.
 template <typename Policy>
 void expectInterleavedPartialBatchesWork() {
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDDEEEEFFFF");
   // No two neighbouring reads of a batch are adjacent in the file, so each read
   // is a run of its own, and the runs at the offsets 0 and 12 are cached.
+  size_t numberOfPageCacheReads = 0;
   ad_utility::BatchManager<ad_utility::PageCacheFirstPolicy<Policy>> manager(
-      2, pageCacheReadTestHelpers::cachedAt({0, 12}));
+      2, pageCacheReadTestHelpers::counted(
+             numberOfPageCacheReads,
+             lowercased(pageCacheReadTestHelpers::cachedAt({0, 12}))));
   ReadBatchForTesting first;
   first.add({{16, 4}, {0, 4}, {12, 4}, {4, 4}, {20, 4}});
   ReadBatchForTesting second;
@@ -531,9 +559,11 @@ void expectInterleavedPartialBatchesWork() {
   manager.wait(servedCompletelyHandle);
   manager.wait(firstHandle);
   EXPECT_THAT(first.result(),
-              ElementsAre("EEEE", "AAAA", "DDDD", "BBBB", "FFFF"));
-  EXPECT_THAT(second.result(), ElementsAre("CCCC", "FFFF", "AAAA"));
-  EXPECT_THAT(servedCompletely.result(), ElementsAre("DDDD", "AAAA"));
+              ElementsAre("EEEE", "aaaa", "dddd", "BBBB", "FFFF"));
+  EXPECT_THAT(second.result(), ElementsAre("CCCC", "FFFF", "aaaa"));
+  EXPECT_THAT(servedCompletely.result(), ElementsAre("dddd", "aaaa"));
+  // One page-cache read per read, because every read is a run of its own.
+  EXPECT_EQ(numberOfPageCacheReads, size_t{5 + 3 + 2});
 }
 
 // _____________________________________________________________________________
