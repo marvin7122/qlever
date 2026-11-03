@@ -436,7 +436,7 @@ TYPED_TEST(IoUringManagerTest, emptyBatchHasNothingToWaitFor) {
 // issued.
 TYPED_TEST(IoUringManagerTest, fakeHandle) {
   // create a handle for which no request has been queued.
-  auto fakeHandle = 999;
+  typename TypeParam::BatchHandle fakeHandle{999};
 
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
 

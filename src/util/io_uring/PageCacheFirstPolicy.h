@@ -22,7 +22,6 @@
 
 #include "backports/algorithm.h"
 #include "backports/span.h"
-#include "util/HashSet.h"
 #include "util/NoCopyNoMove.h"
 #include "util/OverloadCallOperator.h"
 #include "util/io_uring/IoUringManagerConcepts.h"
@@ -169,51 +168,42 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
   void setPageCacheFastPath(bool enabled) noexcept { enabled_ = enabled; }
 
   // Serve the reads of the batch that are in the page cache and pass the others
-  // on to the decorated policy. If all reads are served, the decorated policy
-  // is not involved at all, neither here nor in `wait`. The arguments have the
-  // contract of `PageCacheReader::readPageCacheHits` and `Policy::addBatch`.
-  void addBatch(int fd, ql::span<const size_t> numBytes,
+  // on to the decorated policy. Return whether any read is still in flight:
+  // `false` if all reads were served (the decorated policy is not involved at
+  // all), otherwise what the decorated policy's `addBatch` returns. The
+  // arguments have the contract of `PageCacheReader::readPageCacheHits` and
+  // `Policy::addBatch`.
+  bool addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle) {
     auto forwardAll = [&](const UnservedReads::NothingRead&) {
-      policy_.addBatch(fd, numBytes, offsets, buffers, handle);
+      return policy_.addBatch(fd, numBytes, offsets, buffers, handle);
     };
-    auto forwardNothing = [&](const UnservedReads::AllRead&) {
-      batchesServedCompletely_.insert(handle);
-    };
+    auto forwardNothing = [](const UnservedReads::AllRead&) { return false; };
     auto forwardRemaining =
         [&](const UnservedReads::RemainingPositions& remaining) {
           detail::SelectedReads missed{numBytes, offsets, buffers,
                                        remaining.positions()};
-          policy_.addBatch(fd, missed.numBytes_, missed.offsets_,
-                           missed.buffers_, handle);
+          return policy_.addBatch(fd, missed.numBytes_, missed.offsets_,
+                                  missed.buffers_, handle);
         };
     const UnservedReads unserved =
         enabled_ ? reader_.readPageCacheHits(fd, numBytes, offsets, buffers)
                  : UnservedReads{UnservedReads::NothingRead{}};
-    std::visit(
+    return std::visit(
         OverloadCallOperator{forwardAll, forwardNothing, forwardRemaining},
         unserved.reads_);
   }
 
-  // Block until every read of the batch `handle` has completed. The reads that
-  // `addBatch` served from the page cache are complete already, so this only
-  // waits for the reads that were passed on, and returns at once without
-  // calling the decorated policy if there were none.
-  void wait(BatchHandle handle) {
-    if (batchesServedCompletely_.erase(handle) > 0) {
-      return;
-    }
-    policy_.wait(handle);
-  }
+  // Block until every read of the batch `handle` that was passed on to the
+  // decorated policy has completed. `BatchManager` only calls this if
+  // `addBatch` returned `true`.
+  void wait(BatchHandle handle) { policy_.wait(handle); }
 
  private:
   Policy policy_;
   PageCacheReader reader_;
   bool enabled_ = true;
-  // The batches whose reads `addBatch` all served from the page cache, so that
-  // the decorated policy has nothing to do for them. `wait` removes a batch.
-  ad_utility::HashSet<BatchHandle> batchesServedCompletely_;
 };
 
 }  // namespace ad_utility

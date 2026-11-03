@@ -63,7 +63,7 @@ class RecordingManager : public ad_utility::BatchManagerBase {
       batch.emplace_back(offset, size);
       ad_utility::SyncIoPolicy::readFullyOrThrow(fd, buffer, size, offset);
     }
-    return batches_.size() - 1;
+    return BatchHandle{batches_.size() - 1, false};
   }
   void wait([[maybe_unused]] BatchHandle handle) override {}
 };
