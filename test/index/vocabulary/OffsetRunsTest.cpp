@@ -47,6 +47,15 @@ TEST(SplitIntoRuns, onlyAscendingNeighboursFormARun) {
                           IndexRun{2, 1}));
 }
 
+// _____________________________________________________________________________
+TEST(SplitIntoRuns, longRunsAreSplit) {
+  // `3..9` is one run of consecutive indices, split into runs of at most 3.
+  std::vector<size_t> indices{3, 4, 5, 6, 7, 8, 9, 1};
+  EXPECT_THAT(splitIntoRuns(indices, 3),
+              ElementsAre(IndexRun{3, 3}, IndexRun{6, 3}, IndexRun{9, 1},
+                          IndexRun{1, 1}));
+}
+
 // A `BatchManagerBase` that reads synchronously and records the reads of every
 // batch, so that the tests can check how the offsets are read.
 class RecordingManager : public ad_utility::BatchManagerBase {

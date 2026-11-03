@@ -10,6 +10,8 @@
 
 #include "index/vocabulary/OffsetRuns.h"
 
+#include <algorithm>
+
 #include "backports/algorithm.h"
 #include "util/Exception.h"
 #include "util/io_uring/IoUringManager.h"
@@ -17,16 +19,26 @@
 namespace ad_utility::vocabulary {
 
 // _____________________________________________________________________________
-std::vector<IndexRun> splitIntoRuns(ql::span<const size_t> indices) {
+std::vector<IndexRun> splitIntoRuns(ql::span<const size_t> indices,
+                                    size_t maxNumberOfIndicesPerRun) {
+  AD_CONTRACT_CHECK(maxNumberOfIndicesPerRun > 0);
+  std::vector<IndexRun> runs;
   // `chunk_by` yields no empty chunks, so `begin(run)` is valid.
-  return ::ranges::to<std::vector<IndexRun>>(
-      indices | ::ranges::views::chunk_by([](size_t previous, size_t next) {
-        return next == previous + 1;
-      }) |
-      ::ranges::views::transform([](const auto& run) {
-        return IndexRun{*::ranges::begin(run),
-                        static_cast<size_t>(::ranges::distance(run))};
-      }));
+  for (const auto& run :
+       indices | ::ranges::views::chunk_by([](size_t previous, size_t next) {
+         return next == previous + 1;
+       })) {
+    size_t firstIndex = *::ranges::begin(run);
+    auto numberOfIndicesLeft = static_cast<size_t>(::ranges::distance(run));
+    while (numberOfIndicesLeft > 0) {
+      const size_t numberOfIndices =
+          std::min(numberOfIndicesLeft, maxNumberOfIndicesPerRun);
+      runs.push_back(IndexRun{firstIndex, numberOfIndices});
+      firstIndex += numberOfIndices;
+      numberOfIndicesLeft -= numberOfIndices;
+    }
+  }
+  return runs;
 }
 
 // _____________________________________________________________________________
