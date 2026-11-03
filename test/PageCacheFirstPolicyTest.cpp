@@ -283,7 +283,7 @@ TEST(ReadPageCacheHits, emptyBatchAndContract) {
 // A `ReadPolicy` that reads synchronously and records the reads it receives.
 // The records are static because a `BatchManager` owns its policy.
 struct RecordingPolicy {
-  // The number of reads of every `addBatch` call.
+  // The number of reads of every `readBatch` call.
   static inline std::vector<size_t> batchSizes;
   // The file offsets of all reads, in the order of arrival.
   static inline std::vector<uint64_t> receivedOffsets;
@@ -295,9 +295,8 @@ struct RecordingPolicy {
   // Ignore `ringSize`: a `BatchManager` constructs its policy from one.
   // `explicit`, like the production policies.
   explicit RecordingPolicy([[maybe_unused]] ad_utility::RingSize ringSize) {}
-  void addBatch(int fd, ql::span<const size_t> numBytes,
-                ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-                [[maybe_unused]] ad_utility::BatchHandle handle) {
+  void readBatch(int fd, ql::span<const size_t> numBytes,
+                 ql::span<const uint64_t> offsets, ql::span<char*> buffers) {
     batchSizes.push_back(numBytes.size());
     for (auto&& [numberOfBytesToRead, fileOffset, targetBuffer] :
          ::ranges::views::zip(numBytes, offsets, buffers)) {
@@ -306,7 +305,6 @@ struct RecordingPolicy {
           fd, targetBuffer, numberOfBytesToRead, fileOffset);
     }
   }
-  void wait([[maybe_unused]] ad_utility::BatchHandle handle) const {}
 };
 
 // A manager whose (page-cache-first) policy is the `RecordingPolicy`
@@ -363,7 +361,7 @@ TEST(PageCacheFirstPolicy, onlyTheMissesAreForwarded) {
   RecordedManager manager{ad_utility::RingSize{64}};
   ReadBatchForTesting batch;
   batch.add({{0, 4}, {4, 4}, {12, 4}, {8, 4}});
-  manager.wait(batch.submitTo(manager, fd));
+  batch.submitTo(manager, fd);
   EXPECT_THAT(batch.result(), ElementsAre("AAAA", "BBBB", "DDDD", "CCCC"));
   EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}));
   EXPECT_THAT(RecordingPolicy::receivedOffsets,
@@ -372,8 +370,8 @@ TEST(PageCacheFirstPolicy, onlyTheMissesAreForwarded) {
 }
 
 // If the page-cache read serves every read, the decorated policy receives an
-// empty batch, and waiting for the batch returns immediately.
-TEST(PageCacheFirstPolicy, aBatchThatIsServedCompletelyHasNothingToWaitFor) {
+// empty batch.
+TEST(PageCacheFirstPolicy, aBatchThatIsServedCompletelyPassesOnAnEmptyBatch) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   RecordingPolicy::reset();
@@ -382,7 +380,7 @@ TEST(PageCacheFirstPolicy, aBatchThatIsServedCompletelyHasNothingToWaitFor) {
   RecordedManager manager{ad_utility::RingSize{64}};
   ReadBatchForTesting batch;
   batch.add({{0, 4}, {8, 4}});
-  manager.wait(batch.submitTo(manager, fd));
+  batch.submitTo(manager, fd);
   EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
   EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{0}));
   EXPECT_TRUE(RecordingPolicy::receivedOffsets.empty());
@@ -400,7 +398,7 @@ TEST(PageCacheFirstPolicy, aBatchThatIsNotServedIsPassedOnUnchanged) {
   RecordedManager manager{ad_utility::RingSize{64}};
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
-  manager.wait(batch.submitTo(manager, fd));
+  batch.submitTo(manager, fd);
   EXPECT_THAT(batch.result(), ElementsAre("CCCC", "AAAA", "DDDD"));
   EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{3}));
   EXPECT_THAT(RecordingPolicy::receivedOffsets,
@@ -423,7 +421,7 @@ TEST(PageCacheFirstPolicy, theFastPathCanBeSwitchedOffAndOn) {
   {
     ReadBatchForTesting batch;
     batch.add({{0, 4}, {8, 4}});
-    manager.wait(batch.submitTo(manager, fd));
+    batch.submitTo(manager, fd);
     EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
     EXPECT_EQ(numPageCacheReads, size_t{0});
     EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}));
@@ -432,7 +430,7 @@ TEST(PageCacheFirstPolicy, theFastPathCanBeSwitchedOffAndOn) {
   {
     ReadBatchForTesting batch;
     batch.add({{0, 4}, {8, 4}});
-    manager.wait(batch.submitTo(manager, fd));
+    batch.submitTo(manager, fd);
     EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
     EXPECT_EQ(numPageCacheReads, size_t{2});
     EXPECT_THAT(RecordingPolicy::batchSizes, ElementsAre(size_t{2}, size_t{0}));
@@ -451,7 +449,7 @@ TEST(PageCacheFirstPolicy, anUnsupportedFastPathIsLeftAlone) {
   for (int round = 0; round < 2; ++round) {
     ReadBatchForTesting batch;
     batch.add({{0, 4}, {8, 4}});
-    manager.wait(batch.submitTo(manager, fd));
+    batch.submitTo(manager, fd);
     EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
     EXPECT_FALSE(ad_utility::pageCacheFastPathIsSupported());
   }

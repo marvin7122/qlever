@@ -15,7 +15,6 @@
 
 #include "backports/concepts.h"
 #include "backports/span.h"
-#include "util/BatchHandle.h"
 #include "util/RingSize.h"
 
 // The concepts that the templates of the batch-read module (`BatchManager` in
@@ -33,12 +32,10 @@ namespace ad_utility::detail {
 template <typename T>
 CPP_requires(ReadPolicy_,
              requires(T& policy, int fd, ql::span<const size_t> numBytes,
-                      ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-                      BatchHandle handle)(
-                 // Must provide `addBatch` with the following parameters.
-                 policy.addBatch(fd, numBytes, offsets, buffers, handle),
-                 // Must provide a `wait` method with the following interface.
-                 policy.wait(handle)));
+                      ql::span<const uint64_t> offsets,
+                      ql::span<char*> buffers)(
+                 // Must provide `readBatch` with the following parameters.
+                 policy.readBatch(fd, numBytes, offsets, buffers)));
 
 // The pluggable I/O backend of `BatchManager`: it specifies how the reads in a
 // batch are carried out. Implemented by `IoUringPolicy` (io_uring, in
@@ -48,15 +45,12 @@ CPP_requires(ReadPolicy_,
 // A `ReadPolicy` must
 // - be constructible from a `RingSize`, which `BatchManager` forwards (a
 //   policy without a ring ignores it);
-// - provide `addBatch(fd, numBytes, offsets, buffers, handle)`, where read `i`
-//   reads `numBytes[i]` bytes from `fd`, starting at byte `offsets[i]` of the
-//   file, into `buffers[i]`. The three spans have the same length (checked by
-//   `BatchManager::addBatch`). The span contents may be used only during the
-//   call, but the buffers they point to must stay valid until `wait(handle)`
-//   has returned;
-// - provide `wait(handle)`, which returns once every read of the batch
-//   `handle` has completed.
-// A failed read is reported by an exception from `addBatch` or from `wait`.
+// - provide `readBatch(fd, numBytes, offsets, buffers)`, where read `i` reads
+//   `numBytes[i]` bytes from `fd`, starting at byte `offsets[i]` of the file,
+//   into `buffers[i]`. `BatchManager::readBatch` checks that the three spans
+//   have the same length before it calls the policy. `readBatch` returns (or
+//   throws) only once no read of the batch can write into its buffer any
+//   more, and it reports a failed or short read by throwing.
 template <typename T>
 CPP_concept ReadPolicyConcept = ::concepts::constructible_from<T, RingSize> &&
                                 CPP_requires_ref(ReadPolicy_, T);

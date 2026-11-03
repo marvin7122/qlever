@@ -59,11 +59,10 @@ void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
 }
 
 //______________________________________________________________________________
-void SyncIoPolicy::addBatch(int fd,
-                            ql::span<const size_t> numBytesToReadPerRequest,
-                            ql::span<const uint64_t> fileOffsetPerRequest,
-                            ql::span<char*> targetBufferPerRequest,
-                            [[maybe_unused]] BatchHandle handle) const {
+void SyncIoPolicy::readBatch(int fd,
+                             ql::span<const size_t> numBytesToReadPerRequest,
+                             ql::span<const uint64_t> fileOffsetPerRequest,
+                             ql::span<char*> targetBufferPerRequest) const {
   for (const auto& [numBytesToRead, fileOffset, targetBuf] :
        ::ranges::views::zip(numBytesToReadPerRequest, fileOffsetPerRequest,
                             targetBufferPerRequest)) {
@@ -231,10 +230,9 @@ IoUringPolicy::IoUringPolicy(RingSize ringSize,
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::addBatch(int fd, ql::span<const size_t> numBytesToRead,
-                             ql::span<const uint64_t> offsets,
-                             ql::span<char*> buffers,
-                             [[maybe_unused]] BatchHandle handle) {
+void IoUringPolicy::readBatch(int fd, ql::span<const size_t> numBytesToRead,
+                              ql::span<const uint64_t> offsets,
+                              ql::span<char*> buffers) {
   validateSameLength(numBytesToRead, offsets, buffers);
   if (numBytesToRead.empty()) {
     return;
@@ -245,9 +243,9 @@ void IoUringPolicy::addBatch(int fd, ql::span<const size_t> numBytesToRead,
   // `run` throws only if a correctness check fails or memory runs out. The
   // bookkeeping can then no longer tell which reads the kernel still holds, so
   // the exception must not reach the caller, who would free the buffers.
-  ad_utility::terminateIfThrows(
-      [&]() { run(fd, offsets, buffers, batch); },
-      "IoUringPolicy::addBatch must not throw while the kernel may hold reads");
+  ad_utility::terminateIfThrows([&]() { run(fd, offsets, buffers, batch); },
+                                "IoUringPolicy::readBatch must not throw while "
+                                "the kernel may hold reads");
   if (batch.error.has_value()) {
     AD_THROW(std::move(batch.error).value());
   }
@@ -259,7 +257,7 @@ void IoUringPolicy::run(int fd, ql::span<const uint64_t> offsets,
   const size_t numReads = batch.numBytes.size();
   while (true) {
     // Fill the free ring slots with the next reads, unless the batch has
-    // failed (then `addBatch` throws anyway). At most `ringSize_` requests are
+    // failed (then `readBatch` throws anyway). At most `ringSize_` requests are
     // in the ring, so a free SQE is always available and the completion queue
     // (checked by the constructor to have room for `ringSize_` CQEs) cannot
     // overflow.
@@ -323,7 +321,7 @@ void IoUringPolicy::submit(Batch& batch) {
       // buffers). If it holds none, the queued reads were never handed
       // to the kernel, so the batch can fail gracefully instead: cancel
       // its queued reads (their SQEs stay queued as no-ops) and let
-      // `addBatch` throw the error. No-ops in the kernel write nothing,
+      // `readBatch` throw the error. No-ops in the kernel write nothing,
       // so they do not force termination either.
       if (batch.numReadsInKernel() == 0) {
         cancelQueuedReads(

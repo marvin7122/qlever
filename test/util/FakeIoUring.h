@@ -98,7 +98,7 @@ class FakeIoUring final : public IoUringInterface {
   }
 
   // The reads (not no-ops) that are queued, in the kernel, or completed but
-  // not reaped. Between two `addBatch` calls this must be zero.
+  // not reaped. Between two `readBatch` calls this must be zero.
   size_t numReadsInRing() const {
     auto isRead = [](const auto& requestOrCompletion) {
       return !requestOrCompletion.isNoOp;

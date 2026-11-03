@@ -15,7 +15,6 @@
 #include <memory>
 
 #include "backports/span.h"
-#include "util/BatchHandle.h"
 #include "util/RingSize.h"
 
 // The interface of the batched reads of `VocabularyOnDisk::lookupBatch`: a
@@ -32,28 +31,21 @@ namespace ad_utility {
 // backend at runtime.
 class BatchManagerBase {
  public:
-  using BatchHandle = ::ad_utility::BatchHandle;
-
   // Virtual, because the pool owns its managers as
   // `std::unique_ptr<BatchManagerBase>`.
   virtual ~BatchManagerBase() = default;
 
   // Read a batch: read `i` reads `numBytes[i]` bytes from `fd`, starting at
-  // byte `offsets[i]` of the file, into `buffers[i]`. Return the handle of the
-  // batch, which `wait` takes. The buffers must stay valid until `wait` has
-  // returned for that handle. Throw if the three spans differ in length or a
-  // read fails or is short.
-  [[nodiscard]] virtual BatchHandle addBatch(int fd,
-                                             ql::span<const size_t> numBytes,
-                                             ql::span<const uint64_t> offsets,
-                                             ql::span<char*> buffers) = 0;
-
-  // Block until every read of the batch `handle` has completed. Throw if one
-  // of them failed and `addBatch` did not throw already.
-  virtual void wait(BatchHandle handle) = 0;
+  // byte `offsets[i]` of the file, into `buffers[i]`. Return (or throw) only
+  // once no read of the batch can write into its buffer any more, so the
+  // caller may free the buffers right away. Throw if the three spans differ in
+  // length or a read fails or is short.
+  virtual void readBatch(int fd, ql::span<const size_t> numBytes,
+                         ql::span<const uint64_t> offsets,
+                         ql::span<char*> buffers) = 0;
 
   // Switch the page-cache fast path of this manager on or off (see
-  // `PageCacheFirstPolicy`). Takes effect for the batches added afterwards.
+  // `PageCacheFirstPolicy`). Takes effect for the batches read afterwards.
   // Managers without a page-cache fast path ignore it.
   virtual void setPageCacheFastPath([[maybe_unused]] bool enabled) noexcept {}
 };

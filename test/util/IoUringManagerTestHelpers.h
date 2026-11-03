@@ -23,7 +23,6 @@
 #include "GTestHelpers.h"
 #include "backports/algorithm.h"
 #include "backports/span.h"
-#include "util/BatchHandle.h"
 #include "util/File.h"
 
 namespace ioUringManagerTestHelpers {
@@ -97,12 +96,11 @@ class ReadBatchForTesting {
                                                     reads.size()});
   }
 
-  // Submit all accumulated reads to `manager` for file `fd`; returns the
-  // handle.
+  // Read all accumulated reads with `manager` from file `fd`.
   template <typename Manager>
-  typename Manager::BatchHandle submitTo(Manager& manager, int fd) {
+  void submitTo(Manager& manager, int fd) {
     std::vector<char*> pointers = bufferPointers();
-    return manager.addBatch(fd, numBytes_, offsets_, pointers);
+    manager.readBatch(fd, numBytes_, offsets_, pointers);
   }
 
   // The bytes read by each read, in request order (valid once the batch has
@@ -113,22 +111,18 @@ class ReadBatchForTesting {
   // (so `i` must be smaller than the number of added reads).
   uint64_t offset(size_t i) const { return offsets_[i]; }
 
-  // Like `submitTo`, but directly to a `ReadPolicy`, bypassing the
-  // `BatchManager`: the spans are not validated and no handle is minted, so
-  // the caller passes the `handle` that the policy's `addBatch` receives
-  // (`IoUringPolicy` ignores it). As with `submitTo`, the buffers are owned by
-  // this object and must outlive the batch.
+  // Like `submitTo`, but directly with a `ReadPolicy`, bypassing the
+  // `BatchManager` (which validates the spans).
   template <typename Policy>
-  void submitToPolicy(Policy& policy, int fd, ad_utility::BatchHandle handle) {
+  void submitToPolicy(Policy& policy, int fd) {
     std::vector<char*> pointers = bufferPointers();
-    policy.addBatch(fd, numBytes_, offsets_, pointers, handle);
+    policy.readBatch(fd, numBytes_, offsets_, pointers);
   }
 
  private:
   // The buffer pointers of all added reads. Precondition: no `add` runs
-  // between this call and the `addBatch` that uses the pointers, because a
-  // further `add` may reallocate `targetBuffers_`. `addBatch` copies each
-  // address into its read request, so the vector need not outlive the call.
+  // between this call and the `readBatch` that uses the pointers, because a
+  // further `add` may reallocate `targetBuffers_`.
   std::vector<char*> bufferPointers() {
     return ::ranges::to_vector(targetBuffers_ |
                                ql::views::transform([](std::string& buffer) {

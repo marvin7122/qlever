@@ -30,7 +30,6 @@
 #include <vector>
 
 #include "backports/span.h"
-#include "util/BatchHandle.h"
 #include "util/NoCopyNoMove.h"
 #include "util/RingSize.h"
 
@@ -102,10 +101,9 @@ class IoUringInterface {
 std::unique_ptr<IoUringInterface> makeLiburingRing(RingSize ringSize);
 
 // A `ReadPolicy` that reads batches with io_uring, one batch at a time:
-// `addBatch` returns (or
-// throws) only once the kernel no longer holds any read of the batch, so the
-// caller may free the target buffers right away. `wait()` has nothing left to
-// do. Single-threaded use only. See https://github.com/axboe/liburing.
+// `readBatch` returns (or throws) only once the kernel no longer holds any read
+// of the batch, so the caller may free the target buffers right away.
+// Single-threaded use only. See https://github.com/axboe/liburing.
 //
 // Each read of a batch goes through the states of `ReadState`:
 //
@@ -113,10 +111,10 @@ std::unique_ptr<IoUringInterface> makeLiburingRing(RingSize ringSize);
 //                            |
 //                            +--- submit fails for good --> Done (no-op)
 //
-// Between two `addBatch` calls the ring holds no read, only no-ops of reads
+// Between two `readBatch` calls the ring holds no read, only no-ops of reads
 // that were cancelled (they refer to no buffer). Errors are reported only
 // after the batch has left the ring: a failed or short read throws at the end
-// of `addBatch`, and so does an `io_uring_submit` that keeps failing with
+// of `readBatch`, and so does an `io_uring_submit` that keeps failing with
 // `EAGAIN` (the kernel is out of memory for requests). A failure that leaves
 // the kernel holding reads, so that throwing would let the caller free buffers
 // the kernel still writes into, terminates the process instead: any other
@@ -135,15 +133,11 @@ class IoUringPolicy : NoCopyNoMove {
 
   // Read the batch: read `i` reads `numBytesToRead[i]` bytes from `fd` at
   // offset `offsets[i]` into `buffers[i]`; the three spans must have the same
-  // length. `handle` is unused. Returns once every read has completed. Throws
-  // if a read failed or was short, or if its reads could not be submitted, but
-  // only once the kernel holds none of its reads.
-  void addBatch(int fd, ql::span<const size_t> numBytesToRead,
-                ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-                BatchHandle handle);
-
-  // Nothing to do: `addBatch` has already completed the batch.
-  void wait([[maybe_unused]] BatchHandle handle) noexcept {}
+  // length. Returns once every read has completed. Throws if a read failed or
+  // was short, or if its reads could not be submitted, but only once the
+  // kernel holds none of its reads.
+  void readBatch(int fd, ql::span<const size_t> numBytesToRead,
+                 ql::span<const uint64_t> offsets, ql::span<char*> buffers);
 
   // The request id of a no-op (the no-ops of cancelled reads keep this id). A
   // read's request id is its index in the batch, so no read gets this id. It
@@ -156,7 +150,7 @@ class IoUringPolicy : NoCopyNoMove {
  private:
   enum class ReadState : uint8_t { NotQueued, Queued, InKernel, Done };
 
-  // The batch that `addBatch` is reading. Reads are queued in index order, and
+  // The batch that `readBatch` is reading. Reads are queued in index order, and
   // the kernel takes queued SQEs in order, so the queued reads are always
   // `[numTaken, numQueued)`; the reads before `numTaken` are `InKernel` or
   // `Done`.

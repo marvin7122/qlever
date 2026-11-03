@@ -14,7 +14,6 @@
 #include <cstdint>
 
 #include "backports/span.h"
-#include "util/BatchHandle.h"
 #include "util/NoCopyNoMove.h"
 #include "util/RingSize.h"
 
@@ -36,15 +35,10 @@ struct SyncIoPolicy : NoCopyNoMove {
   // thread. Read `i` reads `numBytesToReadPerRequest[i]` bytes from file
   // descriptor `fd`, starting at offset `fileOffsetPerRequest[i]` (from the
   // start of the file), into the buffer starting at
-  // `targetBufferPerRequest[i]`. `handle` is unused (the batch completes before
-  // `addBatch` returns).
-  void addBatch(int fd, ql::span<const size_t> numBytesToReadPerRequest,
-                ql::span<const uint64_t> fileOffsetPerRequest,
-                ql::span<char*> targetBufferPerRequest,
-                BatchHandle handle) const;
-
-  // No-op: `addBatch` already completed all reads synchronously.
-  void wait(BatchHandle) const noexcept {}
+  // `targetBufferPerRequest[i]`.
+  void readBatch(int fd, ql::span<const size_t> numBytesToReadPerRequest,
+                 ql::span<const uint64_t> fileOffsetPerRequest,
+                 ql::span<char*> targetBufferPerRequest) const;
 
   // Read exactly `numBytes` bytes from file descriptor `fd` at `fileOffset`
   // (from the start of the file) into `targetBuffer`. Throws exception if the

@@ -16,18 +16,15 @@
 #include "backports/concepts.h"
 #include "backports/span.h"
 #include "util/Algorithm.h"
-#include "util/BatchHandle.h"
 #include "util/IoUringManager.h"
 #include "util/IoUringManagerConcepts.h"
-#include "util/MonotonicCounter.h"
 #include "util/NoCopyNoMove.h"
 #include "util/RingSize.h"
 
 namespace ad_utility {
 
-// `BatchManager` owns the batch bookkeeping (minting a `BatchHandle` per batch,
-// validating the input spans) and delegates the reads from the underlying
-// Vocabulary to the `ReadPolicy`, which must satisfy
+// `BatchManager` validates the input spans and delegates the reads from the
+// underlying Vocabulary to the `ReadPolicy`, which must satisfy
 // `detail::ReadPolicyConcept` from `IoUringManagerConcepts.h`. Neither copyable
 // nor movable: it owns its policy (for `IoUringPolicy` the io_uring ring), and
 // the pool holds managers by `std::unique_ptr`.
@@ -38,27 +35,17 @@ class BatchManager final : public BatchManagerBase, NoCopyNoMove {
       "BatchManager's ReadPolicy must satisfy the ReadPolicyConcept.");
 
  public:
-  using BatchHandle = ::ad_utility::BatchHandle;
-
   // `explicit`, so that a bare ring size cannot silently convert to a
   // manager where a `BatchManager` is expected.
   explicit BatchManager(RingSize ringSize = RingSize{}) : policy_(ringSize) {}
 
-  [[nodiscard]] BatchHandle addBatch(int fd, ql::span<const size_t> numBytes,
-                                     ql::span<const uint64_t> offsets,
-                                     ql::span<char*> buffers) override {
+  void readBatch(int fd, ql::span<const size_t> numBytes,
+                 ql::span<const uint64_t> offsets,
+                 ql::span<char*> buffers) override {
     validateSameLength(numBytes, offsets, buffers);
-
-    BatchHandle handle{nextBatchHandle_.mintNext()};
-
     // Delegate the I/O work to the policy.
-    policy_.addBatch(fd, numBytes, offsets, buffers, handle);
-
-    return handle;
+    policy_.readBatch(fd, numBytes, offsets, buffers);
   }
-
-  // Block until every read in `handle` has completed.
-  void wait(BatchHandle handle) override { policy_.wait(handle); }
 
   // Forward the switch to the policy if it has one.
   void setPageCacheFastPath([[maybe_unused]] bool enabled) noexcept override {
@@ -70,10 +57,6 @@ class BatchManager final : public BatchManagerBase, NoCopyNoMove {
 
  private:
   [[no_unique_address]] ReadPolicy policy_;
-
-  // The source of the handles that `addBatch` returns. Handles only identify
-  // batches, so uniqueness, which `MonotonicCounter` guarantees, suffices.
-  MonotonicCounter nextBatchHandle_;
 };
 
 }  // namespace ad_utility

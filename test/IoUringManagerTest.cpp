@@ -42,7 +42,6 @@
 #include "util/IoUringManagerTestHelpers.h"
 #include "util/IoUringPolicy.h"
 #include "util/Log.h"
-#include "util/MonotonicCounter.h"
 #include "util/PageCacheFirstPolicy.h"
 #include "util/PageCacheReadTestHelpers.h"
 #include "util/SyncIoPolicy.h"
@@ -74,10 +73,10 @@ class SequentialReadScenarioForTesting {
   // The full file content to pass to `makeTempFile`.
   const std::string& content() const { return content_; }
 
-  // Submit all reads to `manager` for file `fd`; returns the handle.
+  // Read all reads with `manager` from file `fd`.
   template <typename Manager>
-  typename Manager::BatchHandle submitTo(Manager& manager, int fd) {
-    return batch_.submitTo(manager, fd);
+  void submitTo(Manager& manager, int fd) {
+    batch_.submitTo(manager, fd);
   }
 
   // The bytes actually read (valid once the batch has completed).
@@ -145,7 +144,7 @@ using ManagerTypes =
 
 TYPED_TEST_SUITE(IoUringManagerTest, ManagerTypes);
 
-// The basic happy path: a single batch of reads is submitted and waited on.
+// The basic happy path: a single batch of reads is read.
 // Each read result lands with the correct bytes in its own target buffer.
 // The non-sequential offsets in `fileOffsets` (8, 0, 12) also cover
 // order-independence of reads within a batch.
@@ -156,12 +155,12 @@ TYPED_TEST(IoUringManagerTest, SingleBatch) {
   batch.add({{8, 4}, {0, 4}, {12, 4}});
 
   TypeParam manager{ad_utility::RingSize{64}};
-  manager.wait(batch.submitTo(manager, fd));
+  batch.submitTo(manager, fd);
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
 }
 
-// `addBatch` requires the per-request spans (byte counts, offsets, target
+// `readBatch` requires the per-request spans (byte counts, offsets, target
 // buffers) to all have the same length. Passing spans of differing lengths is
 // a precondition violation and must throw before any I/O is issued.
 TYPED_TEST(IoUringManagerTest, mismatchedSpanLengthsThrow) {
@@ -175,55 +174,31 @@ TYPED_TEST(IoUringManagerTest, mismatchedSpanLengthsThrow) {
   std::vector<char*> buffers{buffer.data()};  // length 1
 
   AD_EXPECT_THROW_WITH_MESSAGE(
-      std::ignore = manager.addBatch(fd, numBytes, fileOffsets, buffers),
+      manager.readBatch(fd, numBytes, fileOffsets, buffers),
       HasSubstr("The ranges must have the same length"));
 }
 
-// MultipleBatchesSequential: 3 batches submitted and waited in order.
+// MultipleBatchesSequential: 3 batches read one after the other.
 TYPED_TEST(IoUringManagerTest, MultipleBatchesSequential) {
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDDEEEEFFFFGGGG");
 
   TypeParam manager{ad_utility::RingSize{64}};
 
-  auto makeAndWait = [&](uint64_t offset, size_t numBytes,
-                         std::string_view expected) {
+  auto readAndCheck = [&](uint64_t offset, size_t numBytes,
+                          std::string_view expected) {
     ReadBatchForTesting batch;
     batch.add(offset, numBytes);
-    manager.wait(batch.submitTo(manager, fd));
+    batch.submitTo(manager, fd);
     EXPECT_THAT(batch.result(), ::testing::ElementsAre(expected));
   };
 
-  makeAndWait(0, 4, "AAAA");
-  makeAndWait(4, 4, "BBBB");
-  makeAndWait(8, 4, "CCCC");
+  readAndCheck(0, 4, "AAAA");
+  readAndCheck(4, 4, "BBBB");
+  readAndCheck(8, 4, "CCCC");
 }
 
-// Batch handles can be waited on out of submission order: batches A and B
-// are added one after the other (each `addBatch` completes its batch before
-// returning), then their handles are `wait()`ed in reverse order. Each
-// handle must still resolve its own batch's reads correctly.
-TYPED_TEST(IoUringManagerTest, WaitOutOfOrder) {
-  auto [tmp, fd] = makeTempFile("AAAABBBB");
-
-  TypeParam manager{ad_utility::RingSize{64}};
-
-  ReadBatchForTesting batchA;
-  batchA.add(0, 4);
-  ReadBatchForTesting batchB;
-  batchB.add(4, 4);
-
-  auto handleA = batchA.submitTo(manager, fd);
-  auto handleB = batchB.submitTo(manager, fd);
-
-  manager.wait(handleB);
-  manager.wait(handleA);
-
-  EXPECT_THAT(batchA.result(), ::testing::ElementsAre("AAAA"));
-  EXPECT_THAT(batchB.result(), ::testing::ElementsAre("BBBB"));
-}
-
-// A single `addBatch` call requesting more reads (400) than the submission ring
-// buffer can hold at once (64) forces the manager to submit the SQEs in
+// A single `readBatch` call requesting more reads (400) than the submission
+// ring buffer can hold at once (64) forces the manager to submit the SQEs in
 // successive rounds: it fills the ring buffer with as many SQEs as fit, reaps
 // their CQEs, then refills with the next round of SQEs until all 400 reads
 // complete. Verify every read still lands in the correct buffer. Each 4-byte
@@ -243,7 +218,7 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
 
   auto [tmp, fd] = makeTempFile(scenario.content());
   TypeParam manager{ad_utility::RingSize{64}};
-  manager.wait(scenario.submitTo(manager, fd));
+  scenario.submitTo(manager, fd);
 
   EXPECT_THAT(scenario.results(),
               ::testing::ElementsAreArray(scenario.expected()));
@@ -267,18 +242,17 @@ TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanRing) {
     TypeParam manager{ad_utility::RingSize{ringSize}};
     // All reads are page-cache hits; send them through the decorated policy.
     manager.setPageCacheFastPath(false);
-    manager.wait(scenario.submitTo(manager, fd));
+    scenario.submitTo(manager, fd);
     EXPECT_THAT(scenario.results(),
                 ::testing::ElementsAreArray(scenario.expected()))
         << "ring size " << ringSize;
   }
 }
 
-// Many small batches (1, 3 or 5 reads each), each completed by its own
-// `addBatch` and waited on in a different order than they were added, all
-// see the correct bytes. Batch sizes that are not multiples of the reap
-// wave (1, 3, 5, ...) cover partial waves within a batch.
-TYPED_TEST(IoUringManagerTest, ManySmallBatchesCompletedByAddBatch) {
+// Many small batches (1, 3 or 5 reads each), read one after the other on the
+// same manager, all see the correct bytes. Batch sizes that are not multiples
+// of the reap wave (1, 3, 5, ...) cover partial waves within a batch.
+TYPED_TEST(IoUringManagerTest, ManySmallBatches) {
   constexpr size_t M = 12;
   std::string fileContent;
   std::vector<std::vector<std::string>> expected(M);
@@ -299,14 +273,8 @@ TYPED_TEST(IoUringManagerTest, ManySmallBatchesCompletedByAddBatch) {
   TypeParam manager{ad_utility::RingSize{64}};
   // All reads are page-cache hits; send them through the decorated policy.
   manager.setPageCacheFastPath(false);
-  std::vector<typename TypeParam::BatchHandle> handles;
   for (auto& batch : batches) {
-    handles.push_back(batch.submitTo(manager, fd));
-  }
-  // Wait on the last batch first, then on the rest in submission order.
-  manager.wait(handles.back());
-  for (size_t i = 0; i + 1 < M; ++i) {
-    manager.wait(handles[i]);
+    batch.submitTo(manager, fd);
   }
   for (size_t i = 0; i < M; ++i) {
     EXPECT_THAT(batches[i].result(), ::testing::ElementsAreArray(expected[i]))
@@ -314,32 +282,31 @@ TYPED_TEST(IoUringManagerTest, ManySmallBatchesCompletedByAddBatch) {
   }
 }
 
-// A failed read in one batch does not affect a good batch that was added
-// before it and is waited on after it.
+// A failed batch does not affect the batches that the same manager reads
+// before and after it.
 TYPED_TEST(IoUringManagerTest, ErrorInOneBatchKeepsOtherBatchesConsistent) {
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
 
   TypeParam manager{ad_utility::RingSize{64}};
-  // The reads are page-cache hits; send them through the decorated policy so
-  // that `good` and `bad` share the ring.
+  // The reads are page-cache hits; send them through the decorated policy.
   manager.setPageCacheFastPath(false);
-  ReadBatchForTesting good;
-  good.add({{0, 4}, {4, 4}, {8, 4}});
+  ReadBatchForTesting before;
+  before.add({{0, 4}, {4, 4}, {8, 4}});
   ReadBatchForTesting bad;
   bad.add(8, 16);  // past EOF: short read
+  ReadBatchForTesting after;
+  after.add({{8, 4}, {0, 4}});
 
-  // Both policies read in `addBatch`, so the throw happens on submission.
-  auto goodHandle = good.submitTo(manager, fd);
-  AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(bad.submitTo(manager, fd)),
+  before.submitTo(manager, fd);
+  AD_EXPECT_THROW_WITH_MESSAGE(bad.submitTo(manager, fd),
                                HasSubstr("read fewer bytes than requested"));
-  manager.wait(goodHandle);
-  EXPECT_THAT(good.result(), ::testing::ElementsAre("AAAA", "BBBB", "CCCC"));
+  after.submitTo(manager, fd);
+  EXPECT_THAT(before.result(), ::testing::ElementsAre("AAAA", "BBBB", "CCCC"));
+  EXPECT_THAT(after.result(), ::testing::ElementsAre("CCCC", "AAAA"));
 }
 
-// Many independent batches of one read each, each added and only then
-// waited on, each see their read in their own buffer. (Every `addBatch`
-// already completes its batch; the `wait`s below are no-ops that must
-// still resolve each handle to its own batch.)
+// Many independent batches of one read each, read one after the other, each
+// see their read in their own buffer.
 TYPED_TEST(IoUringManagerTest, MultipleSmallBatches) {
   // M 4-byte chunks; chunk i is filled with the character 'A'+i. Since M <= 26
   // the chunks have distinct contents, so a read whose data lands in the wrong
@@ -358,14 +325,8 @@ TYPED_TEST(IoUringManagerTest, MultipleSmallBatches) {
 
   TypeParam manager{ad_utility::RingSize{64}};
 
-  // Add all M batches (one read each); each completes inside `addBatch`.
-  const auto batchHandles = ::ranges::to<std::vector>(
-      batches | ql::views::transform([&manager, fd = fd](auto& batch) {
-        return batch.submitTo(manager, fd);
-      }));
-  // Wait on each handle, in submission order.
-  for (const auto& handle : batchHandles) {
-    manager.wait(handle);
+  for (auto& batch : batches) {
+    batch.submitTo(manager, fd);
   }
 
   // Each batch's read must have landed in its own buffer; a completion routed
@@ -378,7 +339,7 @@ TYPED_TEST(IoUringManagerTest, MultipleSmallBatches) {
 
 // Request more bytes than the file contains, i.e. read past EOF. A read that
 // cannot be fully satisfied is a short read, which both policies must report as
-// an error (`std::runtime_error`). Both policies throw in `addBatch`.
+// an error (`std::runtime_error`).
 TYPED_TEST(IoUringManagerTest, ReadPastEofThrows) {
   auto [tmp, fd] = makeTempFile("AAAABBBB");  // 8 bytes
 
@@ -386,7 +347,7 @@ TYPED_TEST(IoUringManagerTest, ReadPastEofThrows) {
   ReadBatchForTesting batch;
   batch.add(0, 16);  // request more than the 8 available
 
-  AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(batch.submitTo(manager, fd)),
+  AD_EXPECT_THROW_WITH_MESSAGE(batch.submitTo(manager, fd),
                                HasSubstr("read fewer bytes than requested"));
 }
 
@@ -411,7 +372,7 @@ TYPED_TEST(IoUringManagerTest, LargeReads) {
   auto [tmp, fd] = makeTempFile(scenario.content());
 
   TypeParam manager{ad_utility::RingSize{64}};
-  manager.wait(scenario.submitTo(manager, fd));
+  scenario.submitTo(manager, fd);
 
   EXPECT_THAT(scenario.results(),
               ::testing::ElementsAreArray(scenario.expected()));
@@ -425,7 +386,7 @@ TYPED_TEST(IoUringManagerTest, differingReadSizes) {
   batch.add({{8, 1}, {0, 2}, {12, 3}});
 
   TypeParam manager{ad_utility::RingSize{64}};
-  manager.wait(batch.submitTo(manager, fd));
+  batch.submitTo(manager, fd);
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("C", "AA", "DDD"));
 }
@@ -438,62 +399,18 @@ TYPED_TEST(IoUringManagerTest, zeroLengthReadsWithNonZeroLengthReads) {
   batch.add({{8, 1}, {0, 0}, {12, 3}});
 
   TypeParam manager{ad_utility::RingSize{64}};
-  manager.wait(batch.submitTo(manager, fd));
+  batch.submitTo(manager, fd);
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("C", "", "DDD"));
 }
 
-// Dropping a `SyncIoPolicy`-backed manager with reads submitted but never
-// waited: the synchronous policy performs all reads eagerly in `submitTo`, so
-// by the time the manager is destroyed nothing is outstanding, the destructor
-// has nothing to drain, and it logs no warning. This is the counterpart to the
-// io_uring-specific `dropManagerWithoutWait` test below.
-TEST(IoUringManagerDrop, dropSyncManagerHasNothingOutstanding) {
-  using Manager = ad_utility::BatchManager<ad_utility::SyncIoPolicy>;
-  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
-
-  // Capture the log so we can assert that the destructor stays silent.
-  auto [restoreLog, logStream] = setGlobalLoggingStreamToStringStream();
-
-  ReadBatchForTesting batch;
-  batch.add({{8, 4}, {0, 4}, {12, 4}});
-  {
-    Manager manager{ad_utility::RingSize{64}};
-    batch.submitTo(manager, fd);  // reads happen synchronously here
-    // `manager` is destroyed here; nothing is outstanding, so no warning.
-  }
-
-  EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
-  EXPECT_THAT(logStream.str(), ::testing::IsEmpty());
-}
-
 #ifdef QLEVER_HAS_IO_URING
-// `addBatch` reads the whole batch, so a failed read is thrown by the
-// `addBatch` of its own batch, and the next batch is not affected.
-TEST(IoUringPolicyErrors, failureIsThrownByItsOwnBatch) {
-  if (!ioUringAvailableAtRuntime()) {
-    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
-                    "(e.g. blocked by seccomp inside Docker)";
-  }
-  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
-  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
-  Manager manager{ad_utility::RingSize{64}};
-  ReadBatchForTesting bad;
-  bad.add(8, 16);  // past EOF: short read
-  AD_EXPECT_THROW_WITH_MESSAGE(bad.submitTo(manager, fd),
-                               HasSubstr("read fewer bytes than requested"));
-  ReadBatchForTesting good;
-  good.add({{0, 4}, {4, 4}, {8, 4}});
-  manager.wait(good.submitTo(manager, fd));
-  EXPECT_THAT(good.result(), ::testing::ElementsAre("AAAA", "BBBB", "CCCC"));
-}
-
-// Drop the manager without waiting for its batch. `IoUringPolicy::addBatch`
-// returns only once the kernel holds none of the batch's reads, so there is
-// nothing left to drain: the results are complete and nothing is logged. This
-// is specific to the io_uring backend, so the test is not part of the typed
-// suite.
-TEST(IoUringManagerDrop, dropManagerWithoutWait) {
+// Destroy the manager right after a batch. `IoUringPolicy::readBatch` returns
+// only once the kernel holds none of the batch's reads, so the teardown of the
+// ring has nothing left to drain: the results are complete and nothing is
+// logged. This is specific to the io_uring backend, so the test is not part of
+// the typed suite.
+TEST(IoUringManagerDrop, destroyTheManagerRightAfterABatch) {
   if (!ioUringAvailableAtRuntime()) {
     GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
                     "(e.g. blocked by seccomp inside Docker)";
@@ -506,7 +423,7 @@ TEST(IoUringManagerDrop, dropManagerWithoutWait) {
   batch.add({{8, 4}, {0, 4}, {12, 4}});
   {
     Manager manager{ad_utility::RingSize{64}};
-    batch.submitTo(manager, fd);  // never waited for
+    batch.submitTo(manager, fd);
     EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
   }
   EXPECT_THAT(logStream.str(), ::testing::IsEmpty());
@@ -553,9 +470,9 @@ TEST(LiburingRing, cancelledReadsCompleteAsNoOps) {
 // `EAGAIN` (some longer than the policy retries), interrupts waits, completes
 // requests in any order, and makes reads short or fail. For many random
 // seeds, ring sizes and batches it checks:
-// - after every `addBatch`, the ring holds no read of the batch, so the
+// - after every `readBatch`, the ring holds no read of the batch, so the
 //   caller may free the buffers;
-// - `addBatch` throws iff a read of the batch was faulty or its reads were
+// - `readBatch` throws iff a read of the batch was faulty or its reads were
 //   cancelled, and otherwise every buffer holds the bytes of its file range.
 TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
   using ad_utility::testing::FakeIoUring;
@@ -586,7 +503,8 @@ TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
     ad_utility::IoUringPolicy policy{ad_utility::RingSize{ringSize},
                                      std::move(fakeRing)};
 
-    for (size_t batchIndex : ql::views::iota(size_t{0}, size_t{10})) {
+    for ([[maybe_unused]] size_t batchIndex :
+         ql::views::iota(size_t{0}, size_t{10})) {
       ReadBatchForTesting batch;
       const size_t numReads =
           std::uniform_int_distribution<size_t>{0, 40}(random);
@@ -601,8 +519,7 @@ TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
       fake.resetObservations();
       bool threw = false;
       try {
-        batch.submitToPolicy(policy, /*fd=*/-1,
-                             ad_utility::BatchHandle{batchIndex});
+        batch.submitToPolicy(policy, /*fd=*/-1);
       } catch (const std::exception& e) {
         threw = true;
         EXPECT_THAT(e.what(), HasSubstr("IoUringPolicy"));
@@ -635,7 +552,7 @@ TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
   EXPECT_GT(total.cancelledReads, 0u);
 }
 
-// `IoUringPolicy::addBatch` rejects spans of different lengths.
+// `IoUringPolicy::readBatch` rejects spans of different lengths.
 TEST(IoUringPolicyModel, spansOfDifferentLengthsThrow) {
   using ad_utility::testing::FakeIoUring;
   ad_utility::IoUringPolicy policy{
@@ -646,8 +563,7 @@ TEST(IoUringPolicyModel, spansOfDifferentLengthsThrow) {
   std::string buffer(8, '-');
   std::vector<char*> buffers{buffer.data(), buffer.data() + 4};
   AD_EXPECT_THROW_WITH_MESSAGE(
-      policy.addBatch(/*fd=*/-1, numBytes, offsets, buffers,
-                      ad_utility::BatchHandle{0}),
+      policy.readBatch(/*fd=*/-1, numBytes, offsets, buffers),
       HasSubstr("The ranges must have the same length"));
 }
 
@@ -667,12 +583,12 @@ TEST(IoUringPolicyModel, aBrokenRingTerminates) {
         std::make_unique<FakeIoUring>("AAAABBBB", 8, faults, 0)};
     ReadBatchForTesting batch;
     batch.add({{0, 4}, {4, 4}});
-    batch.submitToPolicy(policy, /*fd=*/-1, ad_utility::BatchHandle{0});
+    batch.submitToPolicy(policy, /*fd=*/-1);
   };
   FakeIoUring::Faults brokenSubmit;
   brokenSubmit.brokenSubmitErrno = EBADF;
   // The very first submit already fails, so the kernel holds no read of
-  // the batch: `addBatch` throws instead of terminating.
+  // the batch: `readBatch` throws instead of terminating.
   AD_EXPECT_THROW_WITH_MESSAGE(
       readWith(brokenSubmit),
       HasSubstr("io_uring_submit failed in IoUringPolicy"));
@@ -718,47 +634,6 @@ TEST(LiburingRing, capacitiesMatchTheRingSize) {
 }
 #endif
 
-// Wait on `BatchHandle` for which the read call has already been reaped from
-// the completion queue.
-TYPED_TEST(IoUringManagerTest, waitOnNonExistingBatch) {
-  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
-
-  ReadBatchForTesting batch;
-  batch.add({{8, 4}, {0, 4}, {12, 4}});
-
-  TypeParam manager{ad_utility::RingSize{64}};
-  auto realHandle = batch.submitTo(manager, fd);
-
-  manager.wait(realHandle);
-  // wait again on the same, already waited on handle.
-  manager.wait(realHandle);
-
-  EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
-}
-
-// Wait on `BatchHandle` for which no actual batch of read calls has been
-// issued.
-TYPED_TEST(IoUringManagerTest, fakeHandle) {
-  // create a handle for which no request has been queued.
-  typename TypeParam::BatchHandle fakeHandle{999};
-
-  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
-
-  ReadBatchForTesting batch;
-  batch.add({{8, 4}, {0, 4}, {12, 4}});
-
-  TypeParam manager{ad_utility::RingSize{64}};
-  auto realHandle = batch.submitTo(manager, fd);
-
-  // waiting on fake handle should never block.
-  manager.wait(fakeHandle);
-  // Wait on the real handle so the reads actually complete before we check
-  // them.
-  manager.wait(realHandle);
-
-  EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
-}
-
 // The universe of `RingSize` is the powers of two from 1 to 4096, with 256 as
 // the default; everything else is rejected at construction, so that no
 // consumer of a `RingSize` has to re-check it.
@@ -775,37 +650,6 @@ TEST(RingSize, onlyPowersOfTwoUpTo4096AreValid) {
   }
 }
 
-// A `MonotonicCounter` mints 0, 1, 2, ... in this order.
-TEST(MonotonicCounter, mintsConsecutiveValuesFromZero) {
-  ad_utility::MonotonicCounter counter;
-  EXPECT_EQ(counter.mintNext(), 0u);
-  EXPECT_EQ(counter.mintNext(), 1u);
-  EXPECT_EQ(counter.mintNext(), 2u);
-}
-
-// Handles compare by the number they wrap, and there is no default handle that
-// could alias a minted one.
-TEST(BatchHandle, comparesByWrappedValue) {
-  using ad_utility::BatchHandle;
-  static_assert(!std::is_default_constructible_v<BatchHandle>);
-  EXPECT_EQ(BatchHandle{7}.value(), 7u);
-  EXPECT_EQ(BatchHandle{7}, BatchHandle{7});
-  EXPECT_NE(BatchHandle{7}, BatchHandle{8});
-}
-
-// A `BatchManager` hands out a different handle for every batch.
-TEST(BatchManager, mintsDistinctHandles) {
-  auto [tmp, fd] = makeTempFile("AAAA");
-  ad_utility::BatchManager<ad_utility::SyncIoPolicy> manager;
-  ReadBatchForTesting first;
-  first.add(0, 4);
-  ReadBatchForTesting second;
-  second.add(0, 4);
-  const auto firstHandle = first.submitTo(manager, fd);
-  const auto secondHandle = second.submitTo(manager, fd);
-  EXPECT_NE(firstHandle, secondHandle);
-}
-
 // Check that the `manager` (as returned by `makeBatchManager`, see the tests
 // below) performs correct reads via the type-erased `BatchManagerBase`
 // interface.
@@ -813,7 +657,7 @@ void expectManagerWorks(ad_utility::BatchManagerBase& manager) {
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");
   ReadBatchForTesting batch;
   batch.add({{4, 4}, {0, 4}});
-  manager.wait(batch.submitTo(manager, fd));
+  batch.submitTo(manager, fd);
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("BBBB", "AAAA"));
 }
 
