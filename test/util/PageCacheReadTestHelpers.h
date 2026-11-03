@@ -16,8 +16,8 @@
 #include <cstdint>
 #include <utility>
 
-#include "util/PageCacheFirstPolicy.h"
-#include "util/PageCacheReadHook.h"
+#include "util/io_uring/PageCacheFirstPolicy.h"
+#include "util/io_uring/PageCacheReadHook.h"
 
 namespace pageCacheReadTestHelpers {
 
