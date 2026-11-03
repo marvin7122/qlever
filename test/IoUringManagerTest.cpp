@@ -8,19 +8,15 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 #include <gtest/gtest.h>
-#include <pthread.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <array>
 #include <cerrno>
-#include <chrono>
 #include <climits>
-#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
@@ -29,7 +25,6 @@
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -83,22 +78,6 @@ class SequentialReadScenarioForTesting {
   // The bytes that we expect to be read, in request order.
   const std::vector<std::string>& expected() const { return expected_; }
 };
-
-#ifdef QLEVER_HAS_IO_URING
-// Return `true` iff io_uring actually works at runtime. Even when compiled
-// in, the `io_uring_setup` syscall can be blocked (for example, by the
-// default seccomp profile of Docker, which also applies to the `RUN` steps
-// of the CI image build that execute this test suite). The result is probed
-// once and cached.
-bool ioUringAvailableAtRuntime() {
-  static const bool available = []() {
-    bool preferIoUring = true;
-    [[maybe_unused]] auto manager = ad_utility::makeBatchManager(preferIoUring);
-    return preferIoUring;
-  }();
-  return available;
-}
-#endif
 
 // Typed test fixture: each `TypeParam` is a `BatchManager` instantiated with a
 // concrete I/O policy, with and without the page-cache fast path
@@ -465,7 +444,8 @@ TYPED_TEST(IoUringManagerTest, zeroLengthReadsWithNonZeroLengthReads) {
 // waited: the synchronous policy performs all reads eagerly in `submitTo`, so
 // by the time the manager is destroyed nothing is outstanding, the destructor
 // has nothing to drain, and it logs no warning. This is the counterpart to the
-// io_uring-specific `dropRunningManager` test below.
+// io_uring-specific `IoUringPolicyOnRealRing.dropRunningManager` test in
+// `IoUringPolicyTest.cpp`.
 TEST(IoUringManagerDrop, dropSyncManagerHasNothingOutstanding) {
   using Manager = ad_utility::BatchManager<ad_utility::SyncIoPolicy>;
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
@@ -484,193 +464,6 @@ TEST(IoUringManagerDrop, dropSyncManagerHasNothingOutstanding) {
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
   EXPECT_THAT(logStream.str(), ::testing::IsEmpty());
 }
-
-#ifdef QLEVER_HAS_IO_URING
-// Fixture of the tests that need `IoUringPolicy` itself; skips them if
-// io_uring is not available at runtime.
-class IoUringPolicyTest : public ::testing::Test {
- protected:
-  void SetUp() override {
-    if (!ioUringAvailableAtRuntime()) {
-      GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
-                      "(e.g. blocked by seccomp inside Docker)";
-    }
-  }
-};
-
-// A failed read is thrown by the `wait()` of its own batch, also when the
-// `wait()` of another batch reaped its CQE, and only once.
-TEST_F(IoUringPolicyTest, failureIsThrownByItsOwnBatch) {
-  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
-  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
-  ReadBatchForTesting bad;
-  bad.add({{0, 4}, {8, 16}});  // the second read is past EOF: short read
-  ReadBatchForTesting good;
-  good.add({{0, 4}, {4, 4}, {8, 4}});
-  // Declared after the batches, so that their buffers outlive the drain in the
-  // destructor of `IoUringPolicy` if the test unwinds early.
-  Manager manager(64);
-  auto badHandle = bad.submitTo(manager, fd);
-  auto goodHandle = good.submitTo(manager, fd);
-  // Cached reads complete during submission, so this wave can also reap the
-  // failed read of `bad`.
-  manager.wait(goodHandle);
-  EXPECT_THAT(good.result(), ::testing::ElementsAre("AAAA", "BBBB", "CCCC"));
-  AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(badHandle),
-                               HasSubstr("read fewer bytes than requested"));
-  // The successful read of the failed batch landed in its buffer.
-  EXPECT_THAT(bad.result(), ::testing::ElementsAre("AAAA", ::testing::_));
-  // Reported once; nothing of `bad` is outstanding any more.
-  manager.wait(badHandle);
-}
-
-// A failure that `addBatch` reaps while it waits for a free slot in the full
-// ring is also kept for the failed batch: neither `addBatch` nor the `wait()`
-// of the other batch throws it.
-TEST_F(IoUringPolicyTest, failureReapedByAddBatchIsThrownByItsOwnBatch) {
-  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
-  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
-  ReadBatchForTesting bad;
-  bad.add({{0, 4}, {8, 16}});  // the second read is past EOF: short read
-  ReadBatchForTesting good;
-  good.add({{0, 4}, {4, 4}, {8, 4}});
-  // A ring of 2 slots, which `bad` fills, so submitting `good` reaps the
-  // completions of `bad` in `addBatch`.
-  Manager manager(2);
-  auto badHandle = bad.submitTo(manager, fd);
-  auto goodHandle = good.submitTo(manager, fd);
-  manager.wait(goodHandle);
-  EXPECT_THAT(good.result(), ::testing::ElementsAre("AAAA", "BBBB", "CCCC"));
-  AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(badHandle),
-                               HasSubstr("read fewer bytes than requested"));
-  // The successful read of the failed batch landed in its buffer.
-  EXPECT_THAT(bad.result(), ::testing::ElementsAre("AAAA", ::testing::_));
-}
-
-// A read that the kernel fails (here with `EBADF`, because the descriptor is
-// the write end of a pipe) is thrown by the `wait()` of its batch, with the
-// request id and the `errno` text.
-TEST_F(IoUringPolicyTest, ioErrorIsThrownByItsOwnBatch) {
-  std::array<int, 2> pipeFds{};
-  ASSERT_EQ(pipe(pipeFds.data()), 0);
-  absl::Cleanup closePipe{[&pipeFds] {
-    close(pipeFds[0]);
-    close(pipeFds[1]);
-  }};
-  ReadBatchForTesting batch;
-  batch.add(0, 4);
-  ad_utility::BatchManager<ad_utility::IoUringPolicy> manager(64);
-  auto handle = batch.submitTo(manager, pipeFds[1]);
-  AD_EXPECT_THROW_WITH_MESSAGE(
-      manager.wait(handle),
-      AllOf(HasSubstr("I/O error in IoUringPolicy read operation for request"),
-            HasSubstr(std::strerror(EBADF))));
-}
-
-// A failed batch that is never waited for is reported by the destructor, so
-// that its error does not get lost.
-TEST_F(IoUringPolicyTest, unwaitedFailureIsLoggedByTheDestructor) {
-  auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
-  auto [restoreLog, logStream] = setGlobalLoggingStreamToStringStream();
-  ReadBatchForTesting bad;
-  bad.add(8, 16);  // past EOF: short read
-  ReadBatchForTesting good;
-  good.add(0, 4);
-  {
-    // A ring of 1 slot, which `bad` fills, so submitting `good` reaps the
-    // failed read of `bad` in `addBatch`.
-    ad_utility::BatchManager<ad_utility::IoUringPolicy> manager(1);
-    bad.submitTo(manager, fd);
-    manager.wait(good.submitTo(manager, fd));
-  }
-  EXPECT_THAT(logStream.str(),
-              ifLogLevelIsCompiledIn<LogLevel::Enum::WARN>(
-                  AllOf(HasSubstr("1 failed batch(es) that were never"),
-                        HasSubstr("read fewer bytes than requested"))));
-}
-
-// A signal can end the wait for a wave early: with at least one CQE ready,
-// `io_uring_wait_cqes` then returns success although fewer CQEs than the wave
-// size are ready. `wait()` must reap what is ready and wait again, not fail.
-// The batch reads twice from a pipe. The first read completes during
-// submission, because its bytes are already in the pipe; the second one waits
-// for bytes that a helper thread writes only after it has sent a signal to the
-// thread that is blocked in `wait()`.
-TEST_F(IoUringPolicyTest, signalDuringWaveWait) {
-  // A no-op handler, so that the signal interrupts the wait instead of
-  // terminating the process.
-  struct sigaction noOp {};
-  noOp.sa_handler = [](int) {};
-  struct sigaction previous {};
-  ASSERT_EQ(sigaction(SIGUSR1, &noOp, &previous), 0);
-  absl::Cleanup restoreHandler{
-      [&previous] { sigaction(SIGUSR1, &previous, nullptr); }};
-
-  std::array<int, 2> pipeFds{};
-  ASSERT_EQ(pipe(pipeFds.data()), 0);
-  const int readFd = pipeFds[0];
-  const int writeFd = pipeFds[1];
-  absl::Cleanup closePipe{[readFd, writeFd] {
-    close(readFd);
-    close(writeFd);
-  }};
-  ASSERT_EQ(write(writeFd, "AAAA", 4), 4);
-
-  ReadBatchForTesting batch;
-  batch.add({{0, 4}, {0, 4}});
-  // Declared after `batch`, so that its buffers outlive the drain in the
-  // destructor of `IoUringPolicy` if the test unwinds early.
-  ad_utility::BatchManager<ad_utility::IoUringPolicy> manager(64);
-  auto handle = batch.submitTo(manager, readFd);
-
-  // Declared after `manager` and joined before its destruction, so that the
-  // second read has completed by then.
-  const pthread_t waitingThread = pthread_self();
-  std::thread signalThenWrite{[waitingThread, writeFd] {
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    pthread_kill(waitingThread, SIGUSR1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    ASSERT_EQ(write(writeFd, "BBBB", 4), 4);
-  }};
-  absl::Cleanup join{[&signalThenWrite] { signalThenWrite.join(); }};
-
-  manager.wait(handle);
-  EXPECT_THAT(batch.result(), ::testing::UnorderedElementsAre("AAAA", "BBBB"));
-}
-
-// Drop the manager while reads are still outstanding (submitted but never
-// waited). `IoUringPolicy`'s destructor drains the outstanding completions
-// (and logs a warning) before tearing down the ring, so the kernel is done
-// writing into the target buffers. `batch` is declared before `manager`, so its
-// buffers outlive the destructor's drain. After the manager is destroyed every
-// read has completed, so the results are correct. This draining is specific to
-// the asynchronous io_uring backend, so the test is not part of the typed
-// suite.
-TEST(IoUringManagerDrop, dropRunningManager) {
-  if (!ioUringAvailableAtRuntime()) {
-    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
-                    "(e.g. blocked by seccomp inside Docker)";
-  }
-  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
-  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
-
-  // Redirect the global logging stream so we can assert on the destructor's
-  // warning.
-  auto [restoreLog, logStream] = setGlobalLoggingStreamToStringStream();
-
-  ReadBatchForTesting batch;
-  batch.add({{8, 4}, {0, 4}, {12, 4}});
-  {
-    Manager manager(64);
-    batch.submitTo(manager, fd);  // submit, but never wait
-    // `manager` is destroyed here; its destructor drains the outstanding reads.
-  }
-
-  EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
-  EXPECT_THAT(logStream.str(), ifLogLevelIsCompiledIn<LogLevel::Enum::WARN>(
-                                   ::testing::HasSubstr("still outstanding")));
-}
-#endif
 
 // Wait on `BatchHandle` for which the read call has already been reaped from
 // the completion queue.

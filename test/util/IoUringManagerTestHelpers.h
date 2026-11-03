@@ -20,10 +20,11 @@
 #include <utility>
 #include <vector>
 
+#include "GTestHelpers.h"
 #include "backports/algorithm.h"
 #include "backports/span.h"
 #include "util/File.h"
-#include "GTestHelpers.h"
+#include "util/IoUringManager.h"
 
 namespace ioUringManagerTestHelpers {
 
@@ -120,6 +121,22 @@ class ReadBatchForTesting {
   std::vector<uint64_t> offsets_;
   std::vector<std::string> targetBuffers_;
 };
+
+#ifdef QLEVER_HAS_IO_URING
+// Return `true` iff io_uring actually works at runtime. Even when compiled
+// in, the `io_uring_setup` syscall can be blocked (for example, by the
+// default seccomp profile of Docker, which also applies to the `RUN` steps
+// of the CI image build that execute this test suite). The result is probed
+// once and cached.
+inline bool ioUringAvailableAtRuntime() {
+  static const bool available = []() {
+    bool preferIoUring = true;
+    [[maybe_unused]] auto manager = ad_utility::makeBatchManager(preferIoUring);
+    return preferIoUring;
+  }();
+  return available;
+}
+#endif
 
 }  // namespace ioUringManagerTestHelpers
 
