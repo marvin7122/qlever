@@ -278,9 +278,9 @@ std::unique_ptr<BatchManagerBase> makeBatchManagerFor(
 }  // namespace detail
 
 // Build a batch manager. When io_uring is compiled in and the runtime flag
-// `preferIoUring` is set, try to build an `IoUringManager`. If its setup
-// syscall fails at runtime clear `preferIoUring` and fall back to a
-// `SyncIoManager`. Passing the flag by reference makes this probe-once: after
+// `preferIoUring` is set, try to build a manager with an `IoUringPolicy`. If
+// its setup syscall fails at runtime clear `preferIoUring` and fall back to a
+// `SyncIoPolicy`. Passing the flag by reference makes this probe-once: after
 // the first failure, every subsequent call goes straight to the sync manager,
 // so we don't repeat a failing syscall. The manager serves page-cache hits
 // first (`PageCacheFirstPolicy`, switched with

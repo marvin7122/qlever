@@ -279,9 +279,12 @@ void resolveVocabIndexIds(
     return ids[i].getDatatype() == Datatype::VocabIndex;
   }));
 
-  // NOTE: The batch is deliberately not sorted by vocabulary position: the
-  // io_uring backend reorders the reads anyway, and only the synchronous
-  // fallback could profit from sequential file access.
+  // NOTE: The batch is not sorted by vocabulary position, although the order
+  // matters for `VocabularyOnDisk::lookupBatch`: it reads each run of
+  // consecutive indices with one read, and serves adjacent words from the page
+  // cache with one `preadv2` call, but only for neighbours in the order of the
+  // batch. Sorting (and undoing the permutation afterwards) has not been
+  // measured yet.
   auto rawIndices = ::ranges::to_vector(
       positions | ql::views::transform([&ids](size_t i) {
         return static_cast<size_t>(ids[i].getVocabIndex().get());
