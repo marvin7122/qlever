@@ -120,7 +120,11 @@ TEST(BatchManagerPool, leaseIsMovable) {
     auto lease = pool.acquire();
     manager = &*lease;
     auto movedLease = std::move(lease);
+    EXPECT_TRUE(movedLease.isValid());
     EXPECT_EQ(&*movedLease, manager);
+    EXPECT_FALSE(lease.isValid());
+    EXPECT_ANY_THROW(*lease);
+    EXPECT_ANY_THROW(lease->wait(0));
   }
   auto lease = pool.acquire();
   EXPECT_EQ(&*lease, manager);

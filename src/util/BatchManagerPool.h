@@ -16,6 +16,7 @@
 #include <mutex>
 #include <vector>
 
+#include "util/Exception.h"
 #include "util/IoUringManager.h"
 #include "util/NoCopyNoMove.h"
 
@@ -45,8 +46,19 @@ class BatchManagerPool : public NoCopyNoMove {
     Lease& operator=(Lease&&) = delete;
     ~Lease();
 
-    BatchManagerBase& operator*() const { return *manager_; }
-    BatchManagerBase* operator->() const { return manager_.get(); }
+    // `true` iff this lease holds a manager, which only a moved-from lease
+    // does not.
+    bool isValid() const noexcept { return manager_ != nullptr; }
+
+    // Access the manager. The lease has to be valid, see `isValid`.
+    BatchManagerBase& operator*() const {
+      AD_CONTRACT_CHECK(isValid());
+      return *manager_;
+    }
+    BatchManagerBase* operator->() const {
+      AD_CONTRACT_CHECK(isValid());
+      return manager_.get();
+    }
 
    private:
     friend class BatchManagerPool;
