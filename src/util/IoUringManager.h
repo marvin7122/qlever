@@ -14,6 +14,7 @@
 #include <gtest/gtest_prod.h>
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -169,56 +170,32 @@ class IoUringPolicy : public ad_utility::NoCopyNoMove {
  public:
   using BatchHandle = uint64_t;
 
+  // The size of a wave: when the ring is full or `wait()` blocks and no
+  // completion is ready, wait for up to this many completions, then reap all
+  // ready ones in one pass (see `reapWave`). This amortizes `io_uring_enter`
+  // and the CQ-head update over the wave. Not tuned: in a sweep of 1 to 128 on
+  // an earlier version, no value differed from 8 in wall time beyond noise.
+  static constexpr unsigned REAP_WAVE = 8;
+
+  // The number of CQEs that `reapWave` takes out of the completion queue at
+  // once; a wave with more ready CQEs is reaped in several chunks.
+  static constexpr size_t REAP_CHUNK =
+      IoUringInterface::MAX_COMPLETIONS_PER_POP;
+
+  // How often `submitQueuedReads` retries a submit that took no SQE
+  // (`EAGAIN`, `EBUSY`, `ENOMEM` or 0) before it gives up.
+  static constexpr size_t MAX_SUBMIT_RETRIES = 100;
+
  private:
   std::unique_ptr<IoUringInterface> ring_;
   unsigned ringSize_;
 
-  // Total number of outstanding reads: reads that are prepared (SQE filled in,
-  // not yet submitted), in flight (submitted to the kernel, not yet
-  // completed), or completed but not yet reaped via a completion queue entry
-  // (CQE). `addBatch` keeps it at most `ringSize_`, so that a free SQE is
-  // always available and the completion queue (twice as large as the
-  // submission queue) cannot overflow. Invariant: it equals both the sum of
-  // the counts in `numOutstandingReadRequestsPerBatch_` and the size of
-  // `outstandingReadsByRequestId_`.
-  size_t numOutstandingReadRequests_ = 0;
-
-  // The outstanding reads that the kernel has taken (in flight, or completed
-  // but not reaped). Only these produce a CQE, so a wave never waits for more
-  // of them. The others are queued: prepared but not yet submitted. Outside of
-  // `addBatch`, no read is queued.
-  size_t numberOfReadsInKernel_ = 0;
-  size_t numberOfQueuedReads() const {
-    return numOutstandingReadRequests_ - numberOfReadsInKernel_;
-  }
-
-  // Set when `io_uring_submit` failed for good. The reads that were queued
-  // then are cancelled (failed in the bookkeeping) but stay in the submission
-  // queue, so the ring must never submit again: `addBatch` throws from then on.
-  std::optional<std::string> submitFailure_;
-
-  // The same outstanding reads as `numOutstandingReadRequests_`, but broken
-  // down per batch: maps a batch handle to the number of its reads that have
-  // not yet been reaped. An entry is removed as soon as the last read of its
-  // batch is reaped: usually in the `wait()` of that batch, but also in
-  // `addBatch` or in the `wait()` of another batch, which reap every ready CQE.
-  ad_utility::HashMap<BatchHandle, size_t> numOutstandingReadRequestsPerBatch_;
-
-  // Batches with a failed, short, or cancelled read, mapped to the message of
-  // their first failure. `addBatch` and the `wait()` of another batch also
-  // reap CQEs, so a failure is kept here until the `wait()` of its own batch
-  // throws it (and erases it). A batch may still have outstanding reads while
-  // its failure is recorded here; the entry of a batch that is never waited for
-  // stays until the policy is destroyed.
-  ad_utility::HashMap<BatchHandle, std::string> failedBatches_;
-
   // Per-read metadata needed when a completion is reaped: which batch the read
   // belongs to, and how many bytes it was supposed to read (so that reading
-  // fewer bytes than expected can be detected). See
-  // `outstandingReadsByRequestId_`.
+  // fewer bytes than expected can be detected).
   struct OutstandingRead {
     BatchHandle batchHandle;
-    size_t expectedNumBytes;
+    size_t expectedNumberOfBytes;
   };
 
   // Monotonically increasing counter that mints a unique request id for each
@@ -226,70 +203,109 @@ class IoUringPolicy : public ad_utility::NoCopyNoMove {
   // from the matching CQE to look up the read's `OutstandingRead` metadata.
   uint64_t nextRequestIdToAssign_ = 0;
 
-  // Maps a read's request id to its metadata. An entry is inserted when the
-  // read is prepared in `addBatch` and erased when its completion is reaped.
+  // The request id of the no-ops into which `cancelQueuedReads` rewrites
+  // queued SQEs. Not `UINT64_MAX`, which liburing reserves for its timeouts.
+  static constexpr uint64_t NO_OP_REQUEST_ID =
+      std::numeric_limits<uint64_t>::max() - 1;
+
+  // The outstanding reads by request id: reads that are prepared (SQE filled
+  // in, not yet submitted), in flight (submitted to the kernel, not yet
+  // completed), or completed but not yet reaped via a completion queue entry
+  // (CQE). An entry is inserted when the read is prepared and erased when its
+  // completion is reaped or the read is cancelled.
   ad_utility::HashMap<uint64_t, OutstandingRead> outstandingReadsByRequestId_;
 
-  // The size of a wave: when the ring is full or `wait()` blocks, wait for up
-  // to this many completions, then reap all ready ones in one pass (see
-  // `reapWave`). This amortizes `io_uring_enter` and the CQ-head update over
-  // the wave. Not tuned: in a sweep of the wave size from 1 to 128 (and of
-  // the ring size and the number of CQEs peeked at once), the wall time of
-  // every value was within noise of the default (fork PR #314, Ural run 5598).
-  static constexpr unsigned REAP_WAVE = 8;
+  // The first failed or short read of a batch. Recorded without allocating, so
+  // that recording it cannot fail; the message is built in `wait()`.
+  struct ReadFailure {
+    uint64_t requestId;
+    // `-errno`, or the number of bytes read if fewer than expected.
+    int result;
+    size_t expectedNumberOfBytes;
+    std::string message() const;
+  };
 
-  // The number of CQEs that `reapWave` takes out of the completion queue per
-  // `io_uring_peek_batch_cqe` and releases with one `io_uring_cq_advance`; a
-  // wave with more ready CQEs is reaped in several chunks.
-  static constexpr size_t REAP_CHUNK = 64;
+  // The state of a batch that has outstanding reads or a failure that was not
+  // yet thrown. A batch whose last read is reaped without a failure is erased
+  // at once; a failed batch stays until its `wait()` throws the failure.
+  // `addBatch` and the `wait()` of another batch also reap CQEs, so a failure
+  // can be recorded long before the batch's own `wait()`.
+  struct BatchState {
+    size_t numberOfOutstandingReads = 0;
+    std::optional<ReadFailure> firstFailure;
+  };
+  ad_utility::HashMap<BatchHandle, BatchState> batches_;
 
-  // How often `submitQueuedReads` retries a submit that took no SQE (`EAGAIN`,
-  // `EBUSY` or 0) before it gives up and cancels the queued reads.
-  static constexpr size_t MAX_SUBMIT_RETRIES = 100;
+  // The outstanding reads that the kernel has taken (in flight, or completed
+  // but not reaped). The others are queued: prepared but not yet submitted.
+  // Outside of `addBatch`, no read is queued.
+  size_t numberOfReadsInKernel_ = 0;
+
+  // SQEs that `cancelQueuedReads` rewrote into no-ops: queued, or taken by the
+  // kernel but not reaped. They occupy ring slots and produce CQEs, but refer
+  // to no buffer. The queued ones precede every queued read.
+  size_t numberOfNoOpsQueued_ = 0;
+  size_t numberOfNoOpsInKernel_ = 0;
+
+  // The number of CQEs reaped so far, to detect a round of
+  // `reapAllOutstandingReads` that made no progress.
+  size_t numberOfReapedCompletions_ = 0;
+
+  size_t numberOfOutstandingReads() const {
+    return outstandingReadsByRequestId_.size();
+  }
+  size_t numberOfQueuedReads() const {
+    return numberOfOutstandingReads() - numberOfReadsInKernel_;
+  }
+  // The requests that produce a CQE that is not reaped yet.
+  size_t numberOfRequestsInKernel() const {
+    return numberOfReadsInKernel_ + numberOfNoOpsInKernel_;
+  }
+  // `addBatch` keeps this at most `ringSize_`, so that a free SQE is always
+  // available and the completion queue (twice as large as the submission
+  // queue) cannot overflow.
+  size_t numberOfRequestsInRing() const {
+    return numberOfOutstandingReads() + numberOfNoOpsQueued_ +
+           numberOfNoOpsInKernel_;
+  }
 
   // Record a read of batch `handle` and prepare its SQE (not yet submitted).
   void recordAndPrepareRead(int fd, char* targetBuffer, size_t numBytesToRead,
                             uint64_t fileOffset, BatchHandle handle);
 
-  // Submit every queued read. Retries an interrupted submit, and a submit that
-  // took no SQE (after reaping a completion, or backing off); if that does not
-  // help, or for any other error, cancels the queued reads (see
-  // `cancelQueuedReads`). Afterwards no read is queued. Throws only what
-  // `reapWave` throws.
+  // Submit every queued read and no-op. Retries an interrupted submit, and a
+  // submit that took no SQE (after reaping a completion, or backing off). If
+  // that does not help, or for any other error, cancels the queued reads and
+  // throws.
   void submitQueuedReads();
 
-  // Fail every queued read with `errorMessage` in the bookkeeping, and refuse
-  // every later batch, because the cancelled SQEs stay in the submission queue.
-  void cancelQueuedReads(std::string errorMessage);
+  // Rewrite the queued SQEs into no-ops, and forget the queued reads (they
+  // never reach the kernel). The ring stays usable: the no-ops are submitted
+  // with the next submit, and their CQEs are skipped.
+  void cancelQueuedReads() noexcept;
 
-  // Submit or cancel the queued reads, then reap every outstanding read,
-  // without throwing. Called before an exception leaves `addBatch` or `wait()`
-  // and in the destructor, because the callers free the target buffers then.
+  // Cancel the queued reads, then reap every read in the kernel, without
+  // throwing. Called before an exception leaves `addBatch` or `wait()` and in
+  // the destructor, because the callers free the target buffers then.
   void reapAllOutstandingReads() noexcept;
 
-  // Block until a wave of `min(REAP_WAVE, numReadsToComplete)` CQEs is ready,
-  // then reap every ready CQE. `numReadsToComplete` is the number of reads the
-  // caller waits for (all reads in the kernel in `addBatch`, the remaining
-  // reads of the batch in `wait()`). It must be > 0 and at most
-  // `numberOfReadsInKernel_`, so that the wave never waits for more
-  // completions than will arrive. Reaps at least one CQE, but may reap fewer
-  // than the wave if a signal interrupts the wait, so the callers loop until
-  // their condition holds. Terminates the process if waiting fails, because
-  // the reads in the kernel could then still write into buffers that the
-  // callers free. If `processCqe` throws for a CQE, every other ready CQE is
-  // still applied to the bookkeeping, and the first exception is rethrown
-  // afterwards.
-  void reapWave(size_t numReadsToComplete);
+  // Reap every ready CQE. If none is ready, first block until a wave of
+  // `min(REAP_WAVE, numberOfRequestsToComplete)` CQEs is ready.
+  // `numberOfRequestsToComplete` is the number of requests the caller waits
+  // for; it must be > 0 and at most `numberOfRequestsInKernel()`, so that the
+  // wave never waits for more completions than will arrive. Reaps at least one
+  // CQE, but may reap fewer than the wave if a signal interrupts the wait, so
+  // the callers loop until their condition holds. Terminates the process if
+  // waiting fails, because the reads in the kernel could then still write into
+  // buffers that the callers free. If `processCompletion` throws for a CQE,
+  // every other ready CQE is still applied, and the first exception is
+  // rethrown afterwards.
+  void reapWave(size_t numberOfRequestsToComplete);
 
-  // Apply one completion to the bookkeeping of the outstanding reads. Always
-  // updates the counts, also for a failed read, and records a failed or short
-  // read in `failedBatches_`. A negative `numBytesRead` is `-errno`;
-  // `requestId` must be the id of a read in the kernel.
-  void processCqe(int numBytesRead, uint64_t requestId);
-
-  // Remove one read of batch `handle` from the outstanding counts, and the
-  // batch once its last read is removed.
-  void retireRead(BatchHandle handle);
+  // Apply one completion to the bookkeeping: skip a no-op, otherwise remove
+  // the read from the outstanding reads (also a failed one) and record a
+  // failed or short read as the batch's failure. Never allocates.
+  void processCompletion(const IoUringInterface::Completion& completion);
 
  public:
   // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
@@ -300,27 +316,28 @@ class IoUringPolicy : public ad_utility::NoCopyNoMove {
   ~IoUringPolicy();
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
-  // calling thread only when the submission queue is full, in order to reap
-  // completion queue entries and free slots in the submission queue. Read `i`
-  // reads `numBytesToRead[i]` bytes from file descriptor `fd`, starting at
-  // offset `offsets[i]` (from the start of the file), into the buffer starting
-  // at `buffers[i]`. The reads are tracked under `handle`, which can be passed
-  // to `wait()` to block until this batch has completed. `handle` must not be
-  // outstanding or have a failure that was not yet thrown. If `addBatch`
-  // throws, all outstanding reads (of every batch) are reaped first, so the
-  // kernel no longer writes into the buffers. Throws at once if an earlier
-  // submit failed for good (see `cancelQueuedReads`).
+  // calling thread only when the ring is full, in order to reap completion
+  // queue entries and free slots. Read `i` reads `numBytesToRead[i]` bytes
+  // from file descriptor `fd`, starting at offset `offsets[i]` (from the start
+  // of the file), into the buffer starting at `buffers[i]`. The reads are
+  // tracked under `handle`, which can be passed to `wait()` to block until
+  // this batch has completed. `handle` must not belong to a batch that has
+  // outstanding reads or a failure that was not yet thrown. Throws if the
+  // reads cannot be submitted (the ring stays usable for later batches). If
+  // `addBatch` throws, every read in the kernel (of every batch) is reaped
+  // first, so the kernel no longer writes into the buffers, and the batch is
+  // forgotten.
   void addBatch(int fd, ql::span<const size_t> numBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle);
 
   // Block until every read in the batch that is represented by the `handle` has
   // completed. (The `handle` was submitted along the read requests using
-  // `addBatch`.) Throws if a read of this batch failed or was short, or could
-  // not be submitted, after all of its reads are reaped; the failure is
-  // reported only once, so a later `wait()` for the same handle returns
-  // normally. If anything else throws, all outstanding reads (of every batch)
-  // are reaped before the exception leaves `wait()`. A `wait()` for a handle
+  // `addBatch`.) Throws if a read of this batch failed or was short, after all
+  // of its reads are reaped; the failure is reported only once, so a later
+  // `wait()` for the same handle returns normally. If anything else throws,
+  // every read in the kernel (of every batch) is reaped before the exception
+  // leaves `wait()`, and the batch is forgotten. A `wait()` for a handle
   // without outstanding reads (a batch that is already reaped, was empty, or
   // is unknown) returns at once, unless the batch has a failure that was not
   // yet thrown.

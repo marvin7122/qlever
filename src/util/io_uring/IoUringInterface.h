@@ -12,7 +12,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 
 #include "backports/span.h"
 
@@ -24,6 +23,9 @@ namespace ad_utility {
 // only rarely (partial submits, interrupted waits, failed or short reads).
 class IoUringInterface {
  public:
+  // The most completions that `popCompletions` moves per call.
+  static constexpr size_t MAX_COMPLETIONS_PER_POP = 64;
+
   // A reaped completion: the request id of its SQE and its result (the CQE's
   // `res`): the number of bytes read on success, or `-errno` on failure.
   struct Completion {
@@ -49,21 +51,21 @@ class IoUringInterface {
   // completions.
   virtual int waitForCompletions(unsigned minComplete) = 0;
 
-  // Move up to `completions.size()` ready completions into `completions` and
-  // release their CQ slots. Return how many were moved; 0 if none is ready.
+  // Move up to `completions.size()` (at most `MAX_COMPLETIONS_PER_POP`) ready
+  // completions into `completions` and release their CQ slots. Return how many
+  // were moved; 0 if none is ready.
   virtual size_t popCompletions(ql::span<Completion> completions) = 0;
+
+  // Rewrite every prepared SQE that the kernel has not taken yet into a no-op
+  // tagged with `noOpRequestId`, so that it no longer refers to a buffer. The
+  // no-ops are submitted with the next `submit` and complete with result 0.
+  // Return the number of rewritten SQEs.
+  virtual size_t cancelQueued(uint64_t noOpRequestId) = 0;
 
   // Wait a moment before a submit that took no SQE is retried while no read is
   // in the kernel (so there is no completion to wait for instead).
   virtual void backOff() = 0;
 };
-
-#ifdef QLEVER_HAS_IO_URING
-// Return an `IoUringInterface` backed by liburing with (at least) `ringSize`
-// SQEs. Throw if the ring cannot be set up, for example because
-// `io_uring_setup` is blocked by seccomp.
-std::unique_ptr<IoUringInterface> makeLiburingRing(unsigned ringSize);
-#endif
 
 }  // namespace ad_utility
 
