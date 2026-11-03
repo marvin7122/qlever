@@ -299,6 +299,10 @@ void IoUringPolicy::recordAndPrepareRead(int fd, char* targetBuffer,
 
 //______________________________________________________________________________
 void IoUringPolicy::submitQueuedReads() {
+  // After a failed submit, the cancelled SQEs must never reach the kernel.
+  if (submitFailure_.has_value()) {
+    return;
+  }
   size_t numberOfRetries = 0;
   while (numberOfQueuedReads() > 0) {
     const int ret = ring_->submit();
@@ -339,20 +343,33 @@ void IoUringPolicy::cancelQueuedReads(std::string errorMessage) {
   // The kernel takes the SQEs in the order in which they were prepared, so the
   // queued reads are the most recently prepared ones. They stay in the
   // submission queue, but are never submitted: `submitFailure_` makes
-  // `addBatch` refuse every further batch, and nothing else submits.
+  // `addBatch` refuse every further batch, and nothing else submits. It is set
+  // first, and every queued read is retired even if a check fails for one of
+  // them, so that no queued read is left that a later submit could hand to
+  // the kernel.
+  submitFailure_ = errorMessage;
   const size_t numberOfQueued = numberOfQueuedReads();
+  std::exception_ptr firstException;
   for (uint64_t requestId = nextRequestIdToAssign_ - numberOfQueued;
        requestId < nextRequestIdToAssign_; ++requestId) {
-    auto it = outstandingReadsByRequestId_.find(requestId);
-    AD_CORRECTNESS_CHECK(it != outstandingReadsByRequestId_.end(),
-                         "The queued reads are the most recently prepared "
-                         "ones, and none of them is reaped.");
-    const BatchHandle handle = it->second.batchHandle;
-    outstandingReadsByRequestId_.erase(it);
-    retireRead(handle);
-    failedBatches_.try_emplace(handle, errorMessage);
+    try {
+      auto it = outstandingReadsByRequestId_.find(requestId);
+      AD_CORRECTNESS_CHECK(it != outstandingReadsByRequestId_.end(),
+                           "The queued reads are the most recently prepared "
+                           "ones, and none of them is reaped.");
+      const BatchHandle handle = it->second.batchHandle;
+      outstandingReadsByRequestId_.erase(it);
+      retireRead(handle);
+      failedBatches_.try_emplace(handle, errorMessage);
+    } catch (...) {
+      if (!firstException) {
+        firstException = std::current_exception();
+      }
+    }
   }
-  submitFailure_ = std::move(errorMessage);
+  if (firstException) {
+    std::rethrow_exception(std::move(firstException));
+  }
 }
 
 //______________________________________________________________________________
@@ -393,8 +410,10 @@ void IoUringPolicy::reapAllOutstandingReads() noexcept {
   // Every round submits (or cancels) the queued reads, or reaps at least one
   // CQE, and every reaped CQE of an outstanding read is applied to the counts
   // even if `processCqe` throws for it, so the loop ends. A failed wait
-  // terminates the process in `reapWave`.
-  while (numOutstandingReadRequests_ > 0) {
+  // terminates the process in `reapWave`. After a failed submit, no read is
+  // submitted any more, so only the reads in the kernel are left to reap.
+  while (numberOfReadsInKernel_ > 0 ||
+         (numberOfQueuedReads() > 0 && !submitFailure_.has_value())) {
     try {
       submitQueuedReads();
       if (numberOfReadsInKernel_ > 0) {
