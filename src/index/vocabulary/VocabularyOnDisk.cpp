@@ -11,13 +11,13 @@
 #include <atomic>
 
 #include "global/Constants.h"
-#include "util/io_uring/BatchManagerPool.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
 #include "util/MmapVector.h"
 #include "util/StringUtils.h"
 #include "util/Views.h"
+#include "util/io_uring/BatchManagerPool.h"
 
 using OffsetAndSize = VocabularyOnDisk::OffsetAndSize;
 
@@ -332,8 +332,9 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
                     "`open()` must be called before `lookupBatch()`");
 
   // The lease `manager` gives the manager back to the pool when it goes out of
-  // scope at the end of this function, also when phase 1 throws (e.g. for an
-  // out-of-range index).
+  // scope at the end of this function. If one of the phases throws (e.g. for an
+  // out-of-range index or a failed read), the pool replaces the manager
+  // instead, because the failed batch may still have reads in flight.
   auto manager = ad_utility::globalBatchManagerPool().acquire();
   auto offsetPairs = readOffsetPairs(*manager, indices);
   return readStrings(*manager, offsetPairs);

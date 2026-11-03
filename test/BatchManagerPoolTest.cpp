@@ -223,9 +223,10 @@ TEST(BatchManagerPool, aThrowingFactoryLeavesNoManagerBehind) {
 }
 
 // _____________________________________________________________________________
-// A manager goes back to the pool when its lease ends, also after an
-// exception, and is handed out again.
-TEST(BatchManagerPool, leaseGivesTheManagerBack) {
+// A manager goes back to the pool when its lease ends and is handed out again.
+// A manager whose lease ends with an exception (its batch may still have reads
+// in flight) is destroyed and replaced by a new one.
+TEST(BatchManagerPool, aManagerIsReplacedAfterAnException) {
   FakeFactory factory;
   BatchManagerPool pool{1, factory.makeManager()};
   { EXPECT_EQ(fake(pool.acquire()).id_, 0u); }
@@ -233,7 +234,45 @@ TEST(BatchManagerPool, leaseGivesTheManagerBack) {
   EXPECT_THROW(
       {
         auto lease = pool.acquire();
+        lease->wait(lease->addBatch(0, {}, {}, {}));
+      },
+      std::runtime_error);
+  EXPECT_EQ(factory.numberOfLiveManagers, 1u);
+  EXPECT_EQ(fake(pool.acquire()).id_, 1u);
+  EXPECT_TRUE(pool.usesIoUring());
+}
+
+// _____________________________________________________________________________
+// If the io_uring setup fails for the manager that replaces a failed one, the
+// pool no longer uses io_uring for all its managers.
+TEST(BatchManagerPool, aSynchronousReplacementIsReported) {
+  FakeFactory factory{.failingIoUringSetup = 2};
+  BatchManagerPool pool{2, factory.makeManager()};
+  EXPECT_TRUE(pool.usesIoUring());
+  EXPECT_THROW(
+      {
+        auto lease = pool.acquire();
         throw std::runtime_error{"lookup failed"};
+      },
+      std::runtime_error);
+  EXPECT_FALSE(pool.usesIoUring());
+  EXPECT_EQ(factory.numberOfLiveManagers, 2u);
+}
+
+// _____________________________________________________________________________
+// A lease that is created and ended while an unrelated exception is already in
+// flight (in a destructor during unwinding) gives its manager back for reuse.
+TEST(BatchManagerPool, aLeaseInsideUnwindingIsNotAFailure) {
+  FakeFactory factory;
+  BatchManagerPool pool{1, factory.makeManager()};
+  struct LeaseInDestructor {
+    BatchManagerPool* pool_;
+    ~LeaseInDestructor() { [[maybe_unused]] auto lease = pool_->acquire(); }
+  };
+  EXPECT_THROW(
+      {
+        LeaseInDestructor leaseInDestructor{&pool};
+        throw std::runtime_error{"unrelated"};
       },
       std::runtime_error);
   EXPECT_EQ(fake(pool.acquire()).id_, 0u);

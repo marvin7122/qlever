@@ -10,6 +10,7 @@
 #ifndef QLEVER_SRC_UTIL_IO_URING_BATCHMANAGERPOOL_H
 #define QLEVER_SRC_UTIL_IO_URING_BATCHMANAGERPOOL_H
 
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <functional>
@@ -46,10 +47,13 @@ class BatchManagerPool : public NoCopyNoMove {
   using MakeManager =
       std::function<std::unique_ptr<BatchManagerBase>(bool& preferIoUring)>;
 
-  // A manager on loan from the pool. The destructor gives it back, also when
-  // the user leaves the scope with an exception. A lease can be moved (the
-  // moved-from lease then holds nothing), but not assigned, because an
-  // assignment would have to give a manager back in the middle of its use.
+  // A manager on loan from the pool. The destructor gives it back. If the
+  // destructor runs during stack unwinding (the batched read threw, e.g.
+  // because a read failed), the manager may still have reads in flight, so the
+  // pool destroys it, which waits for these reads, and puts a new manager in
+  // its place. A lease can be moved (the moved-from lease then holds nothing),
+  // but not assigned, because an assignment would have to give a manager back
+  // in the middle of its use.
   class Lease : public NoCopy {
    public:
     Lease(Lease&& other) noexcept;
@@ -78,6 +82,9 @@ class BatchManagerPool : public NoCopyNoMove {
     // are `nullptr` after a move.
     BatchManagerPool* pool_;
     std::unique_ptr<BatchManagerBase> manager_;
+    // The value of `std::uncaught_exceptions()` when the lease was created. A
+    // larger value in the destructor means that it runs during unwinding.
+    int numberOfUncaughtExceptionsAtCreation_;
   };
 
   // Create `numManagers` (> 0) managers with `makeManager`, preferring
@@ -94,7 +101,9 @@ class BatchManagerPool : public NoCopyNoMove {
   // Return the number of managers of the pool, idle or in use.
   size_t size() const { return numManagers_; }
 
-  // Return `true` iff all managers use io_uring.
+  // Return `true` iff all managers use io_uring. This can change from `true`
+  // to `false` if the io_uring setup fails for a manager that replaces a
+  // failed one (see `Lease`).
   bool usesIoUring() const { return usesIoUring_; }
 
  private:
@@ -103,13 +112,18 @@ class BatchManagerPool : public NoCopyNoMove {
     return makeBatchManager(preferIoUring);
   }
 
-  // Give a manager back. Never throws or allocates, because `idle_` has room
+  // Whether a manager that is given back can serve the next batch.
+  enum class ManagerState { Reusable, Failed };
+
+  // Give a manager back. A `Failed` manager is replaced by a new one. Never
+  // throws, and only allocates for such a new manager, because `idle_` has room
   // for all managers and this runs in the destructor of `Lease`.
-  void release(std::unique_ptr<BatchManagerBase> manager) noexcept;
+  void release(std::unique_ptr<BatchManagerBase> manager,
+               ManagerState state) noexcept;
 
   const size_t numManagers_;
   const MakeManager makeManager_;
-  bool usesIoUring_ = false;
+  std::atomic<bool> usesIoUring_ = false;
   // The managers that are not on loan, guarded by `mutex_`. `release` notifies
   // `managerReturned_` when it puts a manager back.
   std::mutex mutex_;

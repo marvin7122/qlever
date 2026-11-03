@@ -13,12 +13,14 @@
 
 #include <algorithm>
 #include <atomic>
+#include <exception>
 #include <range/v3/range/conversion.hpp>
 #include <range/v3/view/generate_n.hpp>
 #include <thread>
 #include <utility>
 
 #include "util/Exception.h"
+#include "util/ExceptionHandling.h"
 #include "util/Log.h"
 
 namespace ad_utility {
@@ -26,18 +28,26 @@ namespace ad_utility {
 // _____________________________________________________________________________
 BatchManagerPool::Lease::Lease(BatchManagerPool* pool,
                                std::unique_ptr<BatchManagerBase> manager)
-    : pool_{pool}, manager_{std::move(manager)} {}
+    : pool_{pool},
+      manager_{std::move(manager)},
+      numberOfUncaughtExceptionsAtCreation_{std::uncaught_exceptions()} {}
 
 // _____________________________________________________________________________
 BatchManagerPool::Lease::Lease(Lease&& other) noexcept
     : pool_{std::exchange(other.pool_, nullptr)},
-      manager_{std::move(other.manager_)} {}
+      manager_{std::move(other.manager_)},
+      numberOfUncaughtExceptionsAtCreation_{
+          other.numberOfUncaughtExceptionsAtCreation_} {}
 
 // _____________________________________________________________________________
 BatchManagerPool::Lease::~Lease() {
-  if (pool_ != nullptr) {
-    pool_->release(std::move(manager_));
+  if (pool_ == nullptr) {
+    return;
   }
+  const bool isUnwinding =
+      std::uncaught_exceptions() > numberOfUncaughtExceptionsAtCreation_;
+  pool_->release(std::move(manager_),
+                 isUnwinding ? ManagerState::Failed : ManagerState::Reusable);
 }
 
 // _____________________________________________________________________________
@@ -80,8 +90,24 @@ BatchManagerPool::Lease BatchManagerPool::acquire() {
 }
 
 // _____________________________________________________________________________
-void BatchManagerPool::release(
-    std::unique_ptr<BatchManagerBase> manager) noexcept {
+void BatchManagerPool::release(std::unique_ptr<BatchManagerBase> manager,
+                               ManagerState state) noexcept {
+  if (state == ManagerState::Failed) {
+    // The failed batch may still have reads in flight, whose completions the
+    // next user of this manager would reap (and fail on). Destroying the
+    // manager waits for these reads (see `~IoUringPolicy`).
+    manager.reset();
+    terminateIfThrows(
+        [this, &manager]() {
+          bool preferIoUring = usesIoUring_;
+          manager = makeManager_(preferIoUring);
+          if (!preferIoUring) {
+            usesIoUring_ = false;
+          }
+        },
+        "creating a batch I/O manager that replaces a failed one in "
+        "`BatchManagerPool::release`");
+  }
   {
     std::lock_guard lock{mutex_};
     // The pool only ever hands out its own managers, so there is always room
