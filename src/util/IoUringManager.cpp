@@ -110,6 +110,8 @@ class LiburingRing final : public IoUringInterface,
     if (io_uring_queue_init(ringSize, &ring_, /*flags=*/0) < 0) {
       AD_THROW("io_uring_queue_init failed in IoUringManager");
     }
+    // `cancelQueued` relies on this, see there.
+    AD_CORRECTNESS_CHECK((ring_.flags & IORING_SETUP_SQPOLL) == 0);
   }
 
   ~LiburingRing() override { io_uring_queue_exit(&ring_); }
@@ -160,7 +162,6 @@ class LiburingRing final : public IoUringInterface,
     // rewritten between two calls. The queued SQEs are the
     // `io_uring_sq_ready` positions from the kernel's head on, and liburing
     // hands out the SQE of position `p` as `sqes[p & mask]`.
-    AD_CORRECTNESS_CHECK((ring_.flags & IORING_SETUP_SQPOLL) == 0);
     const unsigned mask = *ring_.sq.kring_mask;
     const unsigned head = io_uring_smp_load_acquire(ring_.sq.khead);
     const unsigned numberOfQueued = io_uring_sq_ready(&ring_);
@@ -199,24 +200,28 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize,
 // target buffer, then tear down the ring (in the destructor of `ring_`).
 IoUringPolicy::~IoUringPolicy() {
   if (numberOfOutstandingReads() > 0) {
-    AD_LOG_WARN << "IoUringPolicy destroyed with " << numberOfOutstandingReads()
-                << " read request(s) still outstanding; all batches should be "
-                   "`wait()`ed before destroying the policy. Reaping them now "
-                   "so the kernel stops writing into the target buffers.\n";
+    ad_utility::ignoreExceptionIfThrows([&] {
+      AD_LOG_WARN << "IoUringPolicy destroyed with "
+                  << numberOfOutstandingReads()
+                  << " read request(s) still outstanding; all batches should "
+                     "be `wait()`ed before destroying the policy. Reaping "
+                     "them now so the kernel stops writing into the target "
+                     "buffers.\n";
+    });
   }
   reapAllOutstandingReads();
   // Logged after the reaping, which can record more failures.
   const auto isFailed = [](const auto& entry) {
     return entry.second.firstFailure.has_value();
   };
-  const auto numberOfFailedBatches = static_cast<size_t>(
-      std::count_if(batches_.begin(), batches_.end(), isFailed));
+  const auto numberOfFailedBatches =
+      static_cast<size_t>(ql::ranges::count_if(batches_, isFailed));
   if (numberOfFailedBatches > 0) {
     ad_utility::ignoreExceptionIfThrows([&] {
       AD_LOG_WARN << "IoUringPolicy destroyed with " << numberOfFailedBatches
                   << " failed batch(es) that were never `wait()`ed; one of the "
                      "failures is: "
-                  << std::find_if(batches_.begin(), batches_.end(), isFailed)
+                  << ql::ranges::find_if(batches_, isFailed)
                          ->second.firstFailure->message()
                   << "\n";
     });
@@ -460,10 +465,11 @@ void IoUringPolicy::reapWave(size_t numberOfRequestsToComplete) {
   // Only if no CQE is ready, block until a wave of CQEs is ready. This
   // typically costs one `io_uring_enter` for the whole wave. A signal ends the
   // wait early: with an empty completion queue, `io_uring_wait_cqes` returns
-  // `-EINTR` and we wait again; with at least one ready CQE, it returns 0
-  // although fewer than the wave may be ready (the kernel then reports
-  // success, see `io_cqring_wait`), and we reap those. Any other failure leaves
-  // reads in the kernel that we cannot wait for, so we terminate.
+  // `-EINTR` and we wait again. With at least one ready CQE, the kernel reports
+  // success (see `io_cqring_wait`); liburing then waits once more, and if a
+  // signal also ends that wait, it returns 0 with fewer CQEs than the wave, and
+  // we reap those. Any other failure leaves reads in the kernel that we cannot
+  // wait for, so we terminate.
   if (numberOfReady == 0) {
     const auto waveSize = static_cast<unsigned>(
         std::min<size_t>(REAP_WAVE, numberOfRequestsToComplete));

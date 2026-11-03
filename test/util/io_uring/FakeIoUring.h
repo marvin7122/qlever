@@ -23,6 +23,7 @@
 #include <utility>
 #include <vector>
 
+#include "backports/algorithm.h"
 #include "util/Exception.h"
 #include "util/NoCopyNoMove.h"
 #include "util/io_uring/IoUringInterface.h"
@@ -119,9 +120,8 @@ class FakeIoUring final : public IoUringInterface,
     auto isRead = [](const auto& requestOrCompletion) {
       return !requestOrCompletion.isNoOp;
     };
-    return static_cast<size_t>(
-        std::count_if(kernel_.begin(), kernel_.end(), isRead) +
-        std::count_if(completions_.begin(), completions_.end(), isRead));
+    return static_cast<size_t>(ql::ranges::count_if(kernel_, isRead) +
+                               ql::ranges::count_if(completions_, isRead));
   }
 
   bool prepareRead([[maybe_unused]] int fd, char* buffer, size_t numberOfBytes,
