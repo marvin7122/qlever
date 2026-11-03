@@ -27,11 +27,11 @@
 #include "backports/span.h"
 #include "util/Exception.h"
 #include "util/HashMap.h"
-#include "util/IoUringInterface.h"
 #include "util/IoUringManagerConcepts.h"
 #include "util/Log.h"
 #include "util/NoCopyNoMove.h"
 #include "util/PageCacheFirstPolicy.h"
+#include "util/io_uring/IoUringInterface.h"
 
 namespace ad_utility {
 

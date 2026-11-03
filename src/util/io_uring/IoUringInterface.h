@@ -7,8 +7,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_UTIL_IOURINGINTERFACE_H
-#define QLEVER_SRC_UTIL_IOURINGINTERFACE_H
+#ifndef QLEVER_SRC_UTIL_IO_URING_IOURINGINTERFACE_H
+#define QLEVER_SRC_UTIL_IO_URING_IOURINGINTERFACE_H
 
 #include <cstddef>
 #include <cstdint>
@@ -67,4 +67,4 @@ std::unique_ptr<IoUringInterface> makeLiburingRing(unsigned ringSize);
 
 }  // namespace ad_utility
 
-#endif  // QLEVER_SRC_UTIL_IOURINGINTERFACE_H
+#endif  // QLEVER_SRC_UTIL_IO_URING_IOURINGINTERFACE_H

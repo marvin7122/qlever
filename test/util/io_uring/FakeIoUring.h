@@ -7,8 +7,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_TEST_UTIL_FAKEIOURING_H
-#define QLEVER_TEST_UTIL_FAKEIOURING_H
+#ifndef QLEVER_TEST_UTIL_IO_URING_FAKEIOURING_H
+#define QLEVER_TEST_UTIL_IO_URING_FAKEIOURING_H
 
 #include <algorithm>
 #include <cerrno>
@@ -21,7 +21,7 @@
 #include <vector>
 
 #include "util/Exception.h"
-#include "util/IoUringInterface.h"
+#include "util/io_uring/IoUringInterface.h"
 
 namespace ad_utility::testing {
 
@@ -244,4 +244,4 @@ class FakeIoUring final : public IoUringInterface {
 
 }  // namespace ad_utility::testing
 
-#endif  // QLEVER_TEST_UTIL_FAKEIOURING_H
+#endif  // QLEVER_TEST_UTIL_IO_URING_FAKEIOURING_H

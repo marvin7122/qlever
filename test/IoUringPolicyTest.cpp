@@ -24,9 +24,9 @@
 #include <utility>
 #include <vector>
 
-#include "util/FakeIoUring.h"
 #include "util/GTestHelpers.h"
 #include "util/IoUringManager.h"
+#include "util/io_uring/FakeIoUring.h"
 
 #ifdef QLEVER_HAS_IO_URING
 
@@ -337,7 +337,8 @@ TEST(IoUringPolicyOnFakeRing, randomFaults) {
           ++numberOfFailedWaits;
         }
       }
-      EXPECT_EQ(ring.fake->numberOfReadsInKernel(), size_t{0}) << "seed " << seed;
+      EXPECT_EQ(ring.fake->numberOfReadsInKernel(), size_t{0})
+          << "seed " << seed;
     }
     EXPECT_EQ(observations.numberOfReadsInKernelAtTeardown, size_t{0});
   }
