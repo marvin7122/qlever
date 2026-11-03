@@ -554,10 +554,10 @@ TYPED_TEST(IoUringManagerTest, zeroLengthReadsWithNonZeroLengthReads) {
 
 // Dropping a `SyncIoPolicy`-backed manager with reads submitted but never
 // waited: the synchronous policy performs all reads eagerly in `submitTo`, so
-// by the time the manager is destroyed nothing is in flight, the destructor has
-// nothing to drain, and it logs no warning. This is the counterpart to the
+// by the time the manager is destroyed nothing is outstanding, the destructor
+// has nothing to drain, and it logs no warning. This is the counterpart to the
 // io_uring-specific `dropRunningManager` test below.
-TEST(IoUringManagerDrop, dropSyncManagerHasNothingInFlight) {
+TEST(IoUringManagerDrop, dropSyncManagerHasNothingOutstanding) {
   using Manager = ad_utility::BatchManager<ad_utility::SyncIoPolicy>;
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
 
@@ -569,7 +569,7 @@ TEST(IoUringManagerDrop, dropSyncManagerHasNothingInFlight) {
   {
     Manager manager(64);
     batch.submitTo(manager, fd);  // reads happen synchronously here
-    // `manager` is destroyed here; nothing is in flight, so no warning.
+    // `manager` is destroyed here; nothing is outstanding, so no warning.
   }
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
@@ -577,7 +577,7 @@ TEST(IoUringManagerDrop, dropSyncManagerHasNothingInFlight) {
 }
 
 #ifdef QLEVER_HAS_IO_URING
-// Drop the manager while reads are still in flight (submitted but never
+// Drop the manager while reads are still outstanding (submitted but never
 // waited). `IoUringPolicy`'s destructor drains the outstanding completions
 // (and logs a warning) before tearing down the ring, so the kernel is done
 // writing into the target buffers. `batch` is declared before `manager`, so its
@@ -602,12 +602,12 @@ TEST(IoUringManagerDrop, dropRunningManager) {
   {
     Manager manager(64);
     batch.submitTo(manager, fd);  // submit, but never wait
-    // `manager` is destroyed here; its destructor drains the in-flight reads.
+    // `manager` is destroyed here; its destructor drains the outstanding reads.
   }
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
   EXPECT_THAT(logStream.str(), ifLogLevelIsCompiledIn<LogLevel::Enum::WARN>(
-                                   ::testing::HasSubstr("still in flight")));
+                                   ::testing::HasSubstr("still outstanding")));
 }
 #endif
 
@@ -866,7 +866,7 @@ TEST_F(IoUringPolicyFailureTest, failedReadIsThrownAfterAllReadsOfItsBatch) {
   }
   EXPECT_THAT(batch.result()[1], Eq("AAAA"));
   EXPECT_THAT(batch.result()[2], Eq("BBBB"));
-  EXPECT_THAT(logStream.str(), Not(HasSubstr("still in flight")));
+  EXPECT_THAT(logStream.str(), Not(HasSubstr("still outstanding")));
 }
 
 // A submit keeps failing with `EAGAIN` in the middle of a batch that is larger
