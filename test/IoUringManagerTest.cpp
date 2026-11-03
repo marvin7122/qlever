@@ -520,7 +520,8 @@ TEST(IoUringManagerDrop, dropRunningManager) {
   }
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
-  EXPECT_THAT(logStream.str(), ::testing::HasSubstr("still outstanding"));
+  EXPECT_THAT(logStream.str(), ifLogLevelIsCompiledIn<LogLevel::Enum::WARN>(
+                                   ::testing::HasSubstr("still outstanding")));
 }
 #endif
 
