@@ -10,6 +10,7 @@
 #include "engine/ExportQueryExecutionTrees.h"
 #include "engine/QueryPlanner.h"
 #include "index/ExportIds.h"
+#include "index/IdToStringAndTypeCache.h"
 #include "parser/SparqlParser.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/GTestHelpers.h"

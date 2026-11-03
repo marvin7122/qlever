@@ -26,6 +26,7 @@
 #include "engine/ConstructTripleGenerator.h"
 #include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
+#include "index/IdToStringAndTypeCache.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/ConstexprUtils.h"
 #include "util/http/MediaTypes.h"
