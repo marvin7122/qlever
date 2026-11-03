@@ -42,28 +42,28 @@ namespace pageCacheReadTestHelpers {
 // still being cached.
 inline int64_t fullyCached(int fd, const ::iovec* iov, int iovcnt,
                            int64_t offset) noexcept {
-  int64_t numBytesReadTotal = 0;
+  int64_t numberOfBytesReadTotal = 0;
   for (const ::iovec& buffer :
        ql::span<const ::iovec>{iov, static_cast<size_t>(iovcnt)}) {
     auto* target = static_cast<char*>(buffer.iov_base);
-    size_t numBytesRemaining = buffer.iov_len;
-    while (numBytesRemaining > 0) {
+    size_t numberOfBytesRemaining = buffer.iov_len;
+    while (numberOfBytesRemaining > 0) {
       const ssize_t numBytesRead =
-          ::pread(fd, target, numBytesRemaining,
-                  static_cast<off_t>(offset + numBytesReadTotal));
+          ::pread(fd, target, numberOfBytesRemaining,
+                  static_cast<off_t>(offset + numberOfBytesReadTotal));
       if (numBytesRead < 0) {
         return -1;
       }
       if (numBytesRead == 0) {
-        return numBytesReadTotal;
+        return numberOfBytesReadTotal;
       }
-      const auto numBytesReadUnsigned = static_cast<size_t>(numBytesRead);
-      target += numBytesReadUnsigned;
-      numBytesRemaining -= numBytesReadUnsigned;
-      numBytesReadTotal += numBytesRead;
+      const auto numberOfBytesReadUnsigned = static_cast<size_t>(numBytesRead);
+      target += numberOfBytesReadUnsigned;
+      numberOfBytesRemaining -= numberOfBytesReadUnsigned;
+      numberOfBytesReadTotal += numBytesRead;
     }
   }
-  return numBytesReadTotal;
+  return numberOfBytesReadTotal;
 }
 
 //______________________________________________________________________________

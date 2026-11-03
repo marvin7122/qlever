@@ -44,8 +44,8 @@ std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
   entriesOfRuns.reserve(runs.size());
   ql::span<uint64_t> unassignedEntries{entries};
   for (const IndexRun& run : runs) {
-    entriesOfRuns.push_back(unassignedEntries.first(run.numIndices_ + 1));
-    unassignedEntries = unassignedEntries.subspan(run.numIndices_ + 1);
+    entriesOfRuns.push_back(unassignedEntries.first(run.numberOfIndices_ + 1));
+    unassignedEntries = unassignedEntries.subspan(run.numberOfIndices_ + 1);
   }
   AD_CORRECTNESS_CHECK(unassignedEntries.empty());
 

@@ -76,13 +76,14 @@ struct UnservedReads {
   };
   std::variant<NothingRead, AllRead, RemainingPositions> reads_;
 
-  // The `UnservedReads` of a batch of `numReads` reads of which the reads at
-  // the strictly ascending positions `notServed` were not served: `NothingRead`
-  // if that is every read (also for an empty batch), `AllRead` if it is none,
-  // and `RemainingPositions` otherwise. Throw if `notServed` is not strictly
-  // ascending or has a position that is not smaller than `numReads`.
+  // The `UnservedReads` of a batch of `numberOfReads` reads of which the reads
+  // at the strictly ascending positions `notServed` were not served:
+  // `NothingRead` if that is every read (also for an empty batch), `AllRead` if
+  // it is none, and `RemainingPositions` otherwise. Throw if `notServed` is not
+  // strictly ascending or has a position that is not smaller than
+  // `numberOfReads`.
   static UnservedReads fromNotServed(std::vector<size_t> notServed,
-                                     size_t numReads);
+                                     size_t numberOfReads);
 };
 
 // Serves the reads of a batch that are completely in the page cache with one

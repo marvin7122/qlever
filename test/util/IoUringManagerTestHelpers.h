@@ -37,7 +37,7 @@ namespace ioUringManagerTestHelpers {
 class TempFile {
  public:
   explicit TempFile(std::string_view content)
-      : path_{absl::StrCat(gtestCurrentTestName(), ".", numInstances_++,
+      : path_{absl::StrCat(gtestCurrentTestName(), ".", numberOfInstances_++,
                            ".tmp")} {
     // Open for reading and writing (`"w+b"`): the tests read from this file's
     // `fd()` via `pread`/io_uring.
@@ -64,7 +64,7 @@ class TempFile {
 
  private:
   // Makes the file names of the instances of one test distinct.
-  static inline size_t numInstances_ = 0;
+  static inline size_t numberOfInstances_ = 0;
   std::string path_;
   ad_utility::File readFile_;
 };

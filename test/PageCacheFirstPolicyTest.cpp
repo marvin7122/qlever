@@ -259,11 +259,11 @@ TEST(ReadPageCacheHits, switchingOffInTheMiddleOfABatch) {
 TEST(ReadPageCacheHits, aShortChunkDoesNotStopTheNextChunk) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   const auto iovMax = static_cast<size_t>(IOV_MAX);
-  const size_t numReads = iovMax + 1;
-  auto [tmp, fd] = makeTempFile(std::string(numReads, 'x'));
+  const size_t numberOfReadsInBatch = iovMax + 1;
+  auto [tmp, fd] = makeTempFile(std::string(numberOfReadsInBatch, 'x'));
   std::vector<std::pair<uint64_t, size_t>> reads;
-  reads.reserve(numReads);
-  for (size_t i : ad_utility::integerRange(numReads)) {
+  reads.reserve(numberOfReadsInBatch);
+  for (size_t i : ad_utility::integerRange(numberOfReadsInBatch)) {
     reads.emplace_back(i, 1);
   }
   size_t numberOfReads = 0;
@@ -287,13 +287,13 @@ TEST(ReadPageCacheHits, aShortChunkDoesNotStopTheNextChunk) {
 // A run of more than `IOV_MAX` adjacent reads is split into several calls.
 TEST(ReadPageCacheHits, runsAreSplitAtIovMax) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
-  const size_t numReads = static_cast<size_t>(IOV_MAX) + 1;
-  std::string content(numReads, 'x');
+  const size_t numberOfReadsInBatch = static_cast<size_t>(IOV_MAX) + 1;
+  std::string content(numberOfReadsInBatch, 'x');
   content.back() = 'y';
   auto [tmp, fd] = makeTempFile(content);
   std::vector<std::pair<uint64_t, size_t>> reads;
-  reads.reserve(numReads);
-  for (size_t i : ad_utility::integerRange(numReads)) {
+  reads.reserve(numberOfReadsInBatch);
+  for (size_t i : ad_utility::integerRange(numberOfReadsInBatch)) {
     reads.emplace_back(i, 1);
   }
   size_t numberOfReads = 0;

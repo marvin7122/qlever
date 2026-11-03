@@ -517,14 +517,16 @@ ad_utility::PageCacheRead lowercased(ad_utility::PageCacheRead read) {
   return [read = std::move(read)](int fd, const ::iovec* iov, int iovcnt,
                                   int64_t offset) {
     const int64_t numBytesRead = read(fd, iov, iovcnt, offset);
-    auto numBytesLeft = static_cast<size_t>(std::max<int64_t>(numBytesRead, 0));
+    auto numberOfBytesLeft =
+        static_cast<size_t>(std::max<int64_t>(numBytesRead, 0));
     for (const ::iovec& buffer :
          ql::span<const ::iovec>{iov, static_cast<size_t>(iovcnt)}) {
       auto* bytes = static_cast<char*>(buffer.iov_base);
-      const size_t numBytesInBuffer = std::min(numBytesLeft, buffer.iov_len);
-      std::transform(bytes, bytes + numBytesInBuffer, bytes,
+      const size_t numberOfBytesInBuffer =
+          std::min(numberOfBytesLeft, buffer.iov_len);
+      std::transform(bytes, bytes + numberOfBytesInBuffer, bytes,
                      [](char c) { return static_cast<char>(std::tolower(c)); });
-      numBytesLeft -= numBytesInBuffer;
+      numberOfBytesLeft -= numberOfBytesInBuffer;
     }
     return numBytesRead;
   };
