@@ -284,12 +284,14 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
-  // If set, each block of more than 8192 rows of a CSV or TSV export of a
-  // SELECT query is serialized in chunks of 8192 rows that run concurrently on
-  // the executor of the query, instead of cell by cell on the thread that sends
-  // the response. At most `2 * max-num-threads-per-query` chunks are in flight
-  // per query, and their memory is not tracked by the memory limit of the
-  // query. The output is the same.
+  // If set, each block of a CSV or TSV export of a SELECT query that has more
+  // than `ExportQueryExecutionTrees::MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK`
+  // rows is cut into chunks of at most that many rows, which are serialized
+  // concurrently on the executor of the query, instead of cell by cell on the
+  // thread that produces the response body. At most
+  // `2 * max-num-threads-per-query` chunks are in flight per query; their
+  // memory counts towards the memory limit of the query. The output of a
+  // successful export is the same.
   Bool parallelCsvTsvExport_{false, "parallel-csv-tsv-export"};
 
   // ___________________________________________________________________________

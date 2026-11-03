@@ -13,11 +13,11 @@
 
 #include "engine/ExportQueryExecutionTrees.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 
 #include <optional>
-#include <range/v3/view/chunk.hpp>
 #include <range/v3/view/enumerate.hpp>
 #include <string_view>
 
@@ -107,35 +107,39 @@ STREAMABLE_GENERATOR_TYPE computeResultForAsk(
 }
 
 // _____________________________________________________________________________
-// The maximal number of rows that are serialized together in one chunk of a
-// parallel CSV or TSV export (see `csvOrTsvRows` below). A chunk is the unit of
-// work of the parallel export, so it has to be large enough that scheduling a
-// task costs little compared to its serialization. The chunks in flight (at
-// most `2 * max-num-threads-per-query`, plus the one that is being yielded)
-// are held in memory that the memory limit of the query does not track; their
-// size grows with the width of the rows (for example, 8192 rows of 10 literals
-// of 200 bytes each take 16 MB). Neither the value nor this trade-off has been
-// measured yet.
-constexpr uint64_t NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK = 8192;
+// Convert the `id` to its field in a CSV or TSV export (`std::nullopt` for an
+// unbound value). This is the per-cell work of both the sequential and the
+// parallel CSV or TSV export.
+template <ad_utility::MediaType format>
+auto idToCsvOrTsvField(const Index& index, Id id,
+                       const LocalVocab& localVocab) {
+  using enum ad_utility::MediaType;
+  static_assert(format == csv || format == tsv);
+  constexpr auto& escapeFunction =
+      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
+  return ql::exportIds::idToStringAndType<format == csv>(index, id, localVocab,
+                                                         escapeFunction);
+}
+}  // namespace
 
-// Return the CSV or TSV lines (each terminated by a newline) of the `rows` of
-// `table`, with one field per entry of `columns` (an empty field for a column
-// that is `std::nullopt` or an unbound value). This function only reads its
-// arguments, so it may be called concurrently for different `rows`.
-template <ad_utility::MediaType format, typename RowIndices>
-std::string csvOrTsvRows(
+// _____________________________________________________________________________
+template <ad_utility::MediaType format>
+ExportQueryExecutionTrees::CsvOrTsvChunk
+ExportQueryExecutionTrees::csvOrTsvRows(
     const Index& index,
     ql::span<const std::optional<QueryExecutionTree::VariableAndColumnIndex>>
         columns,
-    const TableConstRefWithVocab& table, const RowIndices& rows,
-    const ad_utility::CancellationHandle<>& cancellationHandle) {
-  using enum ad_utility::MediaType;
-  static_assert(format == csv || format == tsv);
+    const TableConstRefWithVocab& table,
+    ql::ranges::iota_view<uint64_t, uint64_t> rows,
+    const ad_utility::AllocatorWithLimit<char>& allocator,
+    const ad_utility::CancellationHandle<>& cancellationHandle,
+    const std::atomic<bool>& stop) {
   static constexpr char separator = format == tsv ? '\t' : ',';
-  constexpr auto& escapeFunction =
-      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
-  std::string lines;
+  CsvOrTsvChunk lines{allocator};
   for (uint64_t row : rows) {
+    if (stop.load(std::memory_order_relaxed)) {
+      return lines;
+    }
     for (const auto& [j, column] : ::ranges::views::enumerate(columns)) {
       if (j > 0) {
         lines.push_back(separator);
@@ -143,10 +147,9 @@ std::string csvOrTsvRows(
       if (!column.has_value()) {
         continue;
       }
-      Id id = table.idTable()(row, column.value().columnIndex_);
-      auto optionalStringAndType =
-          ql::exportIds::idToStringAndType<format == csv>(
-              index, id, table.localVocab(), escapeFunction);
+      auto optionalStringAndType = idToCsvOrTsvField<format>(
+          index, table.idTable()(row, column.value().columnIndex_),
+          table.localVocab());
       if (optionalStringAndType.has_value()) [[likely]] {
         lines.append(optionalStringAndType.value().first);
       }
@@ -156,7 +159,21 @@ std::string csvOrTsvRows(
   }
   return lines;
 }
-}  // namespace
+
+template ExportQueryExecutionTrees::CsvOrTsvChunk
+ExportQueryExecutionTrees::csvOrTsvRows<ad_utility::MediaType::csv>(
+    const Index&,
+    ql::span<const std::optional<QueryExecutionTree::VariableAndColumnIndex>>,
+    const TableConstRefWithVocab&, ql::ranges::iota_view<uint64_t, uint64_t>,
+    const ad_utility::AllocatorWithLimit<char>&,
+    const ad_utility::CancellationHandle<>&, const std::atomic<bool>&);
+template ExportQueryExecutionTrees::CsvOrTsvChunk
+ExportQueryExecutionTrees::csvOrTsvRows<ad_utility::MediaType::tsv>(
+    const Index&,
+    ql::span<const std::optional<QueryExecutionTree::VariableAndColumnIndex>>,
+    const TableConstRefWithVocab&, ql::ranges::iota_view<uint64_t, uint64_t>,
+    const ad_utility::AllocatorWithLimit<char>&,
+    const ad_utility::CancellationHandle<>&, const std::atomic<bool>&);
 
 // __________________________________________________________________________
 InputRangeTypeErased<TableConstRefWithVocab>
@@ -592,8 +609,6 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   STREAMABLE_YIELD(absl::StrJoin(variables, std::string_view{&separator, 1}));
   STREAMABLE_YIELD('\n');
 
-  constexpr auto& escapeFunction =
-      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
   // If the runtime parameter `parallel-csv-tsv-export` is set, the rows of a
   // block with more than one chunk of rows are serialized in parallel (see
   // below). Otherwise (the default, and for every block with at most one
@@ -603,9 +618,10 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   uint64_t resultSize = 0;
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
-    if (inParallel && range.size() > NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK) {
-      // The chunks of the block are serialized concurrently on the executor of
-      // the query and yielded in their original order. At most
+    if (inParallel && range.size() > MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK) {
+      // The rows of the block are cut into chunks of (almost) equal size,
+      // which are serialized concurrently on the executor of the query and
+      // yielded in their original order. At most
       // `2 * max-num-threads-per-query` chunks are in flight, so that a thread
       // can serialize the next chunk while its previous one waits to be
       // yielded. How many of them run at the same time is bounded by the
@@ -615,18 +631,48 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
       // block that it refers to; this is also why all chunks of a block are
       // serialized before `getRowIndices` is asked for the next block.
       const auto& qec = *qet.getQec();
-      auto serializeChunk = [&qec, &selectedColumnIndices, &table = pair,
-                             &cancellationHandle](const auto& rows) {
-        return csvOrTsvRows<format>(qec.getIndex(), selectedColumnIndices,
-                                    table, rows, *cancellationHandle);
-      };
-      const size_t numberOfChunksInFlight =
+      const auto numberOfRows = static_cast<uint64_t>(range.size());
+      const uint64_t firstRow = *range.begin();
+      const uint64_t endRow = firstRow + numberOfRows;
+      // Both divisions round up.
+      const uint64_t numberOfChunks =
+          (numberOfRows + MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK - 1) /
+          MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK;
+      const uint64_t numberOfRowsPerChunk =
+          (numberOfRows + numberOfChunks - 1) / numberOfChunks;
+      auto chunks =
+          ql::views::iota(uint64_t{0}, numberOfChunks) |
+          ql::views::transform(
+              [firstRow, endRow, numberOfRowsPerChunk](uint64_t chunkIndex) {
+                uint64_t begin = firstRow + chunkIndex * numberOfRowsPerChunk;
+                return ql::ranges::iota_view<uint64_t, uint64_t>{
+                    begin, std::min(begin + numberOfRowsPerChunk, endRow)};
+              });
+      // Set when this block is left, also when the consumer destroys the
+      // export early (for example, after a client disconnect), so that the
+      // chunks that are still in flight stop instead of serializing rows that
+      // nobody reads. The destructor of the view waits for them.
+      std::atomic<bool> stop = false;
+      auto serializeChunk =
+          [&qec, &selectedColumnIndices, &table = pair, &cancellationHandle,
+           &stop,
+           allocator =
+               ad_utility::AllocatorWithLimit<char>{qec.getAllocator()}](
+              ql::ranges::iota_view<uint64_t, uint64_t> rows) {
+            return csvOrTsvRows<format>(qec.getIndex(), selectedColumnIndices,
+                                        table, rows, allocator,
+                                        *cancellationHandle, stop);
+          };
+      const size_t maxNumberOfChunksInFlight =
           2 * getRuntimeParameter<&RuntimeParameters::maxNumThreadsPerQuery_>();
       ad_utility::AsyncTransformView serializedChunks{
-          ::ranges::views::chunk(range, NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK),
-          serializeChunk, numberOfChunksInFlight, qec.executor()};
-      for (std::string& serializedChunk : serializedChunks) {
-        STREAMABLE_YIELD(serializedChunk);
+          std::move(chunks), serializeChunk, maxNumberOfChunksInFlight,
+          qec.executor()};
+      // Declared after the view, so that it is destroyed (and sets `stop`)
+      // before the view waits for its tasks.
+      absl::Cleanup stopChunksInFlight = [&stop] { stop = true; };
+      for (const CsvOrTsvChunk& serializedChunk : serializedChunks) {
+        STREAMABLE_YIELD(std::string_view{serializedChunk});
       }
       continue;
     }
@@ -635,10 +681,8 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
         if (selectedColumnIndices[j].has_value()) {
           const auto& val = selectedColumnIndices[j].value();
           Id id = pair.idTable()(i, val.columnIndex_);
-          auto optionalStringAndType =
-              ql::exportIds::idToStringAndType<format == csv>(
-                  qet.getQec()->getIndex(), id, pair.localVocab(),
-                  escapeFunction);
+          auto optionalStringAndType = idToCsvOrTsvField<format>(
+              qet.getQec()->getIndex(), id, pair.localVocab());
           if (optionalStringAndType.has_value()) [[likely]] {
             STREAMABLE_YIELD(optionalStringAndType.value().first);
           }
