@@ -82,7 +82,11 @@ class BatchManager final : public BatchManagerBase, public NoCopyNoMove {
  public:
   using BatchHandle = typename BatchManagerBase::BatchHandle;
 
-  explicit BatchManager(unsigned ringSize = 256) : policy_(ringSize) {}
+  // `ringSize` and `policyArgs` are passed on to the constructor of the
+  // `ReadPolicy` (for example the `PageCacheRead` of a `PageCacheFirstPolicy`).
+  template <typename... PolicyArgs>
+  explicit BatchManager(unsigned ringSize = 256, PolicyArgs&&... policyArgs)
+      : policy_(ringSize, std::forward<PolicyArgs>(policyArgs)...) {}
 
   [[nodiscard]] BatchHandle addBatch(int fd, ql::span<const size_t> numBytes,
                                      ql::span<const uint64_t> offsets,
@@ -237,18 +241,15 @@ using BatchIoManager = BatchManager<SyncIoPolicy>;
 #endif
 
 namespace detail {
-// Build a `BatchManager` for `Policy`, decorated with `PageCacheFirstPolicy` if
-// the page-cache fast path is supported.
+// Build a `BatchManager` for `Policy`, decorated with `PageCacheFirstPolicy`.
+// Where `preadv2(RWF_NOWAIT)` is not compiled in or not supported, the
+// decorator passes every batch on unchanged.
 template <typename Policy>
 std::unique_ptr<BatchManagerBase> makeBatchManagerFor(unsigned ringSize) {
   static_assert(ReadPolicyConcept<Policy>,
                 "makeBatchManagerFor's Policy must satisfy the "
                 "ReadPolicyConcept.");
-  if (pageCacheFastPathIsSupported()) {
-    return std::make_unique<BatchManager<PageCacheFirstPolicy<Policy>>>(
-        ringSize);
-  }
-  return std::make_unique<BatchManager<Policy>>(ringSize);
+  return std::make_unique<BatchManager<PageCacheFirstPolicy<Policy>>>(ringSize);
 }
 }  // namespace detail
 
@@ -257,9 +258,9 @@ std::unique_ptr<BatchManagerBase> makeBatchManagerFor(unsigned ringSize) {
 // syscall fails at runtime clear `preferIoUring` and fall back to a
 // `SyncIoManager`. Passing the flag by reference makes this probe-once: after
 // the first failure, every subsequent call goes straight to the sync manager,
-// so we don't repeat a failing syscall. Where `preadv2(RWF_NOWAIT)` is
-// available, the manager serves page-cache hits first (`PageCacheFirstPolicy`,
-// switched with `BatchManagerBase::setPageCacheFastPath`).
+// so we don't repeat a failing syscall. The manager serves page-cache hits
+// first (`PageCacheFirstPolicy`, switched with
+// `BatchManagerBase::setPageCacheFastPath`).
 inline std::unique_ptr<BatchManagerBase> makeBatchManager(
     bool& preferIoUring, unsigned ringSize = 256) {
 #ifdef QLEVER_HAS_IO_URING

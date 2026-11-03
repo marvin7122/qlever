@@ -18,6 +18,7 @@
 #include <cerrno>
 #include <climits>
 #include <cstdint>
+#include <cstring>
 #include <utility>
 #include <vector>
 
@@ -25,7 +26,6 @@
 #include "backports/span.h"
 #include "util/Exception.h"
 #include "util/Log.h"
-#include "util/io_uring/PageCacheReadHook.h"
 
 namespace ad_utility {
 
@@ -36,16 +36,15 @@ namespace ad_utility {
 #define QL_PAGE_CACHE_FAST_PATH
 #endif
 
-namespace detail {
 //______________________________________________________________________________
 int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
                             int64_t offset) noexcept {
 #ifdef QL_PAGE_CACHE_FAST_PATH
   return preadv2(fd, iov, iovcnt, static_cast<off_t>(offset), RWF_NOWAIT);
 #else
-  // Without `preadv2(RWF_NOWAIT)`, fail like a kernel that does not support
-  // it. `readPageCacheHits` never calls this function then (the fast path is
-  // compiled out), but the hook must have a default on every platform.
+  // Fail like a kernel that does not support `RWF_NOWAIT`. A
+  // `PageCacheReader` never calls this function then (it starts switched
+  // off), but it is the default `PageCacheRead` on every platform.
   (void)fd;
   (void)iov;
   (void)iovcnt;
@@ -56,24 +55,9 @@ int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
 }
 
 //______________________________________________________________________________
-PageCacheRead& pageCacheRead() noexcept {
-  static PageCacheRead function = &systemPageCacheRead;
-  return function;
-}
-
-//______________________________________________________________________________
-std::atomic<bool>& pageCacheFastPathSupported() noexcept {
-  // The flag guards no other data. It uses the default sequential consistency
-  // anyway, so that its publication needs no reasoning about memory orders.
-  static std::atomic<bool> supported{true};
-  return supported;
-}
-}  // namespace detail
-
-//______________________________________________________________________________
-bool pageCacheFastPathIsSupported() noexcept {
+bool pageCacheFastPathIsCompiledIn() noexcept {
 #ifdef QL_PAGE_CACHE_FAST_PATH
-  return detail::pageCacheFastPathSupported().load();
+  return true;
 #else
   return false;
 #endif
@@ -99,34 +83,51 @@ constexpr auto areAdjacent = [](const auto& previous, const auto& next) {
 };
 
 //______________________________________________________________________________
-// Log once that the kernel or file system rejects `RWF_NOWAIT` (`EOPNOTSUPP`)
-// or that `preadv2` does not exist (`ENOSYS`, Linux < 4.6 or a seccomp filter),
-// and switch the fast path off for the rest of the process.
-void switchOffFastPathIfUnsupported(int64_t numBytesRead) {
-  if (numBytesRead < 0 && (errno == EOPNOTSUPP || errno == ENOSYS) &&
-      detail::pageCacheFastPathSupported().exchange(false)) {
-    AD_LOG_WARN << "preadv2 with RWF_NOWAIT is not supported (EOPNOTSUPP or "
-                   "ENOSYS); reading without the page-cache fast path "
-                   "from now on"
+// True if a page-cache read that failed with `errorCode` will fail for every
+// later run as well: the kernel or file system rejects `RWF_NOWAIT`
+// (`EOPNOTSUPP`), `preadv2` does not exist (`ENOSYS`, Linux < 4.6), or a
+// seccomp filter forbids it (`ENOSYS` or `EPERM`).
+bool failsForGood(int errorCode) {
+  return errorCode == EOPNOTSUPP || errorCode == ENOSYS || errorCode == EPERM;
+}
+
+//______________________________________________________________________________
+// Log that a `PageCacheReader` switched itself off. Every batch manager has its
+// own reader, so the message is logged only for the first one in the process.
+void warnOnceThatTheFastPathIsOff(int errorCode) {
+  static std::atomic<bool> warned{false};
+  if (!warned.exchange(true)) {
+    AD_LOG_WARN << "preadv2 with RWF_NOWAIT failed ("
+                << std::strerror(errorCode)
+                << "); the vocabulary reads of this batch manager, and of "
+                   "every other one that hits this error, are done without "
+                   "the page-cache fast path from now on"
                 << std::endl;
   }
 }
 
 //______________________________________________________________________________
-// Read a `run` of adjacent reads with one `preadv2(RWF_NOWAIT)` call and return
-// how many of its reads, from the front, were read completely. `EAGAIN`, a
-// short read and any other error leave the remaining reads unserved. `iovecs`
-// is scratch space for the call that the caller keeps across the runs of a
-// batch, so that a batch of many short runs does not allocate once per run.
+// Read a `run` of adjacent reads with one call of `read` and return how many of
+// its reads, from the front, were read completely. `EAGAIN`, a short read and
+// any other error leave the remaining reads unserved; an error for which
+// `failsForGood` is true also clears `supported`. `iovecs` is scratch space
+// for the call that the caller keeps across the runs of a batch, so that a
+// batch of many short runs does not allocate once per run.
 template <typename Run>
-size_t serveRun(int fd, Run run, std::vector<::iovec>& iovecs) {
+size_t serveRun(int fd, Run run, const PageCacheRead& read, bool& supported,
+                std::vector<::iovec>& iovecs) {
   iovecs.clear();
   ::ranges::push_back(iovecs, run | ::ranges::views::transform(toIovec));
-  const int64_t numBytesRead = detail::pageCacheRead()(
-      fd, iovecs.data(), static_cast<int>(iovecs.size()),
-      static_cast<int64_t>(fileOffsetOf(*::ranges::begin(run))));
-  switchOffFastPathIfUnsupported(numBytesRead);
+  const int64_t numBytesRead =
+      read(fd, iovecs.data(), static_cast<int>(iovecs.size()),
+           static_cast<int64_t>(fileOffsetOf(*::ranges::begin(run))));
   if (numBytesRead < 0) {
+    // Read `errno` before any other library call can change it.
+    const int errorCode = errno;
+    if (failsForGood(errorCode)) {
+      supported = false;
+      warnOnceThatTheFastPathIsOff(errorCode);
+    }
     return 0;
   }
   // The end of each read within the run; a read is served if its end was read.
@@ -142,15 +143,15 @@ size_t serveRun(int fd, Run run, std::vector<::iovec>& iovecs) {
 #endif
 
 //______________________________________________________________________________
-UnservedReads readPageCacheHits(int fd, ql::span<const size_t> numBytes,
-                                ql::span<const uint64_t> offsets,
-                                ql::span<char*> buffers) {
+UnservedReads PageCacheReader::readPageCacheHits(
+    int fd, ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
+    ql::span<char*> buffers) {
   AD_CONTRACT_CHECK(
       offsets.size() == numBytes.size() && buffers.size() == numBytes.size(),
       "The three spans describe the same reads, so they "
       "must have the same length.");
 #ifdef QL_PAGE_CACHE_FAST_PATH
-  if (!pageCacheFastPathIsSupported()) {
+  if (!supported_) {
     return {UnservedReads::NothingRead{}};
   }
   const auto positions = ::ranges::views::iota(size_t{0}, numBytes.size());
@@ -169,7 +170,7 @@ UnservedReads readPageCacheHits(int fd, ql::span<const size_t> numBytes,
     for (auto run :
          adjacentReads | ::ranges::views::chunk(static_cast<size_t>(IOV_MAX))) {
       const size_t numServed =
-          pageCacheFastPathIsSupported() ? serveRun(fd, run, iovecs) : 0;
+          supported_ ? serveRun(fd, run, read_, supported_, iovecs) : 0;
       ::ranges::push_back(notServed,
                           run | ::ranges::views::drop(numServed) |
                               ::ranges::views::transform(positionOf));
