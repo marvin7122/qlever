@@ -35,7 +35,7 @@ const Config largeCache{MemorySize::megabytes(64), 0, 0.0};
 auto makeIndexWithIris(size_t n) {
   std::string kg;
   for (size_t i = 0; i < n; ++i) {
-    absl::StrAppend(&kg, "<s> <p> <a", i, "> . ");
+    absl::StrAppend(&kg, "<s> <p> <a", i, "> .\n");
   }
   auto qec = ad_utility::testing::getQec(kg);
   auto getId = [getId = ad_utility::testing::makeGetId(qec->getIndex())](
@@ -246,10 +246,10 @@ TEST(IdToStringAndTypeCache, EvictsToStayWithinMaxSize) {
 TEST(IdToStringAndTypeCache, HashTableCountsForTheMaxSize) {
   std::string kg;
   for (size_t i = 0; i < 300; ++i) {
-    absl::StrAppend(&kg, "<s> <p> <a", i, "> . ");
+    absl::StrAppend(&kg, "<s> <p> <a", i, "> .\n");
   }
   for (size_t i = 0; i < 20; ++i) {
-    absl::StrAppend(&kg, "<s> <q> \"", std::string(400, 'x'), i, "\" . ");
+    absl::StrAppend(&kg, "<s> <q> \"", std::string(400, 'x'), i, "\" .\n");
   }
   auto qec = ad_utility::testing::getQec(kg);
   const Index& index = qec->getIndex();
@@ -279,9 +279,9 @@ TEST(IdToStringAndTypeCache, HashTableCountsForTheMaxSize) {
 // A term that is larger than 1/16 of the maximal size is returned but not
 // cached, and does not count for the hit rate.
 TEST(IdToStringAndTypeCache, DoesNotCacheTermsLargerThanOneSixteenth) {
-  std::string longLiteral(1000, 'x');
+  std::string longLiteral(600, 'x');
   auto qec = ad_utility::testing::getQec(
-      absl::StrCat("<s> <p> \"short\" . <s> <p> \"", longLiteral, "\" ."));
+      absl::StrCat("<s> <p> \"short\" .\n<s> <p> \"", longLiteral, "\" .\n"));
   const Index& index = qec->getIndex();
   LocalVocab localVocab{};
   auto getId = ad_utility::testing::makeGetId(index);
