@@ -28,6 +28,7 @@
 #include "rdfTypes/RdfEscaping.h"
 #include "util/ConstexprUtils.h"
 #include "util/http/MediaTypes.h"
+#include "util/views/AsyncTransformView.h"
 #include "util/views/TakeUntilInclusiveView.h"
 
 using ad_utility::InputRangeTypeErased;
@@ -101,6 +102,67 @@ STREAMABLE_GENERATOR_TYPE computeResultForAsk(
       throw std::runtime_error{
           "ASK queries are not supported for TSV or CSV or binary format."};
   }
+}
+
+// _____________________________________________________________________________
+// A contiguous range of row indices of an `IdTable`.
+using RowRange = ql::ranges::iota_view<uint64_t, uint64_t>;
+
+// The maximal number of rows that are serialized together in one chunk of a
+// CSV or TSV export (see `csvOrTsvRows` below).
+constexpr uint64_t numRowsPerCsvOrTsvChunk = 8192;
+
+// Split `rows` into consecutive chunks of `numRowsPerChunk` rows each (the last
+// chunk may be shorter).
+auto rowRangeChunks(const RowRange& rows, uint64_t numRowsPerChunk) {
+  AD_CONTRACT_CHECK(numRowsPerChunk > 0);
+  const uint64_t begin = rows.empty() ? 0 : *rows.begin();
+  const uint64_t end = begin + rows.size();
+  const uint64_t numChunks =
+      (rows.size() + numRowsPerChunk - 1) / numRowsPerChunk;
+  return ql::views::iota(uint64_t{0}, numChunks) |
+         ql::views::transform([begin, end, numRowsPerChunk](uint64_t chunk) {
+           const uint64_t chunkBegin = begin + chunk * numRowsPerChunk;
+           return RowRange{chunkBegin,
+                           std::min(end, chunkBegin + numRowsPerChunk)};
+         });
+}
+
+// Return the CSV or TSV lines (each terminated by a newline) of the `rows` of
+// `table`, with one field per entry of `columns` (an empty field for a column
+// that is `std::nullopt` or an unbound value). This function only reads its
+// arguments, so it may be called concurrently for different `rows`.
+template <ad_utility::MediaType format>
+std::string csvOrTsvRows(
+    const Index& index,
+    const QueryExecutionTree::ColumnIndicesAndTypes& columns,
+    const TableConstRefWithVocab& table, const RowRange& rows,
+    const ad_utility::CancellationHandle<>& cancellationHandle) {
+  using enum ad_utility::MediaType;
+  static_assert(format == csv || format == tsv);
+  static constexpr char separator = format == tsv ? '\t' : ',';
+  constexpr auto& escapeFunction =
+      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
+  std::string lines;
+  for (uint64_t i : rows) {
+    for (size_t j = 0; j < columns.size(); ++j) {
+      if (columns[j].has_value()) {
+        Id id = table.idTable()(i, columns[j].value().columnIndex_);
+        auto optionalStringAndType =
+            ql::exportIds::idToStringAndType<format == csv>(
+                index, id, table.localVocab(), escapeFunction);
+        if (optionalStringAndType.has_value()) [[likely]] {
+          lines.append(optionalStringAndType.value().first);
+        }
+      }
+      if (j + 1 < columns.size()) {
+        lines.push_back(separator);
+      }
+    }
+    lines.push_back('\n');
+    cancellationHandle.throwIfCancelled();
+  }
+  return lines;
 }
 }  // namespace
 
@@ -538,30 +600,38 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   STREAMABLE_YIELD(absl::StrJoin(variables, std::string_view{&separator, 1}));
   STREAMABLE_YIELD('\n');
 
-  constexpr auto& escapeFunction =
-      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
+  // Serialize the rows of each block in chunks. If the runtime parameter
+  // `parallel-csv-tsv-export` is set, the chunks of a block are serialized
+  // concurrently on the executor of the query, otherwise one after the other
+  // on this thread. The chunks are yielded in their original order in both
+  // cases, so the output is the same.
+  const bool inParallel =
+      getRuntimeParameter<&RuntimeParameters::parallelCsvTsvExport_>();
+  const auto& qec = *qet.getQec();
   uint64_t resultSize = 0;
-  for (const auto& [pair, range] :
+  for (const TableWithRange& block :
        getRowIndices(limitAndOffset, *result, resultSize)) {
-    for (uint64_t i : range) {
-      for (size_t j = 0; j < selectedColumnIndices.size(); ++j) {
-        if (selectedColumnIndices[j].has_value()) {
-          const auto& val = selectedColumnIndices[j].value();
-          Id id = pair.idTable()(i, val.columnIndex_);
-          auto optionalStringAndType =
-              ql::exportIds::idToStringAndType<format == csv>(
-                  qet.getQec()->getIndex(), id, pair.localVocab(),
-                  escapeFunction);
-          if (optionalStringAndType.has_value()) [[likely]] {
-            STREAMABLE_YIELD(optionalStringAndType.value().first);
-          }
-        }
-        if (j + 1 < selectedColumnIndices.size()) {
-          STREAMABLE_YIELD(separator);
-        }
+    const TableConstRefWithVocab& table = block.tableWithVocab_;
+    auto serializeChunk = [&qec, &selectedColumnIndices, &table,
+                           &cancellationHandle](const RowRange& rows) {
+      return csvOrTsvRows<format>(qec.getIndex(), selectedColumnIndices, table,
+                                  rows, *cancellationHandle);
+    };
+    auto chunks = rowRangeChunks(block.view_, numRowsPerCsvOrTsvChunk);
+    if (inParallel) {
+      // The view waits for all its tasks when it is destroyed at the end of
+      // this iteration, so no task outlives the `table` that it refers to.
+      ad_utility::AsyncTransformView serializedChunks{
+          std::move(chunks), serializeChunk,
+          2 * getRuntimeParameter<&RuntimeParameters::maxNumThreadsPerQuery_>(),
+          qec.executor()};
+      for (std::string& serializedChunk : serializedChunks) {
+        STREAMABLE_YIELD(serializedChunk);
       }
-      STREAMABLE_YIELD('\n');
-      cancellationHandle->throwIfCancelled();
+    } else {
+      for (const RowRange& rows : chunks) {
+        STREAMABLE_YIELD(serializeChunk(rows));
+      }
     }
   }
   AD_LOG_DEBUG << "Done creating readable result.\n";
