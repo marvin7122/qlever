@@ -744,6 +744,36 @@ TEST(RingSize, onlyPowersOfTwoUpTo4096AreValid) {
   }
 }
 
+// A `MonotonicCounter` mints 0, 1, 2, ... in this order.
+TEST(MonotonicCounter, mintsConsecutiveValuesFromZero) {
+  ad_utility::MonotonicCounter counter;
+  EXPECT_EQ(counter.mintNext(), 0u);
+  EXPECT_EQ(counter.mintNext(), 1u);
+  EXPECT_EQ(counter.mintNext(), 2u);
+}
+
+// Handles compare by the number they wrap; the default handle wraps 0.
+TEST(BatchHandle, comparesByWrappedValue) {
+  using ad_utility::BatchHandle;
+  EXPECT_EQ(BatchHandle{}.value(), 0u);
+  EXPECT_EQ(BatchHandle{7}.value(), 7u);
+  EXPECT_EQ(BatchHandle{7}, BatchHandle{7});
+  EXPECT_NE(BatchHandle{7}, BatchHandle{8});
+}
+
+// A `BatchManager` hands out a different handle for every batch.
+TEST(BatchManager, mintsDistinctHandles) {
+  auto [tmp, fd] = makeTempFile("AAAA");
+  ad_utility::BatchManager<ad_utility::SyncIoPolicy> manager;
+  ReadBatchForTesting first;
+  first.add(0, 4);
+  ReadBatchForTesting second;
+  second.add(0, 4);
+  const auto firstHandle = first.submitTo(manager, fd);
+  const auto secondHandle = second.submitTo(manager, fd);
+  EXPECT_NE(firstHandle, secondHandle);
+}
+
 // Check that the `manager` (as returned by `makeBatchManager`, see the tests
 // below) performs correct reads via the type-erased `BatchManagerBase`
 // interface.

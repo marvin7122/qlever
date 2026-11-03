@@ -14,34 +14,32 @@
 #include <limits>
 
 #include "util/Exception.h"
+#include "util/NoCopyNoMove.h"
 
 namespace ad_utility {
 
-// A counter that can only increase. It exists so that "monotonically
-// increasing" is enforced by the type instead of by convention: the
-// stored value is private, and the only way to change it is `mintNext`,
-// which hands out the current value and advances the counter. There is
-// deliberately no way to set, decrement, or reset the value, so ids
-// minted from a `MonotonicCounter` are unique and increasing for the
-// whole lifetime of the counter.
-class MonotonicCounter {
+// A counter that can only increase, starting at 0. It exists so that
+// "monotonically increasing" is enforced by the type instead of by convention:
+// the only way to change the value is `mintNext`, which hands out the current
+// value and advances the counter. There is deliberately no way to set,
+// decrement, reset, copy or move the counter, so the values minted from one
+// `MonotonicCounter` are unique and increasing for its whole lifetime.
+class MonotonicCounter : NoCopyNoMove {
  public:
-  // `explicit`, so that a bare integer cannot silently convert to a
-  // counter where a counter is expected.
-  explicit MonotonicCounter(uint64_t firstValue = 0) : value_{firstValue} {}
-
-  // Return the current value, then advance the counter by one. Throws if
-  // the counter would overflow, because wrapping around would hand out
-  // an already-used value.
+  // Return the current value, then advance the counter by one. A counter that
+  // starts at 0 and advances by one per call cannot reach the maximum of
+  // `uint64_t` in practice, so the check guards an internal invariant: wrapping
+  // around would hand out an already-used value.
   [[nodiscard]] uint64_t mintNext() {
     AD_CORRECTNESS_CHECK(
-        value_ != std::numeric_limits<uint64_t>::max(),
+        nextValue_ != std::numeric_limits<uint64_t>::max(),
         "A MonotonicCounter overflowed: no fresh value left to mint.");
-    return value_++;
+    return nextValue_++;
   }
 
  private:
-  uint64_t value_;
+  // The value that the next call to `mintNext` returns.
+  uint64_t nextValue_ = 0;
 };
 
 }  // namespace ad_utility
