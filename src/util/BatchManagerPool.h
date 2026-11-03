@@ -107,6 +107,13 @@ bool trySetGlobalBatchManagerPoolConfig(size_t numManagers, bool preferIoUring);
 // Return the process-wide pool, creating it on the first call. Thread-safe.
 BatchManagerPool& globalBatchManagerPool();
 
+// Configure the process-wide pool (see `trySetGlobalBatchManagerPoolConfig`)
+// and create it right away, so that the rings exist and the io_uring probe has
+// run before the first batched read. Log the number of managers and their
+// backend. If the pool already exists with a different configuration, keep it
+// and log a warning.
+void setUpGlobalBatchManagerPool(size_t numManagers, bool preferIoUring);
+
 }  // namespace ad_utility
 
 #endif  // QLEVER_SRC_UTIL_BATCHMANAGERPOOL_H

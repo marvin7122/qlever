@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "util/Exception.h"
+#include "util/Log.h"
 
 namespace ad_utility {
 
@@ -114,6 +115,22 @@ BatchManagerPool& globalBatchManagerPool() {
                                               conf.preferIoUring_);
   }();
   return *pool;
+}
+
+// _____________________________________________________________________________
+void setUpGlobalBatchManagerPool(size_t numManagers, bool preferIoUring) {
+  if (!trySetGlobalBatchManagerPoolConfig(numManagers, preferIoUring)) {
+    AD_LOG_WARN << "The pool of batch I/O managers already exists with "
+                << globalBatchManagerPool().size() << " managers, so the "
+                << numManagers
+                << " managers that were configured cannot be applied to it"
+                << std::endl;
+  }
+  const auto& pool = globalBatchManagerPool();
+  AD_LOG_INFO << "Batched vocabulary reads use " << pool.size()
+              << " I/O managers ("
+              << (pool.usesIoUring() ? "io_uring" : "synchronous pread") << ")"
+              << std::endl;
 }
 
 }  // namespace ad_utility
