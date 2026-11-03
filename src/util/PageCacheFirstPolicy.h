@@ -17,7 +17,6 @@
 
 #include "backports/algorithm.h"
 #include "backports/span.h"
-#include "util/Algorithm.h"
 #include "util/Exception.h"
 #include "util/IoUringManagerConcepts.h"
 #include "util/NoCopyNoMove.h"
@@ -109,7 +108,6 @@ class PageCacheFirstPolicy : NoCopyNoMove {
   // which suffices because `ReadPolicy::readBatch` is synchronous.
   void readBatch(int fd, ql::span<const size_t> numBytes,
                  ql::span<const uint64_t> offsets, ql::span<char*> buffers) {
-    validateSameLength(numBytes, offsets, buffers);
     if (!enabled_ || !pageCacheFastPathIsSupported()) {
       policy_.readBatch(fd, numBytes, offsets, buffers);
       return;
