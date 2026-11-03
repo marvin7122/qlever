@@ -230,8 +230,14 @@ void IoUringPolicy::reapWave(unsigned waveSize) {
   // left the queue without being applied would leave the outstanding counts
   // too high, so that the next `wait()` or the destructor would block forever.
   // The first exception is rethrown once every ready CQE is applied.
+
+  // The two fields of a CQE that `processCqe` needs.
+  struct CompletedRead {
+    int numBytesRead;
+    uint64_t requestId;
+  };
   std::array<io_uring_cqe*, REAP_CHUNK> cqes{};
-  std::array<std::pair<int, uint64_t>, REAP_CHUNK> resultAndRequestIdPerCqe{};
+  std::array<CompletedRead, REAP_CHUNK> completedReadsBuffer{};
   size_t numReaped = 0;
   std::exception_ptr firstException;
   while (true) {
@@ -241,15 +247,15 @@ void IoUringPolicy::reapWave(unsigned waveSize) {
       break;
     }
     const ql::span<io_uring_cqe* const> readyCqes(cqes.data(), n);
-    const ql::span<std::pair<int, uint64_t>> resultsAndRequestIds(
-        resultAndRequestIdPerCqe.data(), n);
-    for (auto&& [cqe, resultAndRequestId] :
-         ::ranges::views::zip(readyCqes, resultsAndRequestIds)) {
-      // Recover the id via the 64-bit `user_data` field, see `addBatch`.
-      resultAndRequestId = {cqe->res, io_uring_cqe_get_data64(cqe)};
-    }
+    const ql::span<CompletedRead> completedReads(completedReadsBuffer.data(),
+                                                 n);
+    ql::ranges::transform(
+        readyCqes, completedReads.begin(), [](const io_uring_cqe* cqe) {
+          // Recover the id via the 64-bit `user_data` field, see `addBatch`.
+          return CompletedRead{cqe->res, io_uring_cqe_get_data64(cqe)};
+        });
     io_uring_cq_advance(&ring_, n);
-    for (const auto& [numBytesRead, requestId] : resultsAndRequestIds) {
+    for (const auto& [numBytesRead, requestId] : completedReads) {
       try {
         processCqe(numBytesRead, requestId);
       } catch (...) {
