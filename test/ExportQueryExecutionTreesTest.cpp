@@ -373,14 +373,18 @@ std::chrono::milliseconds toChrono(std::string_view string) {
 // _____________________________________________________________________________
 // A CSV or TSV export with more rows than fit into one chunk of the
 // serialization (8192 rows) is the same with and without
-// `parallel-csv-tsv-export`, also when OFFSET, LIMIT, and the export limit cut
-// the result in the middle of a chunk, and with the minimal number of chunks
-// in flight (2 for `max-num-threads-per-query` = 1).
-TEST(ExportQueryExecutionTrees, ParallelCsvTsvExportOfManyRows) {
-  constexpr size_t numTriples = 20'000;
+// `parallel-csv-tsv-export`: for literals that need escaping, blank nodes, and
+// unbound values; for an empty result and a single row; when OFFSET, LIMIT, and
+// the export limit cut the result in the middle of a chunk; and with the
+// minimal number of chunks in flight (2 for `max-num-threads-per-query` = 1).
+TEST(ExportQueryExecutionTrees, ParallelCsvTsvExport) {
+  constexpr size_t numSubjects = 20'000;
   std::string kg;
-  for (size_t i = 0; i < numTriples; ++i) {
-    absl::StrAppend(&kg, "<s", i, "> <p> \"o", i, "\" .\n");
+  for (size_t i = 0; i < numSubjects; ++i) {
+    absl::StrAppend(&kg, "<s", i, "> <p> \"o", i, ", \\\"q\\\"\\t\" .\n");
+    if (i % 3 == 0) {
+      absl::StrAppend(&kg, "<s", i, "> <q> _:b", i, " .\n");
+    }
   }
   auto run = [&kg](const std::string& query, ad_utility::MediaType mediaType,
                    bool inParallel,
@@ -391,10 +395,16 @@ TEST(ExportQueryExecutionTrees, ParallelCsvTsvExportOfManyRows) {
     return runQueryStreamableResult(kg, query, mediaType, false, exportLimit);
   };
   using enum ad_utility::MediaType;
-  for (const std::string query :
-       {"SELECT ?s ?o WHERE { ?s <p> ?o } ORDER BY ?o",
-        "SELECT ?s ?o WHERE { ?s <p> ?o } ORDER BY ?o OFFSET 5000 LIMIT 10000",
-        "SELECT ?o WHERE { ?s <p> ?o } OFFSET 8191"}) {
+  for (const std::string query : {
+           "SELECT ?s ?o ?b WHERE { ?s <p> ?o OPTIONAL { ?s <q> ?b } } "
+           "ORDER BY ?s",
+           "SELECT ?s ?o WHERE { ?s <p> ?o } ORDER BY ?o OFFSET 5000 LIMIT "
+           "10000",
+           "SELECT ?o WHERE { ?s <p> ?o } OFFSET 8191",
+           "SELECT ?o WHERE { ?s <p> ?o } LIMIT 1",
+           "SELECT ?o WHERE { ?s <p> ?o } LIMIT 0",
+           "SELECT ?s WHERE { ?s <p> <nonexistent> }",
+       }) {
     for (auto mediaType : {csv, tsv}) {
       auto trace = generateLocationTrace(AD_CURRENT_SOURCE_LOC(), query);
       auto sequential = run(query, mediaType, false);
@@ -406,10 +416,10 @@ TEST(ExportQueryExecutionTrees, ParallelCsvTsvExportOfManyRows) {
       EXPECT_EQ(run(query, mediaType, true), sequential);
     }
   }
-  // The header line plus one line per triple.
+  // The header line plus one line per subject.
   EXPECT_EQ(ql::ranges::count(
                 run("SELECT ?s ?o WHERE { ?s <p> ?o }", csv, true), '\n'),
-            numTriples + 1);
+            numSubjects + 1);
 }
 
 TEST(ExportQueryExecutionTrees, Integers) {

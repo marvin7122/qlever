@@ -17,6 +17,7 @@
 #include <absl/strings/str_replace.h>
 
 #include <optional>
+#include <range/v3/view/chunk.hpp>
 #include <range/v3/view/enumerate.hpp>
 #include <string_view>
 
@@ -106,42 +107,20 @@ STREAMABLE_GENERATOR_TYPE computeResultForAsk(
 }
 
 // _____________________________________________________________________________
-// A contiguous range of row indices of an `IdTable`.
-using RowRange = ql::ranges::iota_view<uint64_t, uint64_t>;
-
 // The maximal number of rows that are serialized together in one chunk of a
 // CSV or TSV export (see `csvOrTsvRows` below).
 constexpr uint64_t NUM_ROWS_PER_CSV_OR_TSV_CHUNK = 8192;
-
-// Return a view of consecutive `RowRange`s that together cover `rows`, each
-// with `numRowsPerChunk` rows except for the last one, which may be shorter.
-// The view stores copies of its arguments, so it may outlive them.
-auto rowRangeChunks(const RowRange& rows, uint64_t numRowsPerChunk) {
-  AD_CONTRACT_CHECK(numRowsPerChunk > 0,
-                    "A chunk of a CSV or TSV export must contain at least one "
-                    "row, otherwise the chunks never cover the rows.");
-  const uint64_t begin = rows.empty() ? 0 : *rows.begin();
-  const uint64_t end = begin + rows.size();
-  const uint64_t numChunks =
-      (rows.size() + numRowsPerChunk - 1) / numRowsPerChunk;
-  return ql::views::iota(uint64_t{0}, numChunks) |
-         ql::views::transform([begin, end, numRowsPerChunk](uint64_t chunk) {
-           const uint64_t chunkBegin = begin + chunk * numRowsPerChunk;
-           return RowRange{chunkBegin,
-                           std::min(end, chunkBegin + numRowsPerChunk)};
-         });
-}
 
 // Return the CSV or TSV lines (each terminated by a newline) of the `rows` of
 // `table`, with one field per entry of `columns` (an empty field for a column
 // that is `std::nullopt` or an unbound value). This function only reads its
 // arguments, so it may be called concurrently for different `rows`.
-template <ad_utility::MediaType format>
+template <ad_utility::MediaType format, typename RowIndices>
 std::string csvOrTsvRows(
     const Index& index,
     ql::span<const std::optional<QueryExecutionTree::VariableAndColumnIndex>>
         columns,
-    const TableConstRefWithVocab& table, const RowRange& rows,
+    const TableConstRefWithVocab& table, const RowIndices& rows,
     const ad_utility::CancellationHandle<>& cancellationHandle) {
   using enum ad_utility::MediaType;
   static_assert(format == csv || format == tsv);
@@ -621,11 +600,12 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
        getRowIndices(limitAndOffset, *result, resultSize)) {
     const TableConstRefWithVocab& table = block.tableWithVocab_;
     auto serializeChunk = [&qec, &selectedColumnIndices, &table,
-                           &cancellationHandle](const RowRange& rows) {
+                           &cancellationHandle](const auto& rows) {
       return csvOrTsvRows<format>(qec.getIndex(), selectedColumnIndices, table,
                                   rows, *cancellationHandle);
     };
-    auto chunks = rowRangeChunks(block.view_, NUM_ROWS_PER_CSV_OR_TSV_CHUNK);
+    auto chunks =
+        ::ranges::views::chunk(block.view_, NUM_ROWS_PER_CSV_OR_TSV_CHUNK);
     if (inParallel) {
       // The view waits for all its tasks when it is destroyed at the end of
       // this iteration, so no task outlives the `table` that it refers to.
@@ -637,7 +617,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
         STREAMABLE_YIELD(serializedChunk);
       }
     } else {
-      for (const RowRange& rows : chunks) {
+      for (const auto& rows : chunks) {
         STREAMABLE_YIELD(serializeChunk(rows));
       }
     }
