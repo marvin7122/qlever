@@ -20,6 +20,7 @@
 #include "util/IoUringManagerConcepts.h"
 #include "util/IoUringPolicy.h"
 #include "util/MonotonicCounter.h"
+#include "util/NoCopyNoMove.h"
 #include "util/PageCacheFirstPolicy.h"
 #include "util/RingSize.h"
 #include "util/SyncIoPolicy.h"
@@ -27,36 +28,36 @@
 namespace ad_utility {
 
 // Abstract base of `BatchManager` so a pool can hold managers of different
-// `ReadPolicy`s behind a unified interface and pick the backend policy at
-// runtime.
+// `ReadPolicy`s behind a unified interface and pick the backend at runtime.
 class BatchManagerBase {
  public:
   using BatchHandle = ::ad_utility::BatchHandle;
 
-  // Marked `virtual`, so that destroying a derived manager through this base
-  // (the pool owns `std::unique_ptr<BatchManagerBase>`) runs the derived
-  // destructor. Defaulted, because the base itself owns no resources to
-  // release.
+  // Virtual, because the pool owns its managers as
+  // `std::unique_ptr<BatchManagerBase>`.
   virtual ~BatchManagerBase() = default;
 
-  [[nodiscard]] virtual BatchHandle addBatch(
-      int fd, ql::span<const size_t> numberOfBytesToRead,
-      ql::span<const uint64_t> offsets, ql::span<char*> buffers) = 0;
+  [[nodiscard]] virtual BatchHandle addBatch(int fd,
+                                             ql::span<const size_t> numBytes,
+                                             ql::span<const uint64_t> offsets,
+                                             ql::span<char*> buffers) = 0;
 
   virtual void wait(BatchHandle handle) = 0;
 
   // Switch the page-cache fast path of this manager on or off (see
   // `PageCacheFirstPolicy`). Takes effect for the batches added afterwards.
   // Managers without a page-cache fast path ignore it.
-  virtual void setPageCacheFastPath([[maybe_unused]] bool enabled) {}
+  virtual void setPageCacheFastPath([[maybe_unused]] bool enabled) noexcept {}
 };
 
 // `BatchManager` owns the batch bookkeeping (minting a `BatchHandle` per batch,
 // validating the input spans) and delegates the reads from the underlying
-// Vocabulary to the `Policy`, which must satisfy `detail::ReadPolicyConcept`
-// from `IoUringManagerConcepts.h`.
+// Vocabulary to the `ReadPolicy`, which must satisfy
+// `detail::ReadPolicyConcept` from `IoUringManagerConcepts.h`. Neither copyable
+// nor movable: it owns its policy (for `IoUringPolicy` the io_uring ring), and
+// the pool holds managers by `std::unique_ptr`.
 template <typename ReadPolicy>
-class BatchManager final : public BatchManagerBase {
+class BatchManager final : public BatchManagerBase, NoCopyNoMove {
   static_assert(
       detail::ReadPolicyConcept<ReadPolicy>,
       "BatchManager's ReadPolicy must satisfy the ReadPolicyConcept.");
@@ -68,29 +69,15 @@ class BatchManager final : public BatchManagerBase {
   // manager where a `BatchManager` is expected.
   explicit BatchManager(RingSize ringSize = RingSize{}) : policy_(ringSize) {}
 
-  // Not copyable or movable: the manager owns its policy (for
-  // `IoUringPolicy` the io_uring ring and the bookkeeping of its
-  // outstanding reads), so a copy would double-own that state. A
-  // correctly written move could transfer that state, batch handles
-  // included, but no caller needs one: managers live in
-  // `std::unique_ptr`s, which already provide the only transfer of
-  // ownership that is needed. The deleted operations keep this a
-  // deliberate decision instead of an accidentally available move.
-  BatchManager(const BatchManager&) = delete;
-  BatchManager& operator=(const BatchManager&) = delete;
-  BatchManager(BatchManager&&) = delete;
-  BatchManager& operator=(BatchManager&&) = delete;
-
-  [[nodiscard]] BatchHandle addBatch(int fd,
-                                     ql::span<const size_t> numberOfBytesToRead,
+  [[nodiscard]] BatchHandle addBatch(int fd, ql::span<const size_t> numBytes,
                                      ql::span<const uint64_t> offsets,
                                      ql::span<char*> buffers) override {
-    validateSameLength(numberOfBytesToRead, offsets, buffers);
+    validateSameLength(numBytes, offsets, buffers);
 
     BatchHandle handle{nextBatchHandle_.mintNext()};
 
     // Delegate the I/O work to the policy.
-    policy_.addBatch(fd, numberOfBytesToRead, offsets, buffers, handle);
+    policy_.addBatch(fd, numBytes, offsets, buffers, handle);
 
     return handle;
   }
@@ -99,7 +86,7 @@ class BatchManager final : public BatchManagerBase {
   void wait(BatchHandle handle) override { policy_.wait(handle); }
 
   // Forward the switch to the policy if it has one.
-  void setPageCacheFastPath([[maybe_unused]] bool enabled) override {
+  void setPageCacheFastPath([[maybe_unused]] bool enabled) noexcept override {
     if constexpr (CPP_requires_ref(detail::HasPageCacheFastPathSwitch,
                                    ReadPolicy)) {
       policy_.setPageCacheFastPath(enabled);
@@ -109,19 +96,21 @@ class BatchManager final : public BatchManagerBase {
  private:
   [[no_unique_address]] ReadPolicy policy_;
 
-  // Mints the batch handles. Type is `MonotonicCounter`, so the handles are
-  // increasing (and hence unique) by construction.
+  // Mints the handles that `addBatch` returns. They only identify batches, so
+  // uniqueness, which `MonotonicCounter` guarantees, is all that is needed.
   MonotonicCounter nextBatchHandle_;
 };
 
 // Build a batch manager. Which backend is used is a runtime decision:
 // when io_uring is compiled in and `preferIoUring` is set, try an
 // `IoUringPolicy` manager; if its setup syscall fails at runtime, clear
-// `preferIoUring` and fall back to a `SyncIoPolicy` manager. Passing the
-// flag by reference makes this probe-once: after the first failure, every
-// subsequent call goes straight to the sync manager, so we don't repeat a
-// failing syscall. `VocabularyOnDisk` passes the
-// `vocabulary-prefer-io-uring` runtime parameter as `preferIoUring`.
+// `preferIoUring` and fall back to a `SyncIoPolicy` manager.
+//
+// `preferIoUring` is an in/out parameter that makes the probe happen once:
+// pass the same flag to every call that builds managers of one pool, so that
+// after the first failure every later call goes straight to the sync manager
+// instead of repeating the failing syscall. `VocabularyOnDisk::open`
+// initializes it from the `vocabulary-prefer-io-uring` runtime parameter.
 //
 // Where `preadv2(RWF_NOWAIT)` is available, the manager serves page-cache
 // hits first (`PageCacheFirstPolicy`, the default) and the rest through

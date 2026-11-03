@@ -11,12 +11,10 @@
 #include "util/IoUringManager.h"
 
 #include <absl/strings/str_cat.h>
-#include <sys/uio.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <climits>
@@ -32,191 +30,40 @@
 #include "util/Exception.h"
 #include "util/ExceptionHandling.h"
 #include "util/Log.h"
-#include "util/PageCacheReadHook.h"
 
 namespace ad_utility {
 
 //______________________________________________________________________________
-void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer,
-                                    size_t numberOfBytesToRead,
+void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
                                     uint64_t fileOffset) {
-  // `pread` reads up to `numberOfBytesToRead` bytes from file descriptor `fd`
-  // at offset `fileOffset` (from the start of the file) into `targetBuffer`.
-  // The file offset is not changed. On success, it returns the number of bytes
-  // read (0 indicates end of file); on error it returns -1 and sets `errno`.
-  // See https://man7.org/linux/man-pages/man2/pread.2.html for more details.
-  const ssize_t numberOfBytesRead = pread(fd, targetBuffer, numberOfBytesToRead,
-                                          static_cast<off_t>(fileOffset));
+  // `pread` reads up to `numBytes` bytes from file descriptor `fd` at offset
+  // `fileOffset` (from the start of the file) into `targetBuffer`. The file
+  // offset is not changed. On success, it returns the number of bytes read (0
+  // indicates end of file); on error it returns -1 and sets `errno`. See
+  // https://man7.org/linux/man-pages/man2/pread.2.html for more details.
+  const ssize_t numBytesRead =
+      pread(fd, targetBuffer, numBytes, static_cast<off_t>(fileOffset));
 
-  if (numberOfBytesRead < 0) {
+  if (numBytesRead < 0) {
     AD_THROW("pread failed in readFullyOrThrow");
   }
   // A result smaller than requested (a partial read, or 0 at end of file) means
   // we read fewer bytes than expected, which we treat as an error.
-  if (static_cast<size_t>(numberOfBytesRead) != numberOfBytesToRead) {
+  if (static_cast<size_t>(numBytesRead) != numBytes) {
     AD_THROW("read fewer bytes than requested in readFullyOrThrow");
   }
 }
 
-// `preadv2` with `RWF_NOWAIT` exists on Linux only. Emscripten's headers
-// define `RWF_NOWAIT`, but its libc has no `preadv2`; there, and wherever
-// `RWF_NOWAIT` is missing, the fast path is compiled out.
-#if defined(__linux__) && defined(RWF_NOWAIT) && !defined(__EMSCRIPTEN__)
-#define QL_PAGE_CACHE_FAST_PATH
-#endif
-
-namespace {
-#ifdef QL_PAGE_CACHE_FAST_PATH
-// Cleared once a `preadv2(RWF_NOWAIT)` fails with `EOPNOTSUPP` or `ENOSYS`.
-// The flag is a best-effort hint without associated data; the default
-// sequential consistency (Sonar cpp:S8417) keeps the publication of the
-// disabled state obvious.
-std::atomic<bool> pageCacheFastPathSupported{true};
-#endif
-}  // namespace
-
-// In `detail` because these define the test hook declared in
-// `PageCacheFirstPolicy.h`: production code calls `readPageCacheHits`,
-// only tests replace the function pointer behind it.
-namespace detail {
 //______________________________________________________________________________
-int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
-                            int64_t offset) {
-#ifdef QL_PAGE_CACHE_FAST_PATH
-  return preadv2(fd, iov, iovcnt, static_cast<off_t>(offset), RWF_NOWAIT);
-#else
-  (void)fd;
-  (void)iov;
-  (void)iovcnt;
-  (void)offset;
-  errno = EOPNOTSUPP;
-  return -1;
-#endif
-}
-
-//______________________________________________________________________________
-PageCacheRead& pageCacheRead() {
-  static PageCacheRead function = &systemPageCacheRead;
-  return function;
-}
-
-//______________________________________________________________________________
-void resetPageCacheFastPathSupport() {
-#ifdef QL_PAGE_CACHE_FAST_PATH
-  pageCacheFastPathSupported.store(true);
-#endif
-}
-}  // namespace detail
-
-//______________________________________________________________________________
-bool pageCacheFastPathIsSupported() {
-#ifdef QL_PAGE_CACHE_FAST_PATH
-  return pageCacheFastPathSupported.load();
-#else
-  return false;
-#endif
-}
-
-#ifdef QL_PAGE_CACHE_FAST_PATH
-namespace {
-// The elements of the range of reads in `readPageCacheHits`: the position of a
-// read in its batch, its number of bytes, its file offset and its buffer.
-constexpr auto position = [](const auto& read) { return std::get<0>(read); };
-constexpr auto numBytesOf = [](const auto& read) { return std::get<1>(read); };
-constexpr auto fileOffsetOf = [](const auto& read) {
-  return std::get<2>(read);
-};
-constexpr auto toIovec = [](const auto& read) {
-  return ::iovec{std::get<3>(read), numBytesOf(read)};
-};
-// True if the file range of `next` starts where that of `previous` ends.
-constexpr auto areAdjacent = [](const auto& previous, const auto& next) {
-  return fileOffsetOf(previous) + numBytesOf(previous) == fileOffsetOf(next);
-};
-
-//______________________________________________________________________________
-// Log once that the kernel or file system rejects `RWF_NOWAIT` (`EOPNOTSUPP`)
-// or that `preadv2` does not exist (`ENOSYS`, Linux < 4.6 or a seccomp filter),
-// and switch the fast path off for the rest of the process.
-void disableIfNotSupported(int64_t numberOfBytesRead) {
-  if (numberOfBytesRead < 0 && (errno == EOPNOTSUPP || errno == ENOSYS) &&
-      pageCacheFastPathSupported.exchange(false)) {
-    AD_LOG_WARN << "preadv2 with RWF_NOWAIT is not supported (EOPNOTSUPP or "
-                   "ENOSYS); reading without the page-cache fast path "
-                   "from now on"
-                << std::endl;
-  }
-}
-
-//______________________________________________________________________________
-// Read a `run` of adjacent reads with one `preadv2(RWF_NOWAIT)` call and return
-// how many of its reads, from the front, were read completely. `EAGAIN`, a
-// short read and any other error leave the remaining reads unserved.
-template <typename Run>
-size_t serveRun(int fd, Run run) {
-  const auto iovecs = ::ranges::to<std::vector<::iovec>>(
-      run | ::ranges::views::transform(toIovec));
-  const int64_t numberOfBytesRead = detail::pageCacheRead()(
-      fd, iovecs.data(), static_cast<int>(iovecs.size()),
-      static_cast<int64_t>(fileOffsetOf(*::ranges::begin(run))));
-  disableIfNotSupported(numberOfBytesRead);
-  if (numberOfBytesRead < 0) {
-    return 0;
-  }
-  // The end of each read within the run; a read is served if its end was read.
-  auto readEnds = iovecs | ::ranges::views::transform(&::iovec::iov_len) |
-                  ::ranges::views::partial_sum;
-  const auto numberOfBytesReadUnsigned = static_cast<size_t>(numberOfBytesRead);
-  return static_cast<size_t>(
-      ::ranges::count_if(readEnds, [numberOfBytesReadUnsigned](size_t end) {
-        return end <= numberOfBytesReadUnsigned;
-      }));
-}
-}  // namespace
-#endif
-
-//______________________________________________________________________________
-std::vector<size_t> readPageCacheHits(
-    int fd, ql::span<const size_t> numberOfBytesToRead,
-    ql::span<const uint64_t> offsets, ql::span<char*> buffers) {
-  // The three spans describe the same reads, so they must have the
-  // same length.
-  validateSameLength(numberOfBytesToRead, offsets, buffers);
-  auto positions = ::ranges::views::iota(size_t{0}, numberOfBytesToRead.size());
-#ifdef QL_PAGE_CACHE_FAST_PATH
-  auto reads =
-      ::ranges::views::zip(positions, numberOfBytesToRead, offsets, buffers);
-  std::vector<size_t> notServed;
-  notServed.reserve(numberOfBytesToRead.size());
-  for (auto adjacentReads : reads | ::ranges::views::chunk_by(areAdjacent)) {
-    // One `preadv2` call takes at most `IOV_MAX` buffers.
-    for (auto run :
-         adjacentReads | ::ranges::views::chunk(static_cast<size_t>(IOV_MAX))) {
-      const size_t numberOfServedReads =
-          pageCacheFastPathIsSupported() ? serveRun(fd, run) : 0;
-      ::ranges::push_back(notServed,
-                          run | ::ranges::views::drop(numberOfServedReads) |
-                              ::ranges::views::transform(position));
-    }
-  }
-  return notServed;
-#else
-  (void)fd;
-  return ::ranges::to<std::vector<size_t>>(positions);
-#endif
-}
-
-//______________________________________________________________________________
-void SyncIoPolicy::addBatch(
-    int fd, ql::span<const size_t> numberOfBytesToReadPerRequest,
-    ql::span<const uint64_t> fileOffsetPerRequest,
-    ql::span<char*> targetBufferPerRequest,
-    [[maybe_unused]] BatchHandle handle) const {
-  for (const auto& [numberOfBytesToRead, fileOffset, targetBuf] :
-       ::ranges::views::zip(numberOfBytesToReadPerRequest, fileOffsetPerRequest,
+void SyncIoPolicy::addBatch(int fd,
+                            ql::span<const size_t> numBytesToReadPerRequest,
+                            ql::span<const uint64_t> fileOffsetPerRequest,
+                            ql::span<char*> targetBufferPerRequest,
+                            [[maybe_unused]] BatchHandle handle) const {
+  for (const auto& [numBytesToRead, fileOffset, targetBuf] :
+       ::ranges::views::zip(numBytesToReadPerRequest, fileOffsetPerRequest,
                             targetBufferPerRequest)) {
-    SyncIoPolicy::readFullyOrThrow(fd, targetBuf, numberOfBytesToRead,
-                                   fileOffset);
+    SyncIoPolicy::readFullyOrThrow(fd, targetBuf, numBytesToRead, fileOffset);
   }
 }
 
@@ -228,7 +75,7 @@ namespace {
 // used any more: throwing would let the caller free buffers that the kernel
 // still writes into.
 [[noreturn]] void terminateBecauseRingIsUnusable(std::string_view operation,
-                                                 int error) {
+                                                 int error) noexcept {
   const std::string message = absl::StrCat(
       operation, " failed in IoUringPolicy: ", std::strerror(error),
       ". The kernel may still write into the buffers of submitted reads, so "
@@ -243,9 +90,9 @@ class LiburingRing final : public IoUringInterface {
  public:
   explicit LiburingRing(RingSize ringSize) {
     // Set up the submission and completion queues, shared between this
-    // process and the kernel, with (at least) `ringSize` submission slots.
-    // liburing rounds the requested size up to a power of two, so the actual
-    // ring may be larger. See
+    // process and the kernel, with `ringSize` submission slots and twice as
+    // many completion slots. `RingSize` is a power of two, so liburing does
+    // not round it up. See
     // https://man7.org/linux/man-pages/man3/io_uring_queue_init.3.html for
     // details.
     if (io_uring_queue_init(ringSize.value(), &ring_, /*flags=*/0) < 0) {
@@ -293,7 +140,7 @@ class LiburingRing final : public IoUringInterface {
     const unsigned numReady = io_uring_peek_batch_cqe(
         &ring_, cqes.data(),
         static_cast<unsigned>(std::min(cqes.size(), completions.size())));
-    for (unsigned i = 0; i < numReady; ++i) {
+    for (unsigned i : ql::views::iota(0u, numReady)) {
       completions[i] =
           Completion{io_uring_cqe_get_data64(cqes[i]), cqes[i]->res};
     }
@@ -352,22 +199,22 @@ IoUringPolicy::IoUringPolicy(RingSize ringSize)
 IoUringPolicy::IoUringPolicy(RingSize ringSize,
                              std::unique_ptr<IoUringInterface> ring)
     : ring_{std::move(ring)}, ringSize_{ringSize} {
-  // `RingSize` guarantees a size of at least 1.
-  AD_CONTRACT_CHECK(ring_ != nullptr);
+  AD_CONTRACT_CHECK(ring_ != nullptr,
+                    "An IoUringPolicy needs a ring to run on.");
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::addBatch(int fd, ql::span<const size_t> numberOfBytesToRead,
+void IoUringPolicy::addBatch(int fd, ql::span<const size_t> numBytesToRead,
                              ql::span<const uint64_t> offsets,
                              ql::span<char*> buffers,
                              [[maybe_unused]] BatchHandle handle) {
-  validateSameLength(numberOfBytesToRead, offsets, buffers);
-  if (numberOfBytesToRead.empty()) {
+  validateSameLength(numBytesToRead, offsets, buffers);
+  if (numBytesToRead.empty()) {
     return;
   }
   Batch batch;
-  batch.numBytes = numberOfBytesToRead;
-  batch.states.assign(numberOfBytesToRead.size(), ReadState::NotQueued);
+  batch.numBytes = numBytesToRead;
+  batch.states.assign(numBytesToRead.size(), ReadState::NotQueued);
   // `run` throws only if a correctness check fails or memory runs out. The
   // bookkeeping can then no longer tell which reads the kernel still holds, so
   // the exception must not reach the caller, who would free the buffers.
@@ -411,7 +258,7 @@ void IoUringPolicy::run(int fd, ql::span<const uint64_t> offsets,
     // Wait for a wave of completions, but never for more requests than the
     // kernel holds.
     reap(batch,
-         static_cast<unsigned>(std::min<size_t>(REAP_WAVE_SIZE, numInKernel)));
+         static_cast<unsigned>(std::min<size_t>(REAP_WAVE, numInKernel)));
   }
 }
 
@@ -438,6 +285,19 @@ void IoUringPolicy::submit(Batch& batch) {
     // A submit that takes nothing although SQEs are queued did not make
     // progress either, so it is retried like `EAGAIN`.
     if (ret != 0 && ret != -EAGAIN) {
+      // A fatal submit error only forces termination while the kernel
+      // holds reads of this batch (it may still write into their
+      // buffers). If it holds none, the queued reads were never handed
+      // to the kernel, so the batch can fail gracefully instead: cancel
+      // its queued reads (their SQEs stay queued as no-ops) and let
+      // `addBatch` throw the error. No-ops in the kernel write nothing,
+      // so they do not force termination either.
+      if (batch.numReadsInKernel() == 0) {
+        cancelQueuedReads(
+            batch, absl::StrCat("io_uring_submit failed in IoUringPolicy: ",
+                                std::strerror(-ret)));
+        return;
+      }
       terminateBecauseRingIsUnusable("io_uring_submit", -ret);
     }
     if (numRetries == MAX_SUBMIT_RETRIES) {
@@ -536,12 +396,13 @@ void IoUringPolicy::reap(Batch& batch, unsigned minComplete) {
       }
       if (result < 0) {
         batch.error =
-            absl::StrCat("I/O error in IoUringPolicy read operation: ",
-                         std::strerror(-result));
+            absl::StrCat("I/O error in IoUringPolicy read operation (read ",
+                         requestId, " of the batch): ", std::strerror(-result));
       } else if (static_cast<size_t>(result) != expectedNumBytes) {
-        batch.error =
-            absl::StrCat("read fewer bytes than requested in IoUringPolicy (",
-                         result, " of ", expectedNumBytes, ")");
+        batch.error = absl::StrCat(
+            "read fewer bytes than requested in IoUringPolicy (read ",
+            requestId, " of the batch: ", result, " of ", expectedNumBytes,
+            ")");
       }
     }
   }
@@ -555,24 +416,20 @@ void IoUringPolicy::checkQueue(const Batch& batch) const {
 
 #endif  // QLEVER_HAS_IO_URING
 
-namespace detail {
-// In `detail` because this is only a building block of `makeBatchManager`
-// below, its only caller: it assembles a manager for one fixed `Policy`.
-// Callers must go through `makeBatchManager`, which owns the backend
-// choice (including the decoration with `PageCacheFirstPolicy` and the
-// io_uring fallback), so this helper is not a public factory and its
-// signature is not a stable interface.
-// Build a `BatchManager` for `Policy`, decorated with `PageCacheFirstPolicy`
-// if the page-cache fast path is supported.
-template <typename Policy>
+namespace {
+//______________________________________________________________________________
+// Build a `BatchManager` for `ReadPolicy`, decorated with
+// `PageCacheFirstPolicy` if the page-cache fast path is supported, so that
+// `makeBatchManager` makes that choice in one place for both backends.
+template <typename ReadPolicy>
 std::unique_ptr<BatchManagerBase> makeBatchManagerFor(RingSize ringSize) {
   if (pageCacheFastPathIsSupported()) {
-    return std::make_unique<BatchManager<PageCacheFirstPolicy<Policy>>>(
+    return std::make_unique<BatchManager<PageCacheFirstPolicy<ReadPolicy>>>(
         ringSize);
   }
-  return std::make_unique<BatchManager<Policy>>(ringSize);
+  return std::make_unique<BatchManager<ReadPolicy>>(ringSize);
 }
-}  // namespace detail
+}  // namespace
 
 //______________________________________________________________________________
 std::unique_ptr<BatchManagerBase> makeBatchManager(bool& preferIoUring,
@@ -580,19 +437,20 @@ std::unique_ptr<BatchManagerBase> makeBatchManager(bool& preferIoUring,
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
     try {
-      return detail::makeBatchManagerFor<IoUringPolicy>(ringSize);
+      return makeBatchManagerFor<IoUringPolicy>(ringSize);
     } catch (const std::exception& e) {
       preferIoUring = false;
       AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
                   << e.what()
                   << "); falling back to synchronous pread for vocabulary "
-                     "lookups\n";
+                     "lookups"
+                  << std::endl;
     }
   }
 #else
   preferIoUring = false;
 #endif
-  return detail::makeBatchManagerFor<SyncIoPolicy>(ringSize);
+  return makeBatchManagerFor<SyncIoPolicy>(ringSize);
 }
 
 }  // namespace ad_utility

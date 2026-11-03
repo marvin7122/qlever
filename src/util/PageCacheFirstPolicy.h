@@ -19,7 +19,9 @@
 #include "backports/span.h"
 #include "util/Algorithm.h"
 #include "util/BatchHandle.h"
+#include "util/Exception.h"
 #include "util/IoUringManagerConcepts.h"
+#include "util/NoCopyNoMove.h"
 #include "util/RingSize.h"
 
 namespace ad_utility {
@@ -28,106 +30,108 @@ namespace ad_utility {
 // non-blocking `preadv2(RWF_NOWAIT)` calls, one call per run of adjacent file
 // ranges (split into chunks of at most `IOV_MAX` reads), and return the
 // positions of the other reads in ascending order. The caller issues those
-// through its regular path, which also reports errors.
-// Precondition: the three spans have the same length.
-std::vector<size_t> readPageCacheHits(
-    int fd, ql::span<const size_t> numberOfBytesToRead,
-    ql::span<const uint64_t> offsets, ql::span<char*> buffers);
+// through its regular path, which also reports errors. A call that fails with
+// `EOPNOTSUPP` or `ENOSYS` switches the fast path off for the whole process
+// (see `pageCacheFastPathIsSupported`). Throws if the three spans differ in
+// length.
+std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
+                                      ql::span<const uint64_t> offsets,
+                                      ql::span<char*> buffers);
 
-// False once `readPageCacheHits` found that `RWF_NOWAIT` is not supported, or
-// if it is not available at compile time.
-bool pageCacheFastPathIsSupported();
+// Return whether `readPageCacheHits` may use `preadv2(RWF_NOWAIT)`: false if it
+// is not compiled in, or once a call has failed with `EOPNOTSUPP` or `ENOSYS`.
+// That latch is process-wide.
+bool pageCacheFastPathIsSupported() noexcept;
 
 // In `detail` because this only repackages the arguments of
-// `PageCacheFirstPolicy::addBatch` (below) into the three spans of the
-// reads that were not served; no other code is meant to construct one.
+// `PageCacheFirstPolicy::addBatch` (below) into the reads that were not served.
 namespace detail {
-// The reads of a batch at `positions`, as the three arguments of
-// `ReadPolicy::addBatch`.
+// Owning copies of the reads of a batch at the indices `positions` into the
+// three equally long spans, in the order of `positions`, as the `numBytes`,
+// `offsets` and `buffers` arguments of `ReadPolicy::addBatch`. `positions` must
+// be ascending and smaller than the length of the spans, as the result of
+// `readPageCacheHits` is.
 struct SelectedReads {
-  std::vector<size_t> numberOfBytesToRead_;
+  std::vector<size_t> numBytes_;
   std::vector<uint64_t> offsets_;
   std::vector<char*> buffers_;
 
-  SelectedReads(ql::span<const size_t> numberOfBytesToRead,
+  SelectedReads(ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 ql::span<const size_t> positions)
-      : numberOfBytesToRead_{selectAt(numberOfBytesToRead, positions)},
+      : numBytes_{selectAt(numBytes, positions)},
         offsets_{selectAt(offsets, positions)},
         buffers_{selectAt(buffers, positions)} {
-    AD_CONTRACT_CHECK(ql::ranges::is_sorted(positions));
-    AD_CONTRACT_CHECK(positions.empty() ||
-                      positions.back() < numberOfBytesToRead.size());
+    AD_CONTRACT_CHECK(ql::ranges::is_sorted(positions),
+                      "The positions of the selected reads must be ascending.");
   }
 
  private:
+  // The elements of `values` at `positions`, copied into a vector that is
+  // allocated once. Checks that every position is in range before using it.
   template <typename T>
   static std::vector<std::remove_const_t<T>> selectAt(
       ql::span<T> values, ql::span<const size_t> positions) {
-    std::vector<std::remove_const_t<T>> out(positions.size());
-    for (size_t i = 0; i < positions.size(); ++i) {
-      out[i] = values[positions[i]];
-    }
-    return out;
+    AD_CONTRACT_CHECK(
+        ql::ranges::all_of(
+            positions, [size = values.size()](size_t i) { return i < size; }),
+        "The positions of the selected reads must be in range.");
+    std::vector<std::remove_const_t<T>> selected(positions.size());
+    ql::ranges::transform(positions, selected.begin(),
+                          [values](size_t i) { return values[i]; });
+    return selected;
   }
 };
 }  // namespace detail
 
-// A `ReadPolicy` that serves the reads of a batch that are in the page cache
-// with `readPageCacheHits` and passes only the others on to `Policy`.
-template <typename Policy>
-class PageCacheFirstPolicy {
-  static_assert(
-      detail::ReadPolicyConcept<Policy>,
-      "PageCacheFirstPolicy's Policy must satisfy the ReadPolicyConcept.");
+// A `ReadPolicy` that serves the reads of a batch that a non-blocking
+// `preadv2(RWF_NOWAIT)` can serve right away (`readPageCacheHits`) and passes
+// only the others on to `ReadPolicy`. Neither copyable nor movable, like the
+// `BatchManager` that holds it.
+template <typename ReadPolicy>
+class PageCacheFirstPolicy : NoCopyNoMove {
+  static_assert(detail::ReadPolicyConcept<ReadPolicy>,
+                "PageCacheFirstPolicy's ReadPolicy must satisfy the "
+                "ReadPolicyConcept.");
 
  public:
-  // `explicit`, so that a bare ring size cannot silently convert to a
-  // policy where a policy is expected.
+  // `ringSize` is forwarded to the constructor of the decorated `ReadPolicy`.
   explicit PageCacheFirstPolicy(RingSize ringSize) : policy_(ringSize) {}
-
-  // Not copyable or movable: it owns the policy it decorates, so a copy
-  // would double-own that policy, and a move is only possible once the
-  // decorated policy supports one (it does not, see there). No caller
-  // needs either: the policy is only ever held inside its `BatchManager`.
-  PageCacheFirstPolicy(const PageCacheFirstPolicy&) = delete;
-  PageCacheFirstPolicy& operator=(const PageCacheFirstPolicy&) = delete;
-  PageCacheFirstPolicy(PageCacheFirstPolicy&&) = delete;
-  PageCacheFirstPolicy& operator=(PageCacheFirstPolicy&&) = delete;
 
   // Switch the fast path on (the default) or off for the batches that are added
   // afterwards.
-  void setPageCacheFastPath(bool enabled) { enabled_ = enabled; }
+  void setPageCacheFastPath(bool enabled) noexcept { enabled_ = enabled; }
 
   // Serve the reads of the batch that are in the page cache and pass the others
-  // on to the decorated policy. The contract of the arguments is the one of
-  // `readPageCacheHits` and of `Policy::addBatch`.
-  void addBatch(int fd, ql::span<const size_t> numberOfBytesToRead,
+  // on to the decorated policy. The arguments have the contract of
+  // `readPageCacheHits` and `ReadPolicy::addBatch`. The spans passed on to the
+  // decorated policy may point into storage that lives only during this call,
+  // which `ReadPolicyConcept` allows.
+  void addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle) {
-    validateSameLength(numberOfBytesToRead, offsets, buffers);
+    validateSameLength(numBytes, offsets, buffers);
     if (!enabled_ || !pageCacheFastPathIsSupported()) {
-      policy_.addBatch(fd, numberOfBytesToRead, offsets, buffers, handle);
+      policy_.addBatch(fd, numBytes, offsets, buffers, handle);
       return;
     }
     const std::vector<size_t> notServed =
-        readPageCacheHits(fd, numberOfBytesToRead, offsets, buffers);
-    if (notServed.size() == numberOfBytesToRead.size()) {
+        readPageCacheHits(fd, numBytes, offsets, buffers);
+    if (notServed.size() == numBytes.size()) {
       // Nothing was served, so the batch is passed on unchanged.
-      policy_.addBatch(fd, numberOfBytesToRead, offsets, buffers, handle);
+      policy_.addBatch(fd, numBytes, offsets, buffers, handle);
       return;
     }
-    detail::SelectedReads missed{numberOfBytesToRead, offsets, buffers,
-                                 notServed};
-    policy_.addBatch(fd, missed.numberOfBytesToRead_, missed.offsets_,
-                     missed.buffers_, handle);
+    detail::SelectedReads missed{numBytes, offsets, buffers, notServed};
+    policy_.addBatch(fd, missed.numBytes_, missed.offsets_, missed.buffers_,
+                     handle);
   }
 
   // Block until every read of the batch `handle` has completed.
   void wait(BatchHandle handle) { policy_.wait(handle); }
 
  private:
-  Policy policy_;
+  ReadPolicy policy_;
   bool enabled_ = true;
 };
 

@@ -31,6 +31,7 @@
 
 #include "backports/span.h"
 #include "util/BatchHandle.h"
+#include "util/NoCopyNoMove.h"
 #include "util/RingSize.h"
 
 namespace ad_utility {
@@ -43,7 +44,9 @@ namespace ad_utility {
 // fails submits and completes requests in any order.
 class IoUringInterface {
  public:
-  // A reaped completion: the request id of its SQE and its result (`res`).
+  // A reaped completion: the request id of its SQE and its result (the
+  // CQE's `res`): for a read, the number of bytes read on success, or
+  // `-errno` on failure.
   struct Completion {
     uint64_t requestId;
     int result;
@@ -52,7 +55,10 @@ class IoUringInterface {
   virtual ~IoUringInterface() = default;
 
   // Fill a free SQE with a read of `numBytes` bytes at `offset` of `fd` into
-  // `buffer`, tagged with `requestId`. Return false if no SQE is free.
+  // `buffer`, tagged with `requestId`. Return false if no SQE is free. An
+  // implementation must have a free SQE whenever fewer requests than the ring
+  // size are queued or in the kernel: `IoUringPolicy` never exceeds that
+  // bound and treats a `false` as a broken invariant.
   virtual bool prepareRead(int fd, char* buffer, size_t numBytes,
                            uint64_t offset, uint64_t requestId) = 0;
 
@@ -107,36 +113,37 @@ std::unique_ptr<IoUringInterface> makeLiburingRing(RingSize ringSize);
 // the kernel holding reads, so that throwing would let the caller free buffers
 // the kernel still writes into, terminates the process instead: any other
 // submit error, and a failed wait for completions.
-class IoUringPolicy {
+//
+// Neither copyable nor movable: the policy owns the ring, whose kernel-side
+// state cannot be duplicated, and it lives inside its `BatchManager`.
+class IoUringPolicy : NoCopyNoMove {
  public:
-  using BatchHandle = ::ad_utility::BatchHandle;
-
-  // Not copyable or movable: the policy owns the ring, whose kernel-side
-  // state cannot be duplicated, and no caller needs a move (managers live in
-  // `std::unique_ptr`s).
-  IoUringPolicy(const IoUringPolicy&) = delete;
-  IoUringPolicy& operator=(const IoUringPolicy&) = delete;
-  IoUringPolicy(IoUringPolicy&&) = delete;
-  IoUringPolicy& operator=(IoUringPolicy&&) = delete;
-
-  // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
+  // Set up a liburing ring with `ringSize` SQEs.
   explicit IoUringPolicy(RingSize ringSize);
 
   // Run on `ring` instead of a liburing ring. `ring` must have room for at
   // least `ringSize` SQEs and `2 * ringSize` CQEs. For tests.
   IoUringPolicy(RingSize ringSize, std::unique_ptr<IoUringInterface> ring);
 
-  // Read the batch: read `i` reads `numberOfBytesToRead[i]` bytes from `fd` at
+  // Read the batch: read `i` reads `numBytesToRead[i]` bytes from `fd` at
   // offset `offsets[i]` into `buffers[i]`; the three spans must have the same
   // length. `handle` is unused. Returns once every read has completed. Throws
   // if a read failed or was short, or if its reads could not be submitted, but
   // only once the kernel holds none of its reads.
-  void addBatch(int fd, ql::span<const size_t> numberOfBytesToRead,
+  void addBatch(int fd, ql::span<const size_t> numBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle);
 
   // Nothing to do: `addBatch` has already completed the batch.
-  void wait([[maybe_unused]] BatchHandle handle) {}
+  void wait([[maybe_unused]] BatchHandle handle) noexcept {}
+
+  // The request id of a no-op (the no-ops of cancelled reads keep this id). A
+  // read's request id is its index in the batch, so no read gets this id. It
+  // is not `uint64_t` max: that is liburing's `LIBURING_UDATA_TIMEOUT`, whose
+  // completions liburing consumes itself on kernels without
+  // `IORING_FEAT_EXT_ARG` (before 5.11), so the no-op would never be reaped.
+  static constexpr uint64_t NO_OP_REQUEST_ID =
+      std::numeric_limits<uint64_t>::max() - 1;
 
  private:
   enum class ReadState : uint8_t { NotQueued, Queued, InKernel, Done };
@@ -161,23 +168,10 @@ class IoUringPolicy {
     size_t numSlots() const { return numQueued - numDone; }
   };
 
-  // The request id of a no-op. A read's request id is its index in the batch,
-  // so no read gets this id. It is not `uint64_t` max: that is liburing's
-  // `LIBURING_UDATA_TIMEOUT`, whose completions liburing consumes itself on
-  // kernels without `IORING_FEAT_EXT_ARG` (before 5.11), so the no-op would
-  // never be reaped.
-  static constexpr uint64_t NO_OP_REQUEST_ID =
-      std::numeric_limits<uint64_t>::max() - 1;
-
- public:
-  // The request id that `IoUringPolicy` gives the no-ops of cancelled reads.
-  static constexpr uint64_t noOpRequestId() { return NO_OP_REQUEST_ID; }
-
- private:
   // The size of a wave: wait for up to this many completions at once (fewer if
   // fewer requests are in the kernel), then reap all ready ones in one pass.
   // This amortizes `io_uring_enter` and the CQ-head update over the wave.
-  static constexpr unsigned REAP_WAVE_SIZE = 8;
+  static constexpr unsigned REAP_WAVE = 8;
 
   // How often in a row an `io_uring_submit` that fails with `EAGAIN` is
   // retried before the queued reads are cancelled.

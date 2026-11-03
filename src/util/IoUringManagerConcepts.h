@@ -18,42 +18,52 @@
 #include "util/BatchHandle.h"
 #include "util/RingSize.h"
 
+// The concepts that the templates of the batch-read module
+// (`IoUringManager.h`) put on their template arguments:
+// - `ReadPolicyConcept`: what a `ReadPolicy`, the pluggable I/O backend of
+//   `BatchManager` and `PageCacheFirstPolicy`, must provide.
+// - `HasPageCacheFastPathSwitch`: whether a policy has a page-cache fast path
+//   that `BatchManagerBase::setPageCacheFastPath` can switch.
+//
+// They are in `detail` because they only constrain and inspect the template
+// arguments of `BatchManager` and `PageCacheFirstPolicy`: callers of a batch
+// manager use `BatchManagerBase` and `makeBatchManager` instead.
 namespace ad_utility::detail {
 
-// In `detail` because the concept and the trait in this header only
-// constrain and inspect the template arguments of `BatchManager` and
-// `PageCacheFirstPolicy`: they are part of how those templates are
-// implemented, not an interface that callers of a batch manager use
-// (callers use `BatchManagerBase` and `makeBatchManager`).
-
-// Definition of the `ReadPolicy Interface`
 template <typename T>
-CPP_requires(
-    ReadPolicy_,
-    requires(T& policy, int fd, ql::span<const size_t> numberOfBytesToRead,
-             ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-             BatchHandle handle)(
-        ::concepts::constructible_from<T, RingSize>,
-        // Must provide a method `addBatch` with the following
-        // parameters.
-        policy.addBatch(fd, numberOfBytesToRead, offsets, buffers, handle),
-        // Must provide a `wait` method with the following interface.
-        policy.wait(handle)));
+CPP_requires(ReadPolicy_,
+             requires(T& policy, int fd, ql::span<const size_t> numBytes,
+                      ql::span<const uint64_t> offsets, ql::span<char*> buffers,
+                      BatchHandle handle)(
+                 // Must provide `addBatch` with the following parameters.
+                 policy.addBatch(fd, numBytes, offsets, buffers, handle),
+                 // Must provide a `wait` method with the following interface.
+                 policy.wait(handle)));
 
 // The pluggable I/O backend of `BatchManager`: it specifies how the reads in a
-// batch are carried out. See `IoUringPolicy` (asynchronous, via io_uring) and
-// `SyncIoPolicy` (blocking `pread` fallback) in `IoUringManager.h`. Must
-// additionally be constructible from a `RingSize`. The batch
-// handle that `addBatch` and `wait` take is the wrapper type
-// `ad_utility::BatchHandle` (see `BatchHandle.h`), not a raw integer.
+// batch are carried out. Implemented by `IoUringPolicy` (io_uring, in
+// `IoUringPolicy.h`), `SyncIoPolicy` (blocking `pread`, in `SyncIoPolicy.h`)
+// and `PageCacheFirstPolicy` (a decorator, in `PageCacheFirstPolicy.h`).
+//
+// A `ReadPolicy` must
+// - be constructible from a `RingSize`, which `BatchManager` forwards (a
+//   policy without a ring ignores it);
+// - provide `addBatch(fd, numBytes, offsets, buffers, handle)`, where read `i`
+//   reads `numBytes[i]` bytes from `fd`, starting at byte `offsets[i]` of the
+//   file, into `buffers[i]`. The three spans have the same length (checked by
+//   `BatchManager::addBatch`). The span contents may be used only during the
+//   call, but the buffers they point to must stay valid until `wait(handle)`
+//   has returned;
+// - provide `wait(handle)`, which returns once every read of the batch
+//   `handle` has completed.
+// A failed read is reported by an exception from `addBatch` or from `wait`.
 template <typename T>
 CPP_concept ReadPolicyConcept = ::concepts::constructible_from<T, RingSize> &&
                                 CPP_requires_ref(ReadPolicy_, T);
 
-// Satisfied iff `Policy` has a member callable as
-// `setPageCacheFastPath(true)`, i.e. a switchable page-cache fast path
-// (as `PageCacheFirstPolicy` has one). `BatchManager` uses this to
-// forward its own switch only to policies that have one.
+// Satisfied iff `Policy` has a member callable as `setPageCacheFastPath(true)`,
+// i.e. a switchable page-cache fast path (as `PageCacheFirstPolicy` has).
+// `BatchManager` forwards its own switch only to policies that have one.
 template <typename Policy>
 CPP_requires(HasPageCacheFastPathSwitch,
              requires(Policy& policy)(policy.setPageCacheFastPath(true)));

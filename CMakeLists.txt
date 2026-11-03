@@ -328,7 +328,7 @@ FetchContent_Declare(
 FetchContent_Declare(
         spatialjoin
         GIT_REPOSITORY https://github.com/ad-freiburg/spatialjoin
-        GIT_TAG 1177c1bee6203908b39c4e2dda4765aec5f59dee
+        GIT_TAG 74f526a2f06a107d5c151bcf076802505c1a28ce
         SYSTEM
         EXCLUDE_FROM_ALL
 )
@@ -385,14 +385,19 @@ endif ()
 option(USE_IO_URING "Enable io_uring support for batch vocabulary I/O (requires liburing)" ON)
 if (USE_IO_URING)
     find_package(PkgConfig)
-    pkg_check_modules(URING QUIET liburing)
+    # `IoUringPolicy` needs liburing 2.2 or newer: `io_uring_sqe_set_data64`
+    # and `io_uring_cqe_get_data64` exist since 2.2, and `cancelQueued`
+    # relies on `io_uring_sq_ready` counting the queued SQEs from the kernel's
+    # head (so that the SQEs of a short submit stay queued), which every
+    # version since 2.2 does.
+    pkg_check_modules(URING QUIET liburing>=2.2)
     if (URING_FOUND)
-        MESSAGE(STATUS "Found liburing, enabling io_uring support")
+        MESSAGE(STATUS "Found liburing ${URING_VERSION}, enabling io_uring support")
         add_compile_definitions(QLEVER_HAS_IO_URING)
         include_directories(${URING_INCLUDE_DIRS})
         link_libraries(${URING_LIBRARIES})
     else ()
-        MESSAGE(STATUS "USE_IO_URING is ON but liburing was not found, building without io_uring support")
+        MESSAGE(STATUS "USE_IO_URING is ON but liburing >= 2.2 was not found, building without io_uring support")
     endif ()
 else ()
     MESSAGE(STATUS "USE_IO_URING is OFF, building without io_uring support")
