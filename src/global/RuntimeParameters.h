@@ -284,21 +284,17 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
-  // Term-result cache of the SELECT export (see
-  // `ql::exportIds::IdToStringAndTypeCache`). A capacity of 0 disables it.
-  // After every window of that many cached lookups, the cache is switched off
-  // for the rest of the export if the window's hit rate is below the minimum
-  // (a window of 0 or a minimum of 0 keeps it on).
-  SizeT selectExportTermCacheCapacity_{1 << 16,
-                                       "select-export-term-cache-capacity"};
-  // The maximal total size of the strings in that cache. Each entry gets an
-  // equal share (by default 64 MB / 65,536 = 976 bytes); longer terms are not
-  // cached.
+  // The term cache of the SELECT export (see
+  // `ql::exportIds::IdToStringAndTypeCache`). Its maximal memory, including
+  // the bookkeeping; the default of 0 disables it (as does any size below
+  // about 3 KB). After every window of that many hits and misses, the cache
+  // destroys its entries and computes every later term directly if the
+  // window's hit rate is below the minimum (a window of 0 or a minimum of 0
+  // keeps it on). The values of the window and the minimum are not tuned.
   MemorySizeParameter selectExportTermCacheMaxSize_{
-      ad_utility::MemorySize::megabytes(64),
-      "select-export-term-cache-max-size"};
-  SizeT selectExportTermCacheWindow_{1 << 13,
-                                     "select-export-term-cache-window"};
+      ad_utility::MemorySize::bytes(0), "select-export-term-cache-max-size"};
+  SizeT selectExportTermCacheNumberOfLookupsPerWindow_{
+      1 << 13, "select-export-term-cache-lookups-per-window"};
   Double selectExportTermCacheMinHitRate_{
       0.25, "select-export-term-cache-min-hit-rate"};
 
