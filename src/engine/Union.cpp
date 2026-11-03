@@ -454,16 +454,24 @@ void Union::onLimitOffsetChanged(const LimitOffsetClause&,
   // matter whether they are concatenated or merged according to `targetOrder_`.
   for (size_t i = 0; i < _subtrees.size(); ++i) {
     auto& subtree = _subtrees.at(i);
-    applyLimitOffsetToChild(subtree, LimitOffsetClause{limit + offset},
-                            childrenAreExclusivelyOwned);
-
-    // The pushdown may have un-sorted `subtree`, while both the merging
-    // implementation and our `resultSortedOn()` require the subtrees to be
-    // sorted, so restore that order (see the caution note on
-    // `Operation::applyLimitOffset`).
-    if (!targetOrder_.empty()) {
-      subtree = QueryExecutionTree::createSortedTree(std::move(subtree),
-                                                     sortOrderForSubtree(i));
+    if (targetOrder_.empty()) {
+      applyLimitOffsetToChild(subtree, LimitOffsetClause{limit + offset},
+                              childrenAreExclusivelyOwned);
+      continue;
+    }
+    // The merge needs the first `limit + offset` rows of each child in the
+    // target order. The pushdown may change the algorithm of the child and
+    // with it its sort order (see the caution note on
+    // `Operation::applyLimitOffset`). Then the child yields an arbitrary
+    // `limit + offset` rows, and sorting them afterwards doesn't restore the
+    // first ones. So the pushdown is applied to a clone, which is only kept if
+    // it is still sorted.
+    auto limitedSubtree = subtree;
+    applyLimitOffsetToChild(limitedSubtree, LimitOffsetClause{limit + offset},
+                            false);
+    if (limitedSubtree->getRootOperation()->isSortedBy(
+            sortOrderForSubtree(i))) {
+      subtree = std::move(limitedSubtree);
     }
   }
 }
