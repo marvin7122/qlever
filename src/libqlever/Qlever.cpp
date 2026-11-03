@@ -31,6 +31,7 @@
 #include "index/TextIndexBuilder.h"
 #include "libqlever/QleverTypes.h"
 #include "parser/SparqlParser.h"
+#include "util/BatchManagerPool.h"
 #include "util/Exception.h"
 #include "util/File.h"
 #include "util/FilesystemHelpers.h"
@@ -68,6 +69,27 @@ Qlever::Qlever(const EngineConfig& config, bool skipLoading,
       [this](ad_utility::MemorySize newValue) {
         cache_.setMaxSizeSingleEntry(newValue);
       });
+
+  // Create the process-wide pool of batch I/O managers now, so that the
+  // io_uring rings exist (and the fallback to synchronous reads, if io_uring
+  // is unavailable, has been decided) before the first query. The pool cannot
+  // be resized once it exists, so a process that has already used it has to
+  // live with the existing pool. That is not an error, but worth a warning.
+  if (!ad_utility::trySetGlobalBatchManagerPoolConfig(
+          config.numBatchIoManagers_, config.preferIoUring_)) {
+    AD_LOG_WARN << "The pool of batch I/O managers already exists with "
+                << ad_utility::globalBatchManagerPool().size()
+                << " managers, so the " << config.numBatchIoManagers_
+                << " managers that were configured for this engine cannot be "
+                   "applied to it"
+                << std::endl;
+  }
+  const auto& batchManagerPool = ad_utility::globalBatchManagerPool();
+  AD_LOG_INFO << "Batched vocabulary reads use " << batchManagerPool.size()
+              << " I/O managers ("
+              << (batchManagerPool.usesIoUring() ? "io_uring"
+                                                 : "synchronous pread")
+              << ")" << std::endl;
 
   // If `skipLoading` is set, we do not touch the on-disk index at all; the
   // instance is expected to be populated later from a blob (see
