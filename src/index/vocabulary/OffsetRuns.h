@@ -45,10 +45,10 @@ struct IndexRun {
 // more than the previous one), in the order of `indices`. Every index belongs
 // to exactly one run, so the runs together have `indices.size()` indices.
 //
-// TODO<joka921> Indices that are almost consecutive (for example every second
-// index) are split into many runs of one index each. Up to some gap size, it is
-// probably cheaper to read them as one range and skip the entries in between;
-// that threshold has to be measured.
+// TODO<marvin7122> Indices that are almost consecutive (for example every
+// second index) are split into many runs of one index each. Up to some gap
+// size, it is probably cheaper to read them as one range and skip the entries
+// in between; that threshold has to be measured.
 std::vector<IndexRun> splitIntoRuns(ql::span<const size_t> indices);
 
 // Read the `OffsetPair` of each of the `indices` from the `.offsets` file `fd`
