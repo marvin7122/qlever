@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "util/IoUringManager.h"
+#include "util/NoCopyNoMove.h"
 
 namespace ad_utility {
 
@@ -29,15 +30,18 @@ namespace ad_utility {
 // All managers are created in the constructor. So the io_uring probe, and the
 // fallback to synchronous reads if the `io_uring_setup` syscall fails, happen
 // once when the pool is created and not during a lookup.
-class BatchManagerPool {
+//
+// The pool is neither copied nor moved, because the leases refer to it by
+// pointer and other threads wait on its condition variable.
+class BatchManagerPool : public NoCopyNoMove {
  public:
   // A manager on loan from the pool. The destructor gives it back, also when
-  // the user leaves the scope with an exception.
-  class Lease {
+  // the user leaves the scope with an exception. A lease can be moved (the
+  // moved-from lease then holds nothing), but not assigned, because an
+  // assignment would have to give a manager back in the middle of its use.
+  class Lease : public NoCopy {
    public:
     Lease(Lease&& other) noexcept;
-    Lease(const Lease&) = delete;
-    Lease& operator=(const Lease&) = delete;
     Lease& operator=(Lease&&) = delete;
     ~Lease();
 
@@ -58,9 +62,6 @@ class BatchManagerPool {
   // fails for one of the managers, that one and all later ones are synchronous
   // and `usesIoUring()` is `false`.
   BatchManagerPool(size_t numManagers, bool preferIoUring);
-
-  BatchManagerPool(const BatchManagerPool&) = delete;
-  BatchManagerPool& operator=(const BatchManagerPool&) = delete;
 
   // Borrow a manager. Wait while all managers are in use.
   Lease acquire();
