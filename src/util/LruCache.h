@@ -65,8 +65,21 @@ class LRUCache {
   // included.
   static constexpr size_t numberOfBytesPerHashTableSlot =
       sizeof(typename decltype(cache_)::value_type) + 1;
-  static constexpr size_t memoryOfHashTable(size_t capacity) {
+  static constexpr size_t numberOfBytesOfHashTable(size_t capacity) {
     return capacity == 0 ? 0 : capacity * numberOfBytesPerHashTableSlot + 32;
+  }
+
+  // An upper bound of `hashTableCapacity()` after one more insertion of a new
+  // key. `absl::flat_hash_map` grows from capacity `c` to `2c + 1` when it has
+  // no free slot left (deleted slots are not free). For `c > 16`, it grows
+  // only if more than 25/32 of the slots hold entries, and otherwise reuses
+  // the deleted slots in place. The test
+  // `LRUCache.hashTableCapacityAfterOneMoreInsertionIsAnUpperBound` checks
+  // this against the abseil in use.
+  size_t hashTableCapacityAfterOneMoreInsertion() const {
+    size_t capacity = cache_.capacity();
+    bool mayGrow = capacity <= 16 || (cache_.size() + 1) * 32 > capacity * 25;
+    return mayGrow ? 2 * capacity + 1 : capacity;
   }
 
   // Shrink the hash table to the smallest capacity that fits `size()`

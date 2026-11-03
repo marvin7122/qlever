@@ -283,13 +283,13 @@ TEST(LRUCache, hashTableKeepsItsCapacityUntilShrunk) {
   LRUCache<int, int> cache(1000);
   EXPECT_EQ(cache.hashTableCapacity(), 0u);
   using Cache = LRUCache<int, int>;
-  EXPECT_EQ(Cache::memoryOfHashTable(0), 0u);
+  EXPECT_EQ(Cache::numberOfBytesOfHashTable(0), 0u);
   for (int i = 0; i < 100; ++i) {
     cache.insertAbsent(i, i);
   }
   size_t capacity = cache.hashTableCapacity();
   EXPECT_GE(capacity, 100u);
-  EXPECT_GT(Cache::memoryOfHashTable(capacity),
+  EXPECT_GT(Cache::numberOfBytesOfHashTable(capacity),
             capacity * Cache::numberOfBytesPerHashTableSlot);
   for (int i = 0; i < 95; ++i) {
     cache.popLeastRecentlyUsed();
@@ -303,6 +303,45 @@ TEST(LRUCache, hashTableKeepsItsCapacityUntilShrunk) {
   for (int i = 95; i < 100; ++i) {
     EXPECT_EQ(cache.popLeastRecentlyUsed(), i);
   }
+}
+
+// _____________________________________________________________________________
+// `hashTableCapacityAfterOneMoreInsertion` is an upper bound of the capacity
+// after an insertion, while the table grows and while entries are inserted and
+// removed (which leaves deleted slots), and the table always grows to 2c + 1.
+// This pins the growth policy of the abseil in use.
+TEST(LRUCache, hashTableCapacityAfterOneMoreInsertionIsAnUpperBound) {
+  LRUCache<int, int> cache(100'000);
+  int nextKey = 0;
+  size_t numberOfGrowths = 0;
+  auto insertAndCheck = [&]() {
+    size_t before = cache.hashTableCapacity();
+    size_t projected = cache.hashTableCapacityAfterOneMoreInsertion();
+    cache.insertAbsent(nextKey, nextKey);
+    ++nextKey;
+    size_t after = cache.hashTableCapacity();
+    EXPECT_LE(after, projected) << "capacity before: " << before;
+    if (after != before) {
+      EXPECT_EQ(after, 2 * before + 1);
+      ++numberOfGrowths;
+    }
+  };
+  // Grow the table to a few thousand slots.
+  for (int i = 0; i < 5000; ++i) {
+    insertAndCheck();
+  }
+  // Churn: remove the least recently used entry and insert a new key, which
+  // leaves deleted slots behind, at different fill levels.
+  for (size_t keep : {4000u, 3000u, 100u, 10u}) {
+    while (cache.size() > keep) {
+      cache.popLeastRecentlyUsed();
+    }
+    for (int i = 0; i < 20'000; ++i) {
+      cache.popLeastRecentlyUsed();
+      insertAndCheck();
+    }
+  }
+  EXPECT_GT(numberOfGrowths, 5u);
 }
 
 }  // namespace ad_utility::util
