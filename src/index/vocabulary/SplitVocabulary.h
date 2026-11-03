@@ -11,12 +11,14 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
 #define QLEVER_SRC_INDEX_VOCABULARY_SPLITVOCABULARY_H
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "backports/StartsWithAndEndsWith.h"
 #include "backports/algorithm.h"
@@ -253,9 +255,52 @@ class SplitVocabulary {
     return scanAllImpl(std::make_index_sequence<numberOfVocabs>{});
   }
 
-  //____________________________________________________________________________
+  // Look up the words for the marker-encoded `indices` (not empty, any order,
+  // duplicates allowed) and return them in the order of `indices`. The
+  // indices are grouped by their marker, and each group is looked up with one
+  // `lookupBatch` call on its underlying vocabulary (so the batched reads of
+  // that vocabulary are used). If all indices have the same marker, the result
+  // of that call is returned as is; otherwise, the result holds the results of
+  // the underlying calls and only its views are put back into input order.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
-    return ad_utility::vocabulary::sequentialLookupBatch(*this, indices);
+    AD_CONTRACT_CHECK(!indices.empty());
+    // For each marker, the unmarked indices of that marker, and their
+    // positions in `indices`.
+    std::array<std::vector<size_t>, numberOfVocabs> unmarkedIndices;
+    std::array<std::vector<size_t>, numberOfVocabs> positions;
+    std::array<uint64_t, numberOfVocabs> endIndices;
+    for (uint8_t marker = 0; marker < numberOfVocabs; ++marker) {
+      endIndices[marker] = endIndexOfUnderlying(marker);
+    }
+    for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
+      const uint8_t marker = getMarker(index);
+      const uint64_t unmarkedIndex = getVocabIndex(index);
+      // The same check as in `operator[]`.
+      AD_CORRECTNESS_CHECK(unmarkedIndex < endIndices[marker]);
+      unmarkedIndices[marker].push_back(unmarkedIndex);
+      positions[marker].push_back(static_cast<size_t>(position));
+    }
+
+    for (uint8_t marker = 0; marker < numberOfVocabs; ++marker) {
+      if (unmarkedIndices[marker].size() == indices.size()) {
+        return lookupBatchInUnderlying(marker, unmarkedIndices[marker]);
+      }
+    }
+
+    auto data = std::make_shared<SubBatchesLookupData>();
+    data->views().resize(indices.size());
+    for (uint8_t marker = 0; marker < numberOfVocabs; ++marker) {
+      if (unmarkedIndices[marker].empty()) {
+        continue;
+      }
+      auto result = lookupBatchInUnderlying(marker, unmarkedIndices[marker]);
+      for (const auto& [position, word] :
+           ::ranges::views::zip(positions[marker], *result)) {
+        data->views()[position] = word;
+      }
+      data->buffer()[marker] = std::move(result);
+    }
+    return SubBatchesLookupData::asResult(std::move(data));
   }
 
   //____________________________________________________________________________
@@ -399,6 +444,27 @@ class SplitVocabulary {
                       underlying_[marker]);
   }
 
+ private:
+  // The result of `lookupBatch` for indices with different markers: it owns
+  // the results of the `lookupBatch` calls on the underlying vocabularies
+  // (one per marker, null for a marker that does not occur), and its views
+  // point into them.
+  struct SubBatchesLookupData
+      : VocabLookupDataCommonBase<
+            std::array<VocabBatchLookupResult, numberOfVocabs>> {};
+
+  // The `lookupBatch` of the underlying vocabulary with the given `marker`,
+  // for the unmarked `indices`.
+  VocabBatchLookupResult lookupBatchInUnderlying(
+      uint8_t marker, ql::span<const size_t> indices) const {
+    auto result = std::visit(
+        [&indices](const auto& vocab) { return vocab.lookupBatch(indices); },
+        underlying_[marker]);
+    AD_CORRECTNESS_CHECK(result->size() == indices.size());
+    return result;
+  }
+
+ public:
   // This word writer writes words to different vocabularies depending on the
   // result of SplitFunction.
   class WordWriter : public WordWriterBase {
