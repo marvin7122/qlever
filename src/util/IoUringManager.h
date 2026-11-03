@@ -66,8 +66,7 @@ class BatchManagerBase {
 // `preferIoUring` is an in/out parameter that makes the probe happen once:
 // pass the same flag to every call that builds managers of one pool, so that
 // after the first failure every later call goes straight to the sync manager
-// instead of repeating the failing syscall. `VocabularyOnDisk::open`
-// initializes it from the `vocabulary-prefer-io-uring` runtime parameter.
+// instead of repeating the failing syscall.
 //
 // Where `preadv2(RWF_NOWAIT)` is available, the manager serves page-cache
 // hits first (`PageCacheFirstPolicy`, the default) and the rest through
