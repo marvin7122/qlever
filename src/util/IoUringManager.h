@@ -230,7 +230,9 @@ class IoUringPolicy {
   // The size of a wave: when the ring is full or `wait()` blocks, wait for up
   // to this many completions, then reap all ready ones in one pass (see
   // `reapWave`). This amortizes `io_uring_enter` and the CQ-head update over
-  // the wave.
+  // the wave. Not tuned: in a sweep of the wave size from 1 to 128 (and of
+  // the ring size and the number of CQEs peeked at once), the wall time of
+  // every value was within noise of the default (fork PR #314, Ural run 5598).
   static constexpr unsigned REAP_WAVE = 8;
 
   // The number of CQEs that `reapWave` takes out of the completion queue per
