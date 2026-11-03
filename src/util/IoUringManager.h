@@ -387,15 +387,15 @@ class IoUringPolicy : public NoCopyNoMove {
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
   // calling thread only when the submission queue is full, in order to drain
   // completion queue entries and free slots in the submission queue. Read `i`
-  // reads `numberOfBytesToRead[i]` bytes from file descriptor `fd`, starting at
-  // offset `offsets[i]` (from the start of the file), into the buffer starting
-  // at `buffers[i]`. The reads are tracked under `handle`, which can be passed
-  // to `wait()` to block until this batch has completed. Throws if the reads
-  // cannot be submitted (see above), but only once the kernel holds none of
-  // the batch's reads.
-  void addBatch(int fd, ql::span<const size_t> numberOfBytesToRead,
-                ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-                BatchHandle handle);
+  // reads `numberOfBytesToReadPerRequest[i]` bytes from file descriptor `fd`,
+  // starting at offset `fileOffsetPerRequest[i]` (from the start of the file),
+  // into the buffer starting at `targetBufferPerRequest[i]`. The reads are
+  // tracked under `handle`, which can be passed to `wait()` to block until this
+  // batch has completed. Throws if the reads cannot be submitted (see above),
+  // but only once the kernel holds none of the batch's reads.
+  void addBatch(int fd, ql::span<const size_t> numberOfBytesToReadPerRequest,
+                ql::span<const uint64_t> fileOffsetPerRequest,
+                ql::span<char*> targetBufferPerRequest, BatchHandle handle);
 
   // Block until every read in the batch that is represented by the `handle` has
   // completed. (The `handle` was submitted along the read requests using

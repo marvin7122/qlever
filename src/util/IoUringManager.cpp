@@ -297,10 +297,6 @@ void IoUringPolicy::addBatch(
         if (!submitFailure.has_value()) {
           submitFailure = submitQueued();
         }
-        // Between two batches, no read is queued: every read was handed to
-        // the kernel or cancelled. (Only no-ops of cancelled reads may stay.)
-        AD_CORRECTNESS_CHECK(ring_->numberOfQueued() == numberOfNoOpsQueued_,
-                             "addBatch must leave no read queued.");
         if (submitFailure.has_value()) {
           // The reads that were not prepared will never complete. Then reap the
           // reads of the batch that the kernel holds (the cancelled ones were
@@ -351,6 +347,9 @@ std::optional<std::string> IoUringPolicy::submitQueued() {
         result == 0 || result == -EAGAIN || result == -ENOMEM;
     if (!isTransient || numberOfRetries == MAX_SUBMIT_RETRIES) {
       cancelQueuedReads();
+      // Only the no-ops of the cancelled reads are left in the queue.
+      AD_CORRECTNESS_CHECK(ring_->numberOfQueued() == numberOfNoOpsQueued_,
+                           "After cancelling, only no-ops may be queued.");
       return absl::StrCat(
           "io_uring_submit failed in IoUringPolicy: ",
           result == 0 ? "no SQE was taken" : errorText(-result),
@@ -361,6 +360,11 @@ std::optional<std::string> IoUringPolicy::submitQueued() {
     ++numberOfRetries;
     ring_->backOff();
   }
+  // The kernel took every queued SQE. Checked against the ring, so that a
+  // broken count of queued SQEs stops here instead of making a later wait
+  // block forever.
+  AD_CORRECTNESS_CHECK(ring_->numberOfQueued() == 0,
+                       "A successful submit must leave nothing queued.");
   return std::nullopt;
 }
 
