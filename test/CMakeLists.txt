@@ -393,6 +393,8 @@ addLinkAndDiscoverTestNoLibs(AsyncStreamTest)
 
 addLinkAndDiscoverTest(BitUtilsTest)
 
+addLinkAndDiscoverTestNoLibs(BitVectorWithRankTest)
+
 addLinkAndDiscoverTest(HyperLogLogTest)
 
 addLinkAndDiscoverTest(NBitIntegerTest)
