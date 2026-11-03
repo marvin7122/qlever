@@ -22,6 +22,7 @@
 #include "index/LocalVocab.h"
 #include "util/Log.h"
 #include "util/LruCache.h"
+#include "util/MemorySize/MemorySize.h"
 #include "util/NoCopyNoMove.h"
 #include "util/ValueIdentity.h"
 
@@ -33,6 +34,15 @@ struct IdToStringAndTypeCacheConfig {
   // The maximal number of cached terms. 0 disables the cache: every lookup is
   // computed directly.
   size_t capacity_;
+  // The maximal total size of the cached strings. Every entry gets the same
+  // share, `maxSize_ / capacity_`: a term whose string is larger is returned
+  // but not cached. This bounds the memory of the strings even when a result
+  // repeats very long terms (for example large WKT literals), which a bound on
+  // the number of entries alone does not. Each entry additionally takes a
+  // fixed amount of memory for its bookkeeping (the `Id`, the `Value` with its
+  // `std::string` object, the hash-map slot and the LRU list node). Neither is
+  // counted against the memory limit of the query.
+  ad_utility::MemorySize maxSize_;
   // The hit rate is checked after every `numberOfLookupsPerWindow_` cached
   // lookups. If the hit rate of that window is below `minHitRate_`, the cache
   // is switched off for the rest of the export: on results with mostly
@@ -69,6 +79,9 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
     uint64_t numberOfLookupsWhileDisabled_ = 0;
     // Computed directly because `canBeCachedForWholeExport` was false.
     uint64_t numberOfLocalVocabLookups_ = 0;
+    // The misses whose string was larger than the per-entry share of
+    // `maxSize_` and therefore not cached (a subset of `numberOfMisses_`).
+    uint64_t numberOfTermsTooLargeToCache_ = 0;
 
     uint64_t numberOfLookups() const {
       return numberOfHits_ + numberOfMisses_ + numberOfLookupsWhileDisabled_ +
@@ -81,6 +94,9 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
   EscapeFunction escapeFunction_;
   // The configured capacity, only used in the log message.
   size_t capacity_;
+  // The share of `maxSize_` of one entry, in bytes (0 if the cache is
+  // disabled).
+  size_t maxNumberOfBytesPerTerm_ = 0;
   // Empty iff the cache is disabled, either by `capacity_ == 0` or because a
   // window's hit rate fell below `minHitRate_`. In the second case the cached
   // values are destroyed right away, so that the memory is freed for the rest
@@ -110,6 +126,7 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
         numberOfLookupsLeftInWindow_{config.numberOfLookupsPerWindow_} {
     if (capacity_ > 0) {
       cache_.emplace(capacity_);
+      maxNumberOfBytesPerTerm_ = config.maxSize_.getBytes() / capacity_;
     }
   }
 
@@ -123,6 +140,8 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
                    << " lookups while disabled, "
                    << s.numberOfLocalVocabLookups_
                    << " local vocab lookups (never cached), "
+                   << s.numberOfTermsTooLargeToCache_
+                   << " terms too large to cache, "
                    << (isEnabled() ? "enabled" : "disabled") << " at the end"
                    << std::endl;
     }
@@ -145,18 +164,15 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
       uncached_ = compute(id, localVocab);
       return uncached_;
     }
-    bool isMiss = false;
-    const Value& result =
-        cache_->getOrCompute(id, [this, &isMiss, &localVocab](const Id& key) {
-          isMiss = true;
-          return compute(key, localVocab);
-        });
-    countLookup(!isMiss);
+    const Value& result = getFromEnabledCache(id, localVocab);
     if (!isWindowHitRateTooLow()) {
       return result;
     }
-    // Switching off destroys `result`, so return it via `uncached_`.
-    uncached_ = result;
+    // Switching off destroys `result` if it is cached, so return it via
+    // `uncached_`.
+    if (&result != &uncached_) {
+      uncached_ = result;
+    }
     cache_.reset();
     return uncached_;
   }
@@ -171,6 +187,24 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
   Value compute(Id id, const LocalVocab& localVocab) const {
     return idToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
         index_.get(), id, localVocab, escapeFunction_);
+  }
+
+  // The part of `get` for an enabled cache and an `Id` that can be cached.
+  const Value& getFromEnabledCache(Id id, const LocalVocab& localVocab) {
+    if (auto cached = cache_->tryGet(id)) {
+      countLookup(true);
+      return cached.value();
+    }
+    countLookup(false);
+    Value value = compute(id, localVocab);
+    size_t numberOfBytes = value.has_value() ? value->first.capacity() : 0;
+    if (numberOfBytes > maxNumberOfBytesPerTerm_) {
+      ++statistics_.numberOfTermsTooLargeToCache_;
+      uncached_ = std::move(value);
+      return uncached_;
+    }
+    return cache_->getOrCompute(
+        id, [&value](const Id&) -> Value { return std::move(value); });
   }
 
   // Count a lookup that went through the cache.

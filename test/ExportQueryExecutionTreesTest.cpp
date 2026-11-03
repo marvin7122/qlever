@@ -201,10 +201,13 @@ void runSelectQueryTestCase(
   using Config = ql::exportIds::IdToStringAndTypeCacheConfig;
   const RuntimeParameters defaults;
   const Config defaultConfig{defaults.selectExportTermCacheCapacity_.get(),
+                             defaults.selectExportTermCacheMaxSize_.get(),
                              defaults.selectExportTermCacheWindow_.get(),
                              defaults.selectExportTermCacheMinHitRate_.get()};
-  for (const Config& config : {defaultConfig, Config{0, 0, 0.0},
-                               Config{1, 0, 0.0}, Config{1 << 16, 1, 1.0}}) {
+  const auto maxSize = defaultConfig.maxSize_;
+  for (const Config& config :
+       {defaultConfig, Config{0, maxSize, 0, 0.0}, Config{1, maxSize, 0, 0.0},
+        Config{1 << 16, maxSize, 1, 1.0}}) {
     auto traceConfig = generateLocationTrace(
         AD_CURRENT_SOURCE_LOC(),
         absl::StrCat("term cache capacity ", config.capacity_, ", window ",
@@ -212,6 +215,8 @@ void runSelectQueryTestCase(
                      config.minHitRate_));
     auto capacity = setRuntimeParameterForTest<
         &RuntimeParameters::selectExportTermCacheCapacity_>(config.capacity_);
+    auto maxSizeCleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::selectExportTermCacheMaxSize_>(config.maxSize_);
     auto window = setRuntimeParameterForTest<
         &RuntimeParameters::selectExportTermCacheWindow_>(
         config.numberOfLookupsPerWindow_);
