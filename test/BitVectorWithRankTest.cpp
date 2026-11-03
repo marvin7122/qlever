@@ -26,27 +26,28 @@ using ad_utility::BitVectorWithRank;
 
 namespace {
 
-constexpr uint64_t numBitsPerBlock = BitVectorWithRank::numBitsPerBlock;
+constexpr uint64_t numberOfBitsPerBlock =
+    BitVectorWithRank::numberOfBitsPerBlock;
 constexpr uint64_t middleBit = BitVectorWithRank::middleBit;
 
-// Check every value of `[0, universeSize + 2)` against the definition: a
-// contained value has the rank of its position in `sortedValues`, all others
+// Check every element of `[0, universeSize + 2)` against the definition: a
+// contained element has the rank of its position in `sortedValues`, all others
 // (also those at or beyond the end of the universe) have no rank.
 void expectRanksOfAllValues(const std::vector<uint64_t>& sortedValues,
                             uint64_t universeSize) {
   BitVectorWithRank set{sortedValues, universeSize};
   EXPECT_EQ(set.universeSize(), universeSize);
   size_t numberOfSmallerValues = 0;
-  for (uint64_t value = 0; value < universeSize + 2; ++value) {
+  for (uint64_t element = 0; element < universeSize + 2; ++element) {
     const bool isContained = numberOfSmallerValues < sortedValues.size() &&
-                             sortedValues[numberOfSmallerValues] == value;
+                             sortedValues[numberOfSmallerValues] == element;
     if (isContained) {
-      ASSERT_EQ(set.rankIfContained(value),
+      ASSERT_EQ(set.rankIfContained(element),
                 std::optional<uint64_t>{numberOfSmallerValues})
-          << value;
+          << element;
       ++numberOfSmallerValues;
     } else {
-      ASSERT_EQ(set.rankIfContained(value), std::nullopt) << value;
+      ASSERT_EQ(set.rankIfContained(element), std::nullopt) << element;
     }
   }
 }
@@ -56,9 +57,9 @@ template <typename Predicate>
 std::vector<uint64_t> valuesWhere(uint64_t universeSize,
                                   Predicate isContained) {
   std::vector<uint64_t> values;
-  for (uint64_t value = 0; value < universeSize; ++value) {
-    if (isContained(value)) {
-      values.push_back(value);
+  for (uint64_t element = 0; element < universeSize; ++element) {
+    if (isContained(element)) {
+      values.push_back(element);
     }
   }
   return values;
@@ -71,7 +72,7 @@ TEST(BitVectorWithRank, Empty) {
   // The empty universe.
   BitVectorWithRank defaultConstructed;
   EXPECT_EQ(defaultConstructed.universeSize(), 0);
-  EXPECT_EQ(defaultConstructed.numBytes(), 0);
+  EXPECT_EQ(defaultConstructed.numberOfBytes(), 0);
   EXPECT_EQ(defaultConstructed.rankIfContained(0), std::nullopt);
   EXPECT_EQ(
       defaultConstructed.rankIfContained(std::numeric_limits<uint64_t>::max()),
@@ -79,14 +80,14 @@ TEST(BitVectorWithRank, Empty) {
   expectRanksOfAllValues({}, 0);
 
   // The empty set over a universe of several blocks.
-  expectRanksOfAllValues({}, 3 * numBitsPerBlock + 5);
+  expectRanksOfAllValues({}, 3 * numberOfBitsPerBlock + 5);
 }
 
 // _____________________________________________________________________________
 TEST(BitVectorWithRank, AllValuesContained) {
   for (const uint64_t universeSize :
-       {uint64_t{1}, middleBit, numBitsPerBlock, numBitsPerBlock + 1,
-        5 * numBitsPerBlock - 1}) {
+       {uint64_t{1}, middleBit, numberOfBitsPerBlock, numberOfBitsPerBlock + 1,
+        5 * numberOfBitsPerBlock - 1}) {
     expectRanksOfAllValues(
         valuesWhere(universeSize, [](uint64_t) { return true; }), universeSize);
   }
@@ -96,11 +97,11 @@ TEST(BitVectorWithRank, AllValuesContained) {
 TEST(BitVectorWithRank, BlockAndWordBoundaries) {
   // The values next to the start, the middle bit, and the end of each block,
   // and next to each word boundary.
-  const uint64_t universeSize = 4 * numBitsPerBlock;
-  auto isNearBoundary = [](uint64_t value) {
-    const uint64_t offset = value % numBitsPerBlock;
+  const uint64_t universeSize = 4 * numberOfBitsPerBlock;
+  auto isNearBoundary = [](uint64_t element) {
+    const uint64_t offset = element % numberOfBitsPerBlock;
     const uint64_t offsetInWord = offset % 64;
-    return offset <= 1 || offset + 1 >= numBitsPerBlock ||
+    return offset <= 1 || offset + 1 >= numberOfBitsPerBlock ||
            offset + 1 == middleBit || offset == middleBit ||
            offsetInWord == 0 || offsetInWord == 63;
   };
@@ -109,37 +110,55 @@ TEST(BitVectorWithRank, BlockAndWordBoundaries) {
   // The complement: the values next to the boundaries are holes.
   expectRanksOfAllValues(
       valuesWhere(universeSize,
-                  [&](uint64_t value) { return !isNearBoundary(value); }),
+                  [&](uint64_t element) { return !isNearBoundary(element); }),
       universeSize);
 }
 
 // _____________________________________________________________________________
 TEST(BitVectorWithRank, LastPartialBlock) {
   // A universe that ends inside the first half, at the middle bit, and inside
-  // the second half of the last block. Its last value is contained.
+  // the second half of the last block. Its last element is contained.
   for (const uint64_t lastOffset : {uint64_t{0}, uint64_t{63}, middleBit - 1,
-                                    middleBit, numBitsPerBlock - 2}) {
-    const uint64_t universeSize = 2 * numBitsPerBlock + lastOffset + 1;
-    auto values = valuesWhere(universeSize,
-                              [](uint64_t value) { return value % 3 == 0; });
+                                    middleBit, numberOfBitsPerBlock - 2}) {
+    const uint64_t universeSize = 2 * numberOfBitsPerBlock + lastOffset + 1;
+    auto values = valuesWhere(
+        universeSize, [](uint64_t element) { return element % 3 == 0; });
     if (values.back() != universeSize - 1) {
       values.push_back(universeSize - 1);
     }
     expectRanksOfAllValues(values, universeSize);
     BitVectorWithRank set{values, universeSize};
-    EXPECT_EQ(set.numBytes(), 3 * 64);
+    EXPECT_EQ(set.numberOfBytes(), 3 * 64);
   }
 }
 
 // _____________________________________________________________________________
 TEST(BitVectorWithRank, Memory) {
   // 64 bytes per started block of 448 values, independent of the values.
-  EXPECT_EQ(BitVectorWithRank({}, 1).numBytes(), 64);
-  EXPECT_EQ(BitVectorWithRank({}, numBitsPerBlock).numBytes(), 64);
-  EXPECT_EQ(BitVectorWithRank({}, numBitsPerBlock + 1).numBytes(), 128);
+  EXPECT_EQ(BitVectorWithRank({}, 1).numberOfBytes(), 64);
+  EXPECT_EQ(BitVectorWithRank({}, numberOfBitsPerBlock).numberOfBytes(), 64);
+  EXPECT_EQ(BitVectorWithRank({}, numberOfBitsPerBlock + 1).numberOfBytes(),
+            128);
   const std::vector<uint64_t> values{0, 1, 2};
-  EXPECT_EQ(BitVectorWithRank(values, 100 * numBitsPerBlock).numBytes(),
-            100 * 64);
+  EXPECT_EQ(
+      BitVectorWithRank(values, 100 * numberOfBitsPerBlock).numberOfBytes(),
+      100 * 64);
+
+  // The same without building the set, also for universes that are too large
+  // to build.
+  for (const uint64_t universeSize :
+       {uint64_t{0}, uint64_t{1}, numberOfBitsPerBlock,
+        numberOfBitsPerBlock + 1, 100 * numberOfBitsPerBlock}) {
+    EXPECT_EQ(BitVectorWithRank::numberOfBytesForUniverse(universeSize),
+              BitVectorWithRank({}, universeSize).numberOfBytes());
+  }
+  // The 1,580,300,680 vocabulary indices of Wikidata.
+  EXPECT_EQ(BitVectorWithRank::numberOfBytesForUniverse(1'580'300'680),
+            225'757'248);
+  EXPECT_EQ(
+      BitVectorWithRank::numberOfBytesForUniverse(
+          std::numeric_limits<uint64_t>::max()),
+      (std::numeric_limits<uint64_t>::max() / numberOfBitsPerBlock + 1) * 64);
 }
 
 // _____________________________________________________________________________
@@ -149,19 +168,19 @@ TEST(BitVectorWithRank, RandomSetsMatchBinarySearch) {
   // and dense sets.
   for (const double fractionContained : {0.001, 0.05, 0.5, 0.99}) {
     std::bernoulli_distribution isContained{fractionContained};
-    const uint64_t universeSize = 50 * numBitsPerBlock + 17;
+    const uint64_t universeSize = 50 * numberOfBitsPerBlock + 17;
     const auto values = valuesWhere(
         universeSize, [&](uint64_t) { return isContained(randomEngine); });
     BitVectorWithRank set{values, universeSize};
-    for (uint64_t value = 0; value < universeSize; ++value) {
-      const auto it = ql::ranges::lower_bound(values, value);
+    for (uint64_t element = 0; element < universeSize; ++element) {
+      const auto it = ql::ranges::lower_bound(values, element);
       const std::optional<uint64_t> expected =
-          it != values.end() && *it == value
+          it != values.end() && *it == element
               ? std::optional<uint64_t>{static_cast<uint64_t>(it -
                                                               values.begin())}
               : std::nullopt;
-      ASSERT_EQ(set.rankIfContained(value), expected)
-          << value << ' ' << fractionContained;
+      ASSERT_EQ(set.rankIfContained(element), expected)
+          << element << ' ' << fractionContained;
     }
   }
 }
@@ -183,7 +202,7 @@ TEST(BitVectorWithRank, Move) {
 // _____________________________________________________________________________
 TEST(BitVectorWithRank, ContractViolations) {
   using V = std::vector<uint64_t>;
-  // A value outside of the universe.
+  // An element outside of the universe.
   AD_EXPECT_THROW_WITH_MESSAGE(BitVectorWithRank(V{1, 10}, 10),
                                ::testing::HasSubstr("universeSize_"));
   // Not strictly ascending.
