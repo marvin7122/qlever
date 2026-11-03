@@ -140,8 +140,7 @@ void IoUringPolicy::addBatch(int fd,
       // per reaped CQE.
       io_uring_submit(&ring_);
       while (numOutstandingReadRequests_ >= ringSize_) {
-        reapWave(static_cast<unsigned>(
-            std::min<size_t>(REAP_WAVE, numOutstandingReadRequests_)));
+        reapWave(numOutstandingReadRequests_);
       }
     }
 
@@ -186,7 +185,7 @@ void IoUringPolicy::wait(BatchHandle handle) {
     if (it == numOutstandingReadRequestsPerBatch_.end()) {
       break;
     }
-    reapWave(static_cast<unsigned>(std::min<size_t>(REAP_WAVE, it->second)));
+    reapWave(it->second);
   }
   // Throw only now that every read of the batch is reaped, so the kernel no
   // longer writes into its buffers.
@@ -199,9 +198,11 @@ void IoUringPolicy::wait(BatchHandle handle) {
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::reapWave(unsigned waveSize) {
-  AD_CORRECTNESS_CHECK(waveSize > 0);
-  AD_CORRECTNESS_CHECK(waveSize <= numOutstandingReadRequests_);
+void IoUringPolicy::reapWave(size_t numReadsToComplete) {
+  AD_CORRECTNESS_CHECK(numReadsToComplete > 0);
+  AD_CORRECTNESS_CHECK(numReadsToComplete <= numOutstandingReadRequests_);
+  const auto waveSize =
+      static_cast<unsigned>(std::min<size_t>(REAP_WAVE, numReadsToComplete));
 
   // Block until `waveSize` completion queue entries (CQEs) are ready. This
   // typically costs one `io_uring_enter` for the whole wave. A signal ends the

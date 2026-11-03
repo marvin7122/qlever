@@ -225,10 +225,9 @@ class IoUringPolicy {
   ad_utility::HashMap<uint64_t, OutstandingRead> outstandingReadsByRequestId_;
 
   // The size of a wave: when the ring is full or `wait()` blocks, wait for up
-  // to this many completions, then reap all ready ones in one pass. `addBatch`
-  // waits for at most the number of outstanding reads, `wait()` for at most the
-  // remaining reads of its own batch. This amortizes `io_uring_enter` and the
-  // CQ-head update over the wave.
+  // to this many completions, then reap all ready ones in one pass (see
+  // `reapWave`). This amortizes `io_uring_enter` and the CQ-head update over
+  // the wave.
   static constexpr unsigned REAP_WAVE = 8;
 
   // The number of CQEs that `reapWave` takes out of the completion queue per
@@ -236,17 +235,21 @@ class IoUringPolicy {
   // wave with more ready CQEs is reaped in several chunks.
   static constexpr size_t REAP_CHUNK = 64;
 
-  // Block until `waveSize` CQEs are ready, then reap every ready CQE. Reaps at
-  // least one CQE, but may reap fewer than `waveSize` if a signal interrupts
-  // the wait, so the callers loop until their condition holds. `waveSize` must
-  // be > 0 and at most the number of submitted reads that are not yet reaped:
-  // a read that is only prepared (SQE filled in, not yet submitted) never
-  // completes, so both callers submit before they reap. The function can only
-  // check the weaker bound `numOutstandingReadRequests_`, which also counts
-  // prepared reads. Throws if `io_uring_wait_cqes` fails. If `processCqe`
-  // throws for a CQE, every other ready CQE is still applied to the
-  // bookkeeping, and the first exception is rethrown afterwards.
-  void reapWave(unsigned waveSize);
+  // Block until a wave of `min(REAP_WAVE, numReadsToComplete)` CQEs is ready,
+  // then reap every ready CQE. `numReadsToComplete` is the number of reads the
+  // caller waits for: all outstanding reads in `addBatch`, the remaining reads
+  // of the batch in `wait()`. It must be > 0 and at most the number of
+  // submitted reads that are not yet reaped, so that the wave never waits for
+  // more completions than will arrive: a read that is only prepared (SQE filled
+  // in, not yet submitted) never completes, so both callers submit before they
+  // reap. The function can only check the weaker bound
+  // `numOutstandingReadRequests_`, which also counts prepared reads.
+  // Reaps at least one CQE, but may reap fewer than the wave if a signal
+  // interrupts the wait, so the callers loop until their condition holds.
+  // Throws if `io_uring_wait_cqes` fails. If `processCqe` throws for a CQE,
+  // every other ready CQE is still applied to the bookkeeping, and the first
+  // exception is rethrown afterwards.
+  void reapWave(size_t numReadsToComplete);
 
   // Apply one completion to the bookkeeping of the outstanding reads. Always
   // updates the counts, also for a failed read, and records a failed or short
