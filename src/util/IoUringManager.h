@@ -185,9 +185,10 @@ class IoUringPolicy {
   // completed), or completed but not yet reaped via a completion queue entry
   // (CQE). `addBatch` keeps it at most `ringSize_`, so that a free SQE is
   // always available and the completion queue (twice as large as the
-  // submission queue) cannot overflow. Invariant: it equals the sum of the
-  // counts in `numOutstandingReadRequestsPerBatch_` and the size of
-  // `outstandingReadsByRequestId_`.
+  // submission queue) cannot overflow. Invariant outside of `addBatch`: it
+  // equals the sum of the counts in `numOutstandingReadRequestsPerBatch_` and
+  // the size of `outstandingReadsByRequestId_`. (`addBatch` records the count
+  // of a batch up front and increments this total per prepared read.)
   size_t numOutstandingReadRequests_ = 0;
 
   // The same outstanding reads as `numOutstandingReadRequests_`, but broken
@@ -229,6 +230,12 @@ class IoUringPolicy {
   // remaining reads of its own batch. This amortizes `io_uring_enter` and the
   // CQ-head update over the wave.
   static constexpr unsigned REAP_WAVE = 8;
+
+  // The number of CQEs that `drainAtLeastCqes` takes out of the completion
+  // queue per `io_uring_peek_batch_cqe` and releases with one
+  // `io_uring_cq_advance`; a wave with more ready CQEs is reaped in several
+  // chunks.
+  static constexpr size_t REAP_CHUNK = 64;
 
   // Block until at least `minComplete` CQEs are ready, then reap every ready
   // CQE. `minComplete` must be > 0 and at most the number of submitted reads

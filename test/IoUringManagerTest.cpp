@@ -245,9 +245,9 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
 // A batch much larger than the ring completes with every read in its own
 // buffer. For `IoUringPolicy`: ring 4 is smaller than a `REAP_WAVE`, so the
 // ring-full wait is clamped to the outstanding reads; ring 8 is exactly one
-// wave; with ring 256, more than 64 CQEs can be ready at once, so a wave is
-// reaped in several chunks. The other policies have no ring and read
-// synchronously.
+// wave; with ring 256, more than `REAP_CHUNK` (64) CQEs can be ready at once,
+// so a wave is reaped in several chunks. The other policies have no ring and
+// read synchronously.
 TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanRing) {
   constexpr std::array<std::pair<unsigned, size_t>, 3> ringSizeAndNumReads{
       {{4, 80}, {8, 80}, {256, 600}}};
