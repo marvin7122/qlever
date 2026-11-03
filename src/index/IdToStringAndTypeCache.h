@@ -11,6 +11,7 @@
 #define QLEVER_SRC_INDEX_IDTOSTRINGANDTYPECACHE_H
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -20,160 +21,186 @@
 #include "index/Index.h"
 #include "index/LocalVocab.h"
 #include "util/Log.h"
-#include "util/LruCacheWithStatistics.h"
+#include "util/LruCache.h"
 #include "util/NoCopyNoMove.h"
 #include "util/ValueIdentity.h"
 
 namespace ql::exportIds {
 
-// Bounded cache for the SELECT export path that maps an `Id` to the result of
-// `idToStringAndType`. The cached strings are post-escaping, so one instance
-// serves a single call site (fixed template arguments and escape function).
+// The configuration of an `IdToStringAndTypeCache`, see the runtime parameters
+// `select-export-term-cache-*` for the values used by the SELECT export.
+struct IdToStringAndTypeCacheConfig {
+  // The maximal number of cached terms. 0 disables the cache: every lookup is
+  // computed directly.
+  size_t capacity_;
+  // The hit rate is checked after every `numberOfLookupsPerWindow_` cached
+  // lookups. If the hit rate of that window is below `minHitRate_`, the cache
+  // is switched off for the rest of the export: on results with mostly
+  // distinct terms, the hash lookup, the LRU bookkeeping and the copy of every
+  // missed string into the cache cost more than the few hits save. The switch
+  // is one-way, because a switched-off cache no longer observes hits. 0 for
+  // either value disables the check.
+  size_t numberOfLookupsPerWindow_;
+  double minHitRate_;
+};
+
+// Bounded cache for the SELECT export that maps an `Id` to the result of
+// `idToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>` with
+// the given `EscapeFunction`. The cached strings are the formatted (escaped)
+// output of exactly this conversion, which is why the conversion is part of
+// the type and of the state of the cache: one instance can never return a term
+// that was formatted for another output format.
 //
 // Only `Id`s for which `canBeCachedForWholeExport` holds are cached (this
 // excludes `LocalVocabIndex`, see there for the reason).
+template <bool removeQuotesAndAngleBrackets = false,
+          bool returnOnlyLiterals = false,
+          typename EscapeFunction = ql::identity>
 class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
  public:
   using Value = std::optional<std::pair<std::string, const char*>>;
 
-  // Default capacity: one cache per export call site shared by all columns.
-  // Bounds memory on distinct-heavy results while keeping frequent terms
-  // resident.
-  static constexpr size_t DEFAULT_CAPACITY = 1 << 16;
-  // Default admission window and threshold, see `Config`.
-  static constexpr size_t DEFAULT_WINDOW_SIZE = 1 << 13;
-  static constexpr double DEFAULT_MIN_HIT_RATE = 0.25;
+  // The number of lookups by how they were answered. Every lookup is counted
+  // exactly once.
+  struct Statistics {
+    uint64_t numberOfHits_ = 0;
+    uint64_t numberOfMisses_ = 0;
+    // Computed directly because the cache was disabled.
+    uint64_t numberOfLookupsWhileDisabled_ = 0;
+    // Computed directly because `canBeCachedForWholeExport` was false.
+    uint64_t numberOfLocalVocabLookups_ = 0;
 
-  // `capacity_ == 0` disables the cache: every lookup is computed directly.
-  // Otherwise the hit rate is checked after every `windowSize_` cached
-  // lookups. If the hit rate of that window is below `minHitRate_`, the cache
-  // is switched off for the rest of the export: on results with mostly
-  // distinct terms, the hash lookup, the LRU bookkeeping and the copy of every
-  // missed string into the cache cost more than the few hits save.
-  // `windowSize_ == 0` or `minHitRate_ <= 0` disables this check.
-  struct Config {
-    size_t capacity_ = DEFAULT_CAPACITY;
-    size_t windowSize_ = DEFAULT_WINDOW_SIZE;
-    double minHitRate_ = DEFAULT_MIN_HIT_RATE;
+    uint64_t numberOfLookups() const {
+      return numberOfHits_ + numberOfMisses_ + numberOfLookupsWhileDisabled_ +
+             numberOfLocalVocabLookups_;
+    }
   };
 
  private:
+  std::reference_wrapper<const Index> index_;
+  EscapeFunction escapeFunction_;
   // The configured capacity, only used in the log message.
   size_t capacity_;
   // Empty iff the cache is disabled, either by `capacity_ == 0` or because a
   // window's hit rate fell below `minHitRate_`. In the second case the cached
   // values are destroyed right away, so that the memory is freed for the rest
   // of the export.
-  std::optional<ad_utility::util::LRUCacheWithStatistics<Id, Value>> cache_;
-  // The statistics of `cache_` at the moment it was switched off.
-  ad_utility::util::LRUCacheStats statsWhenSwitchedOff_;
-  size_t windowSize_;
+  std::optional<ad_utility::util::LRUCache<Id, Value>> cache_;
+  size_t numberOfLookupsPerWindow_;
   double minHitRate_;
-  // Number of hits at the start of the current window.
-  uint64_t hitsAtWindowStart_ = 0;
-  // Lookups computed directly because the cache is disabled (excludes the
-  // `LocalVocabIndex` `Id`s, which are never cached).
-  uint64_t bypassed_ = 0;
+  // The number of cached lookups that are left in the current window, and the
+  // number of hits in it so far.
+  size_t numberOfLookupsLeftInWindow_;
+  uint64_t numberOfHitsInWindow_ = 0;
+  Statistics statistics_;
   // Holds the result of every lookup that does not go through the cache, so
-  // that `cachedIdToStringAndType` can return a reference in every case. It is
-  // overwritten by the next such lookup.
+  // that `get` can return a reference in every case. It is overwritten by the
+  // next such lookup.
   Value uncached_;
 
  public:
-  explicit IdToStringAndTypeCache(const Config& config)
-      : capacity_{config.capacity_},
-        windowSize_{config.windowSize_},
-        minHitRate_{config.minHitRate_} {
+  IdToStringAndTypeCache(const Index& index,
+                         const IdToStringAndTypeCacheConfig& config,
+                         EscapeFunction escapeFunction = EscapeFunction{})
+      : index_{index},
+        escapeFunction_{std::move(escapeFunction)},
+        capacity_{config.capacity_},
+        numberOfLookupsPerWindow_{config.numberOfLookupsPerWindow_},
+        minHitRate_{config.minHitRate_},
+        numberOfLookupsLeftInWindow_{config.numberOfLookupsPerWindow_} {
     if (capacity_ > 0) {
       cache_.emplace(capacity_);
     }
   }
-  explicit IdToStringAndTypeCache(size_t capacity)
-      : IdToStringAndTypeCache{Config{capacity, 0, 0.0}} {}
 
   // Log the statistics of an export that used the cache.
   ~IdToStringAndTypeCache() {
-    if (stats().totalLookups() + bypassed_ > 0) {
+    const auto& s = statistics_;
+    if (s.numberOfLookups() > 0) {
       AD_LOG_DEBUG << "SELECT export term cache: capacity " << capacity_ << ", "
-                   << stats().hits_ << " hits, " << stats().misses_
-                   << " misses, " << bypassed_ << " bypassed, "
-                   << (enabled() ? "enabled" : "disabled") << " at the end"
+                   << s.numberOfHits_ << " hits, " << s.numberOfMisses_
+                   << " misses, " << s.numberOfLookupsWhileDisabled_
+                   << " lookups while disabled, "
+                   << s.numberOfLocalVocabLookups_
+                   << " local vocab lookups (never cached), "
+                   << (isEnabled() ? "enabled" : "disabled") << " at the end"
                    << std::endl;
     }
   }
 
-  // Return the cached value for `id`, computing it with `compute()` on a miss.
-  // `LocalVocabIndex` `Id`s bypass the cache (see above), and so does every
-  // `Id` once the cache is disabled. The reference is valid until the next
-  // call.
-  template <typename Compute>
-  const Value& getOrCompute(Id id, Compute compute) {
+  // Return `idToStringAndType` for `id`, from the cache if possible. The
+  // reference is only valid until the next call: lookups that do not go
+  // through the cache share one slot. Every caller in the SELECT export uses
+  // the value before the next call. A callback API would avoid this
+  // restriction, but the TSV/CSV export has to `co_yield` the value, which a
+  // callback cannot do.
+  const Value& get(Id id, const LocalVocab& localVocab) {
     if (!canBeCachedForWholeExport(id)) {
-      uncached_ = compute();
+      ++statistics_.numberOfLocalVocabLookups_;
+      uncached_ = compute(id, localVocab);
       return uncached_;
     }
-    if (!enabled()) {
-      ++bypassed_;
-      uncached_ = compute();
+    if (!isEnabled()) {
+      ++statistics_.numberOfLookupsWhileDisabled_;
+      uncached_ = compute(id, localVocab);
       return uncached_;
     }
+    bool isMiss = false;
     const Value& result =
-        cache_->getOrCompute(id, [&compute](const Id&) { return compute(); });
+        cache_->getOrCompute(id, [this, &isMiss, &localVocab](const Id& key) {
+          isMiss = true;
+          return compute(key, localVocab);
+        });
+    countLookup(!isMiss);
     if (!isWindowHitRateTooLow()) {
       return result;
     }
     // Switching off destroys `result`, so return it via `uncached_`.
     uncached_ = result;
-    statsWhenSwitchedOff_ = cache_->stats();
     cache_.reset();
     return uncached_;
   }
 
   // True while lookups go through the cache.
-  bool enabled() const { return cache_.has_value(); }
+  bool isEnabled() const { return cache_.has_value(); }
 
-  // Lookups computed directly because the cache was disabled.
-  uint64_t bypassed() const { return bypassed_; }
-
-  // Return the numbers of hits and misses of the lookups that went through the
-  // cache (including those before it was switched off).
-  const ad_utility::util::LRUCacheStats& stats() const {
-    return cache_.has_value() ? cache_->stats() : statsWhenSwitchedOff_;
-  }
+  const Statistics& statistics() const { return statistics_; }
 
  private:
-  // True iff the last lookup completed a window of `windowSize_` cached
-  // lookups whose hit rate is below `minHitRate_`. A completed window also
-  // starts the next one.
+  // The uncached conversion.
+  Value compute(Id id, const LocalVocab& localVocab) const {
+    return idToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
+        index_.get(), id, localVocab, escapeFunction_);
+  }
+
+  // Count a lookup that went through the cache.
+  void countLookup(bool isHit) {
+    if (isHit) {
+      ++statistics_.numberOfHits_;
+      ++numberOfHitsInWindow_;
+    } else {
+      ++statistics_.numberOfMisses_;
+    }
+  }
+
+  // True iff the last lookup completed a window of `numberOfLookupsPerWindow_`
+  // cached lookups whose hit rate is below `minHitRate_`. A completed window
+  // also starts the next one. A countdown instead of a modulo of the total
+  // number of lookups avoids an integer division on every lookup.
   bool isWindowHitRateTooLow() {
-    if (windowSize_ == 0 || minHitRate_ <= 0.0) {
+    if (numberOfLookupsPerWindow_ == 0 || minHitRate_ <= 0.0) {
       return false;
     }
-    const auto& s = cache_->stats();
-    if (s.totalLookups() % windowSize_ != 0) {
+    if (--numberOfLookupsLeftInWindow_ > 0) {
       return false;
     }
-    auto windowHits = s.hits_ - hitsAtWindowStart_;
-    hitsAtWindowStart_ = s.hits_;
-    return static_cast<double>(windowHits) <
-           minHitRate_ * static_cast<double>(windowSize_);
+    auto numberOfHitsInWindow = numberOfHitsInWindow_;
+    numberOfLookupsLeftInWindow_ = numberOfLookupsPerWindow_;
+    numberOfHitsInWindow_ = 0;
+    return static_cast<double>(numberOfHitsInWindow) <
+           minHitRate_ * static_cast<double>(numberOfLookupsPerWindow_);
   }
 };
-
-// Cached variant of `idToStringAndType` for the SELECT export path. Return a
-// reference that is valid until the next lookup in `cache`.
-template <bool removeQuotesAndAngleBrackets = false,
-          bool returnOnlyLiterals = false,
-          typename EscapeFunction = ql::identity>
-const IdToStringAndTypeCache::Value& cachedIdToStringAndType(
-    IdToStringAndTypeCache& cache, const Index& index, Id id,
-    const LocalVocab& localVocab,
-    EscapeFunction escapeFunction = EscapeFunction{}) {
-  return cache.getOrCompute(id, [&]() {
-    return idToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
-        index, id, localVocab, escapeFunction);
-  });
-}
 
 }  // namespace ql::exportIds
 

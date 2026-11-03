@@ -198,18 +198,23 @@ void runSelectQueryTestCase(
   auto cleanup = setRuntimeParameterForTest<
       &RuntimeParameters::sparqlResultsJsonWithTime_>(false);
   auto trace = generateLocationTrace(l, "runSelectQueryTestCase");
-  using Config = ql::exportIds::IdToStringAndTypeCache::Config;
-  for (const Config& config : {Config{}, Config{0, 0, 0.0}, Config{1, 0, 0.0},
-                               Config{1 << 16, 1, 1.0}}) {
+  using Config = ql::exportIds::IdToStringAndTypeCacheConfig;
+  const RuntimeParameters defaults;
+  const Config defaultConfig{defaults.selectExportTermCacheCapacity_.get(),
+                             defaults.selectExportTermCacheWindow_.get(),
+                             defaults.selectExportTermCacheMinHitRate_.get()};
+  for (const Config& config : {defaultConfig, Config{0, 0, 0.0},
+                               Config{1, 0, 0.0}, Config{1 << 16, 1, 1.0}}) {
     auto traceConfig = generateLocationTrace(
         AD_CURRENT_SOURCE_LOC(),
         absl::StrCat("term cache capacity ", config.capacity_, ", window ",
-                     config.windowSize_, ", minimal hit rate ",
+                     config.numberOfLookupsPerWindow_, ", minimal hit rate ",
                      config.minHitRate_));
     auto capacity = setRuntimeParameterForTest<
         &RuntimeParameters::selectExportTermCacheCapacity_>(config.capacity_);
     auto window = setRuntimeParameterForTest<
-        &RuntimeParameters::selectExportTermCacheWindow_>(config.windowSize_);
+        &RuntimeParameters::selectExportTermCacheWindow_>(
+        config.numberOfLookupsPerWindow_);
     auto minHitRate = setRuntimeParameterForTest<
         &RuntimeParameters::selectExportTermCacheMinHitRate_>(
         config.minHitRate_);
