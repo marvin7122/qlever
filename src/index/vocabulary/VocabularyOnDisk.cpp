@@ -330,12 +330,16 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
   AD_CONTRACT_CHECK(batchManagers_ != nullptr,
                     "`open()` must be called before `lookupBatch()`");
 
-  // Take an idle manager, or create one (with io_uring if it is compiled in
-  // and its setup succeeds).
+  // Take an idle manager, or create one (with io_uring if it is compiled in,
+  // and its setup succeeds and has not failed before for this vocabulary).
   auto& managers = *batchManagers_;
-  auto makeManager = []() {
-    bool preferIoUring = true;
-    return ad_utility::makeBatchManager(preferIoUring);
+  auto makeManager = [&managers]() {
+    bool tryIoUring = managers.preferIoUring_;
+    auto manager = ad_utility::makeBatchManager(tryIoUring);
+    if (!tryIoUring) {
+      managers.preferIoUring_ = false;
+    }
+    return manager;
   };
   auto manager = managers.pool_.take(makeManager);
 
