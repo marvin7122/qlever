@@ -352,7 +352,9 @@ IoUringPolicy::IoUringPolicy(RingSize ringSize)
 IoUringPolicy::IoUringPolicy(RingSize ringSize,
                              std::unique_ptr<IoUringInterface> ring)
     : ring_{std::move(ring)}, ringSize_{ringSize} {
-  // `RingSize` guarantees a size of at least 1.
+  // `RingSize` guarantees a size of at least 1. The injected `ring` must have
+  // room for at least `ringSize` SQEs and `2 * ringSize` CQEs, which `run`
+  // relies on to guarantee a free SQE and a non-overflowing CQ.
   AD_CONTRACT_CHECK(ring_ != nullptr);
 }
 
