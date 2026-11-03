@@ -14,7 +14,6 @@
 #ifndef QLEVER_SRC_ENGINE_EXPORTQUERYEXECUTIONTREES_H
 #define QLEVER_SRC_ENGINE_EXPORTQUERYEXECUTIONTREES_H
 
-#include <atomic>
 #include <string>
 
 #include "engine/ConstructTripleGenerator.h"
@@ -25,6 +24,7 @@
 #include "util/CancellationHandle.h"
 #include "util/http/MediaTypes.h"
 #include "util/stream_generator.h"
+#include "util/views/AsyncTransformStopFlag.h"
 
 // Class for computing the result of an already parsed and planned query and
 // exporting it in different formats (TSV, CSV, Turtle, JSON, Binary).
@@ -202,7 +202,7 @@ class ExportQueryExecutionTrees {
   // so it only reads its arguments and may be called concurrently for
   // different `rows`. Throw a `CancellationException` if the
   // `cancellationHandle` is cancelled. Stop early and return the lines so far
-  // as soon as `stop` is set (the export then no longer needs them).
+  // as soon as `stop` is requested (the export then no longer needs them).
   template <ad_utility::MediaType format>
   static CsvOrTsvChunk csvOrTsvRows(
       const Index& index,
@@ -212,7 +212,7 @@ class ExportQueryExecutionTrees {
       ql::ranges::iota_view<uint64_t, uint64_t> rows,
       const ad_utility::AllocatorWithLimit<char>& allocator,
       ad_utility::CancellationHandle<>& cancellationHandle,
-      const std::atomic<bool>& stop);
+      ad_utility::AsyncTransformStopFlag stop);
 
   // Yield all `IdTables` provided by the given `result`.
   static ad_utility::InputRangeTypeErased<TableConstRefWithVocab> getIdTables(

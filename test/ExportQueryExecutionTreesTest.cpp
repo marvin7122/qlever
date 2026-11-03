@@ -499,14 +499,15 @@ TEST(ExportQueryExecutionTrees, csvOrTsvRows) {
   using enum ad_utility::MediaType;
   auto tsvRows = [&](Rows rows) {
     return std::string{ExportQueryExecutionTrees::csvOrTsvRows<tsv>(
-        index, columns, table, rows, allocator, cancellationHandle, stop)};
+        index, columns, table, rows, allocator, cancellationHandle,
+        ad_utility::AsyncTransformStopFlag{stop})};
   };
   EXPECT_EQ(tsvRows(Rows{0, 3}), "1\t\t\n3\t\t4\n5\t\t6\n");
   EXPECT_EQ(tsvRows(Rows{1, 3}), "3\t\t4\n5\t\t6\n");
   EXPECT_EQ(tsvRows(Rows{2, 2}), "");
   EXPECT_EQ(std::string{ExportQueryExecutionTrees::csvOrTsvRows<csv>(
                 index, columns, table, Rows{0, 2}, allocator,
-                cancellationHandle, stop)},
+                cancellationHandle, ad_utility::AsyncTransformStopFlag{stop})},
             "1,,\n3,,4\n");
 
   // Once `stop` is set, no more rows are serialized.
@@ -521,10 +522,11 @@ TEST(ExportQueryExecutionTrees, csvOrTsvRows) {
   TableConstRefWithVocab largeTable{largeIdTable.asStaticView<0>(), localVocab};
   ad_utility::AllocatorWithLimit<char> smallAllocator{
       ad_utility::testing::makeAllocator(ad_utility::MemorySize::bytes(100))};
-  EXPECT_THROW(ExportQueryExecutionTrees::csvOrTsvRows<tsv>(
-                   index, columns, largeTable, Rows{0, 100}, smallAllocator,
-                   cancellationHandle, stop),
-               ad_utility::detail::AllocationExceedsLimitException);
+  EXPECT_THROW(
+      ExportQueryExecutionTrees::csvOrTsvRows<tsv>(
+          index, columns, largeTable, Rows{0, 100}, smallAllocator,
+          cancellationHandle, ad_utility::AsyncTransformStopFlag{stop}),
+      ad_utility::detail::AllocationExceedsLimitException);
 
   cancellationHandle.cancel(ad_utility::CancellationState::MANUAL);
   EXPECT_THROW(tsvRows(Rows{0, 3}), ad_utility::CancellationException);
@@ -666,8 +668,8 @@ TEST(ExportQueryExecutionTrees, ParallelCsvTsvExportOfSeveralLargeBlocks) {
 
 // _____________________________________________________________________________
 // A cancellation while the chunks of a parallel CSV export are serialized is
-// thrown by a worker. The consumer of `computeResult` sees what the server
-// sends: the output so far, followed by an error message (see
+// thrown by the consumer or a worker. The consumer of `computeResult` sees what
+// the server sends: the output so far, followed by an error message (see
 // `convertStreamGeneratorForChunkedTransfer`). A consumer that stops early (as
 // on a client disconnect) can destroy the export while chunks are in flight.
 TEST(ExportQueryExecutionTrees, ParallelCsvExportCancellationAndEarlyStop) {
@@ -696,9 +698,10 @@ TEST(ExportQueryExecutionTrees, ParallelCsvExportCancellationAndEarlyStop) {
 
   // Each chunk has more than 2 MB (6667 rows of more than 400 bytes), so the
   // first batch of 1 MB of the export ends inside the first chunk, while the
-  // second chunk is in flight. The third chunk is submitted only when the
-  // second one is requested, that is after the cancellation, so its task
-  // throws.
+  // second chunk is in flight. After the cancellation, either the consumer
+  // (before it yields the second chunk) or the task of the third chunk (which
+  // is submitted only then) throws. Either way, the consumer receives the
+  // output so far followed by the error message.
   {
     auto handle = std::make_shared<ad_utility::CancellationHandle<>>();
     auto [qet, generator] = startExport(handle);
@@ -716,7 +719,7 @@ TEST(ExportQueryExecutionTrees, ParallelCsvExportCancellationAndEarlyStop) {
 
   // Stop after the first batch; destroying the generator stops the chunks in
   // flight and waits for them (see `AsyncTransformView`'s test
-  // `stopFlagIsSetOnDestruction`).
+  // `stopIsRequestedOnDestruction`).
   {
     auto [qet, generator] =
         startExport(std::make_shared<ad_utility::CancellationHandle<>>());
