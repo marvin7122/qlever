@@ -81,9 +81,8 @@ class BatchManager final : public BatchManagerBase, public NoCopyNoMove {
       "BatchManager's ReadPolicy must satisfy the ReadPolicyConcept concept.");
   // The policy is only valid if it tags reads with the base's batch ids.
   static_assert(
-      std::is_same_v<typename ReadPolicy::BatchHandle,
-                     BatchManagerBase::BatchId>,
-      "ReadPolicy::BatchHandle must match BatchManagerBase::BatchId.");
+      std::is_same_v<typename ReadPolicy::BatchId, BatchManagerBase::BatchId>,
+      "ReadPolicy::BatchId must match BatchManagerBase::BatchId.");
 
  public:
   using BatchHandle = typename BatchManagerBase::BatchHandle;
@@ -134,7 +133,7 @@ class BatchManager final : public BatchManagerBase, public NoCopyNoMove {
 // Fallback implementation for the `IoUringPolicy` below. Schedules pread calls
 // in a synchronous (blocking) manner. Single-threaded use only.
 struct SyncIoPolicy : public NoCopyNoMove {
-  using BatchHandle = uint64_t;
+  using BatchId = uint64_t;
 
   // `ringSize` is ignored; it exists only so the policy is constructible the
   // same way as `IoUringPolicy`.
@@ -151,10 +150,9 @@ struct SyncIoPolicy : public NoCopyNoMove {
   // `addBatch` returns), so it always returns `false` (no read in flight).
   bool addBatch(int fd, ql::span<const size_t> numBytesToReadPerRequest,
                 ql::span<const uint64_t> fileOffsetPerRequest,
-                ql::span<char*> targetBufferPerRequest,
-                BatchHandle handle) const;
+                ql::span<char*> targetBufferPerRequest, BatchId handle) const;
 
-  void wait(BatchHandle) const {
+  void wait(BatchId) const {
     // No-op: `addBatch` already completed all reads synchronously.
   }
 
@@ -175,7 +173,7 @@ struct SyncIoPolicy : public NoCopyNoMove {
 
 class IoUringPolicy : public NoCopyNoMove {
  public:
-  using BatchHandle = uint64_t;
+  using BatchId = uint64_t;
 
  private:
   io_uring ring_{};
@@ -188,16 +186,16 @@ class IoUringPolicy : public NoCopyNoMove {
 
   // The same in-flight reads as `numInFlight_`, but broken down per batch:
   // maps a batch handle to the number of its reads that have not yet completed
-  // (are "in flight"). An entry for a batch (identified by `BatchHandle`) is
+  // (are "in flight"). An entry for a batch (identified by `BatchId`) is
   // removed once `wait()` has observed all of its reads complete.
-  ad_utility::HashMap<BatchHandle, size_t> numInFlightReadRequestsPerBatch_;
+  ad_utility::HashMap<BatchId, size_t> numInFlightReadRequestsPerBatch_;
 
   // Per-read metadata needed when a completion is reaped: which batch the read
   // belongs to, and how many bytes it was supposed to read (so that reading
   // fewer bytes than expected can be detected). See
   // `inFlightReadsByRequestId_`.
   struct InFlightRead {
-    BatchHandle batchHandle;
+    BatchId batchHandle;
     size_t expectedNumBytes;
   };
 
@@ -229,12 +227,12 @@ class IoUringPolicy : public NoCopyNoMove {
   // empty batch (nothing to wait for) and `true` otherwise.
   bool addBatch(int fd, ql::span<const size_t> numBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-                BatchHandle handle);
+                BatchId handle);
 
   // Block until every read in the batch that is represented by the `handle` has
   // completed. (The `handle` was submitted along the read requests using
   // `addBatch`.) Throws on any I/O error.
-  void wait(BatchHandle handle);
+  void wait(BatchId handle);
 };
 
 using BatchIoManager = BatchManager<IoUringPolicy>;

@@ -162,7 +162,7 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
       "PageCacheFirstPolicy's Policy must satisfy the ReadPolicyConcept.");
 
  public:
-  using BatchHandle = typename Policy::BatchHandle;
+  using BatchId = typename Policy::BatchId;
 
   // `ringSize` is forwarded to the constructor of the wrapped `Policy`, `read`
   // to the `PageCacheReader`. `addBatch` asks `isEnabled` once per batch
@@ -183,7 +183,7 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
   // `Policy::addBatch`.
   bool addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-                BatchHandle handle) {
+                BatchId handle) {
     auto forwardAll = [&](const UnservedReads::NothingRead&) {
       return policy_.addBatch(fd, numBytes, offsets, buffers, handle);
     };
@@ -206,7 +206,7 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
   // Block until every read of the batch `handle` that was passed on to the
   // decorated policy has completed. `BatchManager` only calls this if
   // `addBatch` returned `true`.
-  void wait(BatchHandle handle) { policy_.wait(handle); }
+  void wait(BatchId handle) { policy_.wait(handle); }
 
  private:
   Policy policy_;
