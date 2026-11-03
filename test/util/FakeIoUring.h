@@ -53,8 +53,10 @@ class FakeIoUring final : public IoUringInterface {
     double waitInterrupted = 0;
     double shortRead = 0;
     double readError = 0;
-    // If nonzero, every submit (or wait) fails with this `errno`.
+    // If nonzero, every submit after the first `numberOfGoodSubmits` (or every
+    // wait) fails with this `errno`.
     int brokenSubmitErrno = 0;
+    size_t numberOfGoodSubmits = 0;
     int brokenWaitErrno = 0;
     // Whether a submit may already complete some of the requests it took.
     bool completeOnSubmit = true;
@@ -123,7 +125,9 @@ class FakeIoUring final : public IoUringInterface {
   size_t cqCapacity() const override { return cqCapacity_; }
 
   int submit() override {
-    if (faults_.brokenSubmitErrno != 0) {
+    const bool isGoodSubmit = numberOfSubmits_ < faults_.numberOfGoodSubmits;
+    ++numberOfSubmits_;
+    if (faults_.brokenSubmitErrno != 0 && !isGoodSubmit) {
       return -faults_.brokenSubmitErrno;
     }
     if (eagainBurstLeft_ > 0) {
@@ -277,6 +281,8 @@ class FakeIoUring final : public IoUringInterface {
   std::vector<Request> kernel_;
   std::deque<PendingCompletion> completions_;
   size_t eagainBurstLeft_ = 0;
+  // The number of calls of `submit` so far.
+  size_t numberOfSubmits_ = 0;
   bool injectedReadFault_ = false;
   bool cancelled_ = false;
   FaultCounts faultCounts_;

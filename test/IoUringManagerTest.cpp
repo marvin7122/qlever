@@ -553,7 +553,7 @@ TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
 }
 
 // `IoUringPolicy::readBatch` rejects spans of different lengths.
-TEST(IoUringPolicyModel, spansOfDifferentLengthsThrow) {
+TEST(IoUringPolicy, spansOfDifferentLengthsThrow) {
   using ad_utility::testing::FakeIoUring;
   ad_utility::IoUringPolicy policy{
       ad_utility::RingSize{8},
@@ -567,42 +567,66 @@ TEST(IoUringPolicyModel, spansOfDifferentLengthsThrow) {
       HasSubstr("The ranges must have the same length"));
 }
 
-// A failed wait, and a submit error other than `EINTR` and `EAGAIN` while
-// the kernel holds reads of the batch, mean that the ring is broken while
-// the kernel may hold reads. Throwing could let the caller free buffers
-// that the kernel still writes into, so the process terminates. A fatal
-// submit error before the kernel took any read of the batch is different:
-// nothing was handed to the kernel, so the batch simply fails.
-TEST(IoUringPolicyModel, aBrokenRingTerminates) {
-  using ad_utility::testing::FakeIoUring;
+// Read a batch of `numberOfReads` reads of 4 bytes each with an `IoUringPolicy`
+// on a `FakeIoUring` with `ringSize` slots that injects `faults`.
+void readWithFaults(ad_utility::testing::FakeIoUring::Faults faults,
+                    unsigned ringSize, size_t numberOfReads) {
+  std::string file;
+  ReadBatchForTesting batch;
+  for (size_t i : ql::views::iota(size_t{0}, numberOfReads)) {
+    batch.add(file.size(), 4);
+    file += absl::StrFormat("%04zu", i);
+  }
+  ad_utility::IoUringPolicy policy{
+      ad_utility::RingSize{ringSize},
+      std::make_unique<ad_utility::testing::FakeIoUring>(file, ringSize, faults,
+                                                         0)};
+  batch.submitToPolicy(policy, /*fd=*/-1);
+}
+
+// A submit error other than `EINTR` and `EAGAIN` before the kernel took any
+// read of the batch: nothing was handed to the kernel, so the batch fails.
+TEST(IoUringPolicy, aFatalSubmitBeforeAnyReadThrows) {
+  ad_utility::testing::FakeIoUring::Faults faults;
+  faults.brokenSubmitErrno = EBADF;
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      readWithFaults(faults, 8, 2),
+      HasSubstr("io_uring_submit failed in IoUringPolicy"));
+}
+
+// A submit error other than `EINTR` and `EAGAIN` while the kernel holds reads
+// of the batch: throwing could let the caller free buffers that the kernel
+// still writes into, so the process terminates. The first submit takes the 16
+// reads that fit into the ring and completes none of them; the first wave
+// reaps 8 of them, so 8 are still in the kernel when the second submit (of the
+// next 8 reads) fails.
+TEST(IoUringPolicy, aFatalSubmitWithReadsInTheKernelTerminates) {
   // Avoid warnings and crashes when running all tests at once.
   ::testing::FLAGS_gtest_death_test_style = "threadsafe";
-  auto readWith = [](FakeIoUring::Faults faults) {
-    ad_utility::IoUringPolicy policy{
-        ad_utility::RingSize{8},
-        std::make_unique<FakeIoUring>("AAAABBBB", 8, faults, 0)};
-    ReadBatchForTesting batch;
-    batch.add({{0, 4}, {4, 4}});
-    batch.submitToPolicy(policy, /*fd=*/-1);
-  };
-  FakeIoUring::Faults brokenSubmit;
-  brokenSubmit.brokenSubmitErrno = EBADF;
-  // The very first submit already fails, so the kernel holds no read of
-  // the batch: `readBatch` throws instead of terminating.
-  AD_EXPECT_THROW_WITH_MESSAGE(
-      readWith(brokenSubmit),
-      HasSubstr("io_uring_submit failed in IoUringPolicy"));
-  FakeIoUring::Faults brokenWait;
-  brokenWait.brokenWaitErrno = EBADF;
+  ad_utility::testing::FakeIoUring::Faults faults;
+  faults.brokenSubmitErrno = EBADF;
+  faults.numberOfGoodSubmits = 1;
+  faults.completeOnSubmit = false;
+  EXPECT_DEATH_IF_SUPPORTED(
+      readWithFaults(faults, 16, 24),
+      "io_uring_submit failed in IoUringPolicy.*may still write");
+}
+
+// A failed wait for completions terminates the process.
+TEST(IoUringPolicy, aFailedWaitTerminates) {
+  // Avoid warnings and crashes when running all tests at once.
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+  ad_utility::testing::FakeIoUring::Faults faults;
+  faults.brokenWaitErrno = EBADF;
   // Keep both reads in the kernel, so that the policy has to wait.
-  brokenWait.completeOnSubmit = false;
-  EXPECT_DEATH_IF_SUPPORTED(readWith(brokenWait),
+  faults.completeOnSubmit = false;
+  EXPECT_DEATH_IF_SUPPORTED(readWithFaults(faults, 8, 2),
                             "io_uring_wait_cqes failed in IoUringPolicy");
 }
 
 // `IoUringPolicy` needs a ring with room for `ringSize` SQEs and `ringSize`
 // CQEs. (A ring size of 0 cannot even be constructed, see the `RingSize` test.)
-TEST(IoUringPolicyModel, invalidConstructionThrows) {
+TEST(IoUringPolicy, invalidConstructionThrows) {
   using ad_utility::RingSize;
   using ad_utility::testing::FakeIoUring;
   auto makeFake = [](size_t sqCapacity, size_t cqCapacity) {
