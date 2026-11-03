@@ -18,7 +18,6 @@
 // complete QLever instance.
 struct RuntimeParameters {
   using Bool = ad_utility::detail::parameterShortNames::Bool;
-  using Double = ad_utility::detail::parameterShortNames::Double;
   template <typename DurationTp>
   using Duration =
       ad_utility::detail::parameterShortNames::DurationParameter<DurationTp>;
@@ -296,8 +295,9 @@ struct RuntimeParameters {
       ad_utility::MemorySize::bytes(0), "select-export-term-cache-max-size"};
   SizeT selectExportTermCacheNumberOfLookupsPerWindow_{
       1 << 13, "select-export-term-cache-lookups-per-window"};
-  Double selectExportTermCacheMinHitRate_{
-      0.25, "select-export-term-cache-min-hit-rate"};
+  ad_utility::detail::parameterShortNames::Double
+      selectExportTermCacheMinHitRate_{0.25,
+                                       "select-export-term-cache-min-hit-rate"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
