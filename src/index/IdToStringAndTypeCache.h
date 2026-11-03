@@ -21,6 +21,7 @@
 #include "index/LocalVocab.h"
 #include "util/Log.h"
 #include "util/LruCacheWithStatistics.h"
+#include "util/NoCopyNoMove.h"
 #include "util/ValueIdentity.h"
 
 namespace ql::exportIds {
@@ -35,7 +36,7 @@ namespace ql::exportIds {
 // same address, and hence the same `Id`, can denote a different word. All
 // other `Id`s resolve identically for the whole export (the on-disk
 // vocabulary is static, the other datatypes are encoded in the `Id` bits).
-class IdToStringAndTypeCache {
+class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
  public:
   using Value = std::optional<std::pair<std::string, const char*>>;
 
@@ -105,15 +106,12 @@ class IdToStringAndTypeCache {
     }
   }
 
-  IdToStringAndTypeCache(const IdToStringAndTypeCache&) = delete;
-  IdToStringAndTypeCache& operator=(const IdToStringAndTypeCache&) = delete;
-
   // Return the cached value for `id`, computing it with `compute()` on a miss.
   // `LocalVocabIndex` `Id`s bypass the cache (see above), and so does every
   // `Id` once the cache is disabled. The reference is valid until the next
   // call.
   template <typename Compute>
-  const Value& getOrCompute(Id id, const Compute& compute) {
+  const Value& getOrCompute(Id id, Compute compute) {
     if (id.getDatatype() == Datatype::LocalVocabIndex) {
       uncached_ = compute();
       return uncached_;
@@ -166,33 +164,19 @@ class IdToStringAndTypeCache {
   }
 };
 
-// Cached variant of `idToStringAndType` for the SELECT export path. Returns a
+// Cached variant of `idToStringAndType` for the SELECT export path. Return a
 // reference that is valid until the next lookup in `cache`.
 template <bool removeQuotesAndAngleBrackets = false,
-          bool returnOnlyLiterals = false, typename EscapeFunction>
+          bool returnOnlyLiterals = false,
+          typename EscapeFunction = ql::identity>
 const IdToStringAndTypeCache::Value& cachedIdToStringAndType(
     IdToStringAndTypeCache& cache, const Index& index, Id id,
-    const LocalVocab& localVocab, const EscapeFunction& escapeFunction) {
+    const LocalVocab& localVocab,
+    EscapeFunction escapeFunction = EscapeFunction{}) {
   return cache.getOrCompute(id, [&]() {
     return idToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
         index, id, localVocab, escapeFunction);
   });
-}
-
-// Overload without an escape function (identity escaping). It forwards to the
-// function above with a persistent identity instance: a default-constructed
-// temporary would bind to the `escapeFunction` const reference while the
-// function returns a reference into the cache, which GCC flags as
-// `-Wdangling-reference` under `-Werror`.
-template <bool removeQuotesAndAngleBrackets = false,
-          bool returnOnlyLiterals = false>
-const IdToStringAndTypeCache::Value& cachedIdToStringAndType(
-    IdToStringAndTypeCache& cache, const Index& index, Id id,
-    const LocalVocab& localVocab) {
-  static constexpr ql::identity noEscape{};
-  return cachedIdToStringAndType<removeQuotesAndAngleBrackets,
-                                 returnOnlyLiterals>(cache, index, id,
-                                                     localVocab, noEscape);
 }
 
 }  // namespace ql::exportIds
