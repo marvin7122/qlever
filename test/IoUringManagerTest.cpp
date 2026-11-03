@@ -273,8 +273,8 @@ TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanRing) {
 // Waiting on the last of many small batches (1, 3 or 5 reads each) can reap
 // the CQEs of the other batches in the same waves. The remaining waits may then
 // find their batches already complete and must still see the correct bytes.
-// Batch sizes that are not multiples of the reap wave (1, 3, 5, ...) cover
-// partial waves.
+// The batch sizes 1, 3 and 5 are not multiples of the reap wave (8), so the
+// waves cut across batches.
 TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
   constexpr size_t M = 12;
   std::string fileContent;
@@ -301,6 +301,7 @@ TYPED_TEST(IoUringManagerTest, WaveReapCompletesOtherBatches) {
   // ring for `IoUringPolicy`.
   manager.setPageCacheFastPath(false);
   std::vector<typename TypeParam::BatchHandle> handles;
+  handles.reserve(M);
   for (auto& batch : batches) {
     handles.push_back(batch.submitTo(manager, fd));
   }
@@ -505,7 +506,7 @@ TEST(IoUringPolicyErrors, failureIsThrownByItsOwnBatch) {
   AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(badHandle),
                                HasSubstr("read fewer bytes than requested"));
   // The successful read of the failed batch landed in its buffer.
-  EXPECT_EQ(bad.result()[0], "AAAA");
+  EXPECT_THAT(bad.result(), ::testing::ElementsAre("AAAA", ::testing::_));
   // Reported once; nothing of `bad` is outstanding any more.
   manager.wait(badHandle);
 }
@@ -533,7 +534,8 @@ TEST(IoUringPolicyErrors, failureReapedByAddBatchIsThrownByItsOwnBatch) {
   EXPECT_THAT(good.result(), ::testing::ElementsAre("AAAA", "BBBB", "CCCC"));
   AD_EXPECT_THROW_WITH_MESSAGE(manager.wait(badHandle),
                                HasSubstr("read fewer bytes than requested"));
-  EXPECT_EQ(bad.result()[0], "AAAA");
+  // The successful read of the failed batch landed in its buffer.
+  EXPECT_THAT(bad.result(), ::testing::ElementsAre("AAAA", ::testing::_));
 }
 
 // Drop the manager while reads are still outstanding (submitted but never

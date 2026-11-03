@@ -80,6 +80,8 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
 }
 
 //______________________________________________________________________________
+// Drain the outstanding reads, so that the kernel no longer writes into any
+// target buffer, then tear down the ring.
 IoUringPolicy::~IoUringPolicy() {
   if (!failedBatches_.empty()) {
     AD_LOG_WARN << "IoUringPolicy destroyed with " << failedBatches_.size()
@@ -239,7 +241,7 @@ void IoUringPolicy::drainAtLeastCqes(unsigned minComplete) {
     const ql::span<io_uring_cqe* const> readyCqes(cqes.data(), n);
     const ql::span<std::pair<int, uint64_t>> resultsAndRequestIds(
         resultAndRequestIdPerCqe.data(), n);
-    for (auto [cqe, resultAndRequestId] :
+    for (auto&& [cqe, resultAndRequestId] :
          ::ranges::views::zip(readyCqes, resultsAndRequestIds)) {
       // Recover the id via the 64-bit `user_data` field, see `addBatch`.
       resultAndRequestId = {cqe->res, io_uring_cqe_get_data64(cqe)};
