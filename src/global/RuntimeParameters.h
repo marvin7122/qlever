@@ -18,6 +18,7 @@
 // complete QLever instance.
 struct RuntimeParameters {
   using Bool = ad_utility::detail::parameterShortNames::Bool;
+  using Double = ad_utility::detail::parameterShortNames::Double;
   template <typename DurationTp>
   using Duration =
       ad_utility::detail::parameterShortNames::DurationParameter<DurationTp>;
