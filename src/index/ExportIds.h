@@ -237,14 +237,15 @@ std::optional<std::pair<std::string, const char*>> idToStringAndType(
 // dereference the `LocalVocabEntry`. For all other datatypes:
 // - `VocabIndex`, `WordVocabIndex`, `TextRecordIndex`: the vocabularies and
 //   the text index of an index never change while it is loaded.
-// - `SecondaryVocabIndex`: the secondary vocabulary is append-only, and the
-//   global index of a word never changes when segments are appended.
+// - `SecondaryVocabIndex`: the secondary vocabulary is immutable once the
+//   index is loaded (see `IndexImpl::secondaryVocab`).
 // - `EncodedVal`: decoded with the `EncodedIriManager` of the index, which is
 //   fixed after the index is built.
 // - `BlankNodeIndex` and the values encoded in the `Id` bits (`Undefined`,
 //   `Bool`, `Int`, `Double`, `Date`, `GeoPoint`): formatted from the bits only.
 // Both the SELECT export (`IdToStringAndTypeCache`) and the CONSTRUCT export
-// (`IdCache` in `ConstructBatchEvaluator`) use this to decide what they cache.
+// (`IdCache` in `ConstructBatchEvaluator`) use this to decide what they may
+// cache.
 inline bool canBeCachedForWholeExport(Id id) {
   return id.getDatatype() != Datatype::LocalVocabIndex;
 }
