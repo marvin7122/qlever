@@ -240,16 +240,23 @@ using BatchIoManager = BatchManager<IoUringPolicy>;
 using BatchIoManager = BatchManager<SyncIoPolicy>;
 #endif
 
+// The number of entries of the io_uring ring of a batch manager that
+// `makeBatchManager` builds, unless the caller asks for another one.
+inline constexpr unsigned defaultBatchManagerRingSize = 256;
+
 namespace detail {
-// Build a `BatchManager` for `Policy`, decorated with `PageCacheFirstPolicy`.
-// Where `preadv2(RWF_NOWAIT)` is not compiled in or not supported, the
-// decorator passes every batch on unchanged.
+// Build a `BatchManager` for `Policy`, decorated with `PageCacheFirstPolicy`
+// that reads the page cache with `pageCacheRead`. Where `preadv2(RWF_NOWAIT)`
+// is not compiled in or not supported, the decorator passes every batch on
+// unchanged.
 template <typename Policy>
-std::unique_ptr<BatchManagerBase> makeBatchManagerFor(unsigned ringSize) {
+std::unique_ptr<BatchManagerBase> makeBatchManagerFor(
+    unsigned ringSize, PageCacheRead pageCacheRead) {
   static_assert(ReadPolicyConcept<Policy>,
                 "makeBatchManagerFor's Policy must satisfy the "
                 "ReadPolicyConcept.");
-  return std::make_unique<BatchManager<PageCacheFirstPolicy<Policy>>>(ringSize);
+  return std::make_unique<BatchManager<PageCacheFirstPolicy<Policy>>>(
+      ringSize, std::move(pageCacheRead));
 }
 }  // namespace detail
 
@@ -260,13 +267,16 @@ std::unique_ptr<BatchManagerBase> makeBatchManagerFor(unsigned ringSize) {
 // the first failure, every subsequent call goes straight to the sync manager,
 // so we don't repeat a failing syscall. The manager serves page-cache hits
 // first (`PageCacheFirstPolicy`, switched with
-// `BatchManagerBase::setPageCacheFastPath`).
+// `BatchManagerBase::setPageCacheFastPath`) with `pageCacheRead`, which only
+// tests replace.
 inline std::unique_ptr<BatchManagerBase> makeBatchManager(
-    bool& preferIoUring, unsigned ringSize = 256) {
+    bool& preferIoUring, unsigned ringSize = defaultBatchManagerRingSize,
+    const PageCacheRead& pageCacheRead = &systemPageCacheRead) {
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
     try {
-      return detail::makeBatchManagerFor<IoUringPolicy>(ringSize);
+      return detail::makeBatchManagerFor<IoUringPolicy>(ringSize,
+                                                        pageCacheRead);
     } catch (const std::exception& e) {
       preferIoUring = false;
       AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
@@ -279,7 +289,7 @@ inline std::unique_ptr<BatchManagerBase> makeBatchManager(
 #else
   preferIoUring = false;
 #endif
-  return detail::makeBatchManagerFor<SyncIoPolicy>(ringSize);
+  return detail::makeBatchManagerFor<SyncIoPolicy>(ringSize, pageCacheRead);
 }
 
 }  // namespace ad_utility

@@ -415,7 +415,8 @@ VocabularyOnDisk::WordWriter::~WordWriter() {
 }
 
 // _____________________________________________________________________________
-void VocabularyOnDisk::open(const std::string& filename) {
+void VocabularyOnDisk::open(const std::string& filename,
+                            const ad_utility::PageCacheRead& pageCacheRead) {
   static std::atomic<uint64_t> nextId = 1;
   id_ = nextId++;
   file_.open(filename, "r");
@@ -434,6 +435,7 @@ void VocabularyOnDisk::open(const std::string& filename) {
       NUM_VOCAB_BATCH_IO_MANAGERS);
   bool preferIoUring = true;
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
+    ioManagers_->push(ad_utility::makeBatchManager(
+        preferIoUring, ad_utility::defaultBatchManagerRingSize, pageCacheRead));
   }
 }
