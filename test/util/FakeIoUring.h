@@ -81,7 +81,7 @@ class FakeIoUring final : public IoUringInterface {
   }
 
   // Whether, since the last `resetObservations`, a read was made short or
-  // failed. Whether `cancelQueued` was called is reported by `cancelled()`.
+  // failed.
   bool injectedReadFault() const { return injectedReadFault_; }
 
   // How often each fault was injected over the lifetime of the ring, so that
@@ -95,12 +95,7 @@ class FakeIoUring final : public IoUringInterface {
     size_t cancelledReads = 0;
   };
   const FaultCounts& faultCounts() const { return faultCounts_; }
-  // Whether `cancelQueued` was called since the last `resetObservations`.
-  bool cancelled() const { return cancelled_; }
-  void resetObservations() {
-    injectedReadFault_ = false;
-    cancelled_ = false;
-  }
+  void resetObservations() { injectedReadFault_ = false; }
 
   // The reads (not no-ops) that are queued, in the kernel, or completed but
   // not reaped. Between two `readBatch` calls this must be zero.
@@ -191,7 +186,6 @@ class FakeIoUring final : public IoUringInterface {
   }
 
   std::vector<uint64_t> cancelQueued(uint64_t noOpRequestId) override {
-    cancelled_ = true;
     std::vector<uint64_t> cancelledIds;
     for (Request& request : queue_) {
       if (!request.isNoOp) {
@@ -298,7 +292,6 @@ class FakeIoUring final : public IoUringInterface {
   // The number of calls of `submit` so far.
   size_t numberOfSubmits_ = 0;
   bool injectedReadFault_ = false;
-  bool cancelled_ = false;
   FaultCounts faultCounts_;
 };
 
