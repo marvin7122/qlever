@@ -153,6 +153,32 @@ class SplitVocabulary {
   // Array that holds all underlying vocabularies.
   UnderlyingVocabsArray underlying_{UnderlyingVocabularies{}...};
 
+  // The indices of one marker in a batch of `lookupBatch`: the unmarked
+  // indices, and for each of them its position in the batch.
+  struct SubBatch {
+    std::vector<size_t> unmarkedIndices_;
+    std::vector<size_t> positions_;
+  };
+
+  // The result of `lookupBatch` for indices with different markers: it owns
+  // the results of the `lookupBatch` calls on the underlying vocabularies
+  // (one per marker, null for a marker that does not occur), and its views
+  // point into them.
+  struct SubBatchesLookupData
+      : VocabLookupDataCommonBase<
+            std::array<VocabBatchLookupResult, numberOfVocabs>> {};
+
+  // The `lookupBatch` of the underlying vocabulary with the given `marker`,
+  // for the unmarked `indices`.
+  VocabBatchLookupResult lookupBatchInUnderlying(
+      uint8_t marker, ql::span<const size_t> indices) const {
+    auto result = std::visit(
+        [&indices](const auto& vocab) { return vocab.lookupBatch(indices); },
+        underlying_[marker]);
+    AD_CORRECTNESS_CHECK(result->size() == indices.size());
+    return result;
+  }
+
   // The base filenames of all the underlying vocabularies for the given base
   // `filename` of this vocabulary, obtained by appending the
   // `FilenameSuffixes`.
@@ -260,42 +286,59 @@ class SplitVocabulary {
   // indices are grouped by their marker, and each group is looked up with one
   // `lookupBatch` call on its underlying vocabulary (so the batched reads of
   // that vocabulary are used). If all indices have the same marker, the result
-  // of that call is returned as is; otherwise, the result holds the results of
-  // the underlying calls and only its views are put back into input order.
+  // of that call is returned as is (for marker 0, the indices are passed on
+  // without a copy); otherwise, the result holds the results of the
+  // underlying calls and only its views are put back into input order.
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const {
     AD_CONTRACT_CHECK(!indices.empty());
-    // For each marker, the unmarked indices of that marker, and their
-    // positions in `indices`.
-    std::array<std::vector<size_t>, numberOfVocabs> unmarkedIndices;
-    std::array<std::vector<size_t>, numberOfVocabs> positions;
+    // Check all indices first, as `operator[]` does, and count them per
+    // marker.
     std::array<uint64_t, numberOfVocabs> endIndices;
     for (uint8_t marker = 0; marker < numberOfVocabs; ++marker) {
       endIndices[marker] = endIndexOfUnderlying(marker);
     }
-    for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
-      const uint8_t marker = getMarker(index);
+    std::array<size_t, numberOfVocabs> numberOfIndicesPerMarker{};
+    bool allIndicesAreUnmarked = true;
+    for (size_t index : indices) {
       const uint64_t unmarkedIndex = getVocabIndex(index);
-      // The same check as in `operator[]`.
+      const uint8_t marker = getMarker(index);
       AD_CORRECTNESS_CHECK(unmarkedIndex < endIndices[marker]);
-      unmarkedIndices[marker].push_back(unmarkedIndex);
-      positions[marker].push_back(static_cast<size_t>(position));
+      ++numberOfIndicesPerMarker[marker];
+      allIndicesAreUnmarked &= unmarkedIndex == index;
+    }
+    // Then all indices have the marker 0 and can be passed on as they are.
+    if (allIndicesAreUnmarked) {
+      return lookupBatchInUnderlying(0, indices);
     }
 
+    std::array<SubBatch, numberOfVocabs> subBatches;
     for (uint8_t marker = 0; marker < numberOfVocabs; ++marker) {
-      if (unmarkedIndices[marker].size() == indices.size()) {
-        return lookupBatchInUnderlying(marker, unmarkedIndices[marker]);
+      subBatches[marker].unmarkedIndices_.reserve(
+          numberOfIndicesPerMarker[marker]);
+      subBatches[marker].positions_.reserve(numberOfIndicesPerMarker[marker]);
+    }
+    for (const auto& [position, index] : ::ranges::views::enumerate(indices)) {
+      SubBatch& subBatch = subBatches[getMarker(index)];
+      subBatch.unmarkedIndices_.push_back(getVocabIndex(index));
+      subBatch.positions_.push_back(static_cast<size_t>(position));
+    }
+    for (uint8_t marker = 0; marker < numberOfVocabs; ++marker) {
+      if (numberOfIndicesPerMarker[marker] == indices.size()) {
+        return lookupBatchInUnderlying(marker,
+                                       subBatches[marker].unmarkedIndices_);
       }
     }
 
     auto data = std::make_shared<SubBatchesLookupData>();
     data->views().resize(indices.size());
     for (uint8_t marker = 0; marker < numberOfVocabs; ++marker) {
-      if (unmarkedIndices[marker].empty()) {
+      const SubBatch& subBatch = subBatches[marker];
+      if (subBatch.unmarkedIndices_.empty()) {
         continue;
       }
-      auto result = lookupBatchInUnderlying(marker, unmarkedIndices[marker]);
+      auto result = lookupBatchInUnderlying(marker, subBatch.unmarkedIndices_);
       for (const auto& [position, word] :
-           ::ranges::views::zip(positions[marker], *result)) {
+           ::ranges::views::zip(subBatch.positions_, *result)) {
         data->views()[position] = word;
       }
       data->buffer()[marker] = std::move(result);
@@ -444,27 +487,6 @@ class SplitVocabulary {
                       underlying_[marker]);
   }
 
- private:
-  // The result of `lookupBatch` for indices with different markers: it owns
-  // the results of the `lookupBatch` calls on the underlying vocabularies
-  // (one per marker, null for a marker that does not occur), and its views
-  // point into them.
-  struct SubBatchesLookupData
-      : VocabLookupDataCommonBase<
-            std::array<VocabBatchLookupResult, numberOfVocabs>> {};
-
-  // The `lookupBatch` of the underlying vocabulary with the given `marker`,
-  // for the unmarked `indices`.
-  VocabBatchLookupResult lookupBatchInUnderlying(
-      uint8_t marker, ql::span<const size_t> indices) const {
-    auto result = std::visit(
-        [&indices](const auto& vocab) { return vocab.lookupBatch(indices); },
-        underlying_[marker]);
-    AD_CORRECTNESS_CHECK(result->size() == indices.size());
-    return result;
-  }
-
- public:
   // This word writer writes words to different vocabularies depending on the
   // result of SplitFunction.
   class WordWriter : public WordWriterBase {
