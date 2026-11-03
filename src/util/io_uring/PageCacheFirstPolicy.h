@@ -165,14 +165,15 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
   using BatchHandle = typename Policy::BatchHandle;
 
   // `ringSize` is forwarded to the constructor of the wrapped `Policy`, `read`
-  // to the `PageCacheReader`.
-  explicit PageCacheFirstPolicy(unsigned ringSize,
-                                PageCacheRead read = &systemPageCacheRead)
-      : policy_(ringSize), reader_{std::move(read)} {}
-
-  // Switch the fast path on (the default) or off for the batches that are added
-  // afterwards.
-  void setPageCacheFastPath(bool enabled) noexcept { enabled_ = enabled; }
+  // to the `PageCacheReader`. `addBatch` asks `isEnabled` once per batch
+  // whether to try the page cache at all (the caller can switch the fast path
+  // off at runtime, `VocabularyOnDisk` with a runtime parameter).
+  explicit PageCacheFirstPolicy(
+      unsigned ringSize, PageCacheRead read = &systemPageCacheRead,
+      std::function<bool()> isEnabled = [] { return true; })
+      : policy_(ringSize),
+        reader_{std::move(read)},
+        isEnabled_{std::move(isEnabled)} {}
 
   // Serve the reads of the batch that are in the page cache and pass the others
   // on to the decorated policy. Return whether any read is still in flight:
@@ -195,8 +196,8 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
                                   missed.buffers_, handle);
         };
     const UnservedReads unserved =
-        enabled_ ? reader_.readPageCacheHits(fd, numBytes, offsets, buffers)
-                 : UnservedReads{UnservedReads::NothingRead{}};
+        isEnabled_() ? reader_.readPageCacheHits(fd, numBytes, offsets, buffers)
+                     : UnservedReads{UnservedReads::NothingRead{}};
     return std::visit(
         OverloadCallOperator{forwardAll, forwardNothing, forwardRemaining},
         unserved.reads_);
@@ -210,7 +211,7 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
  private:
   Policy policy_;
   PageCacheReader reader_;
-  bool enabled_ = true;
+  const std::function<bool()> isEnabled_;
 };
 
 }  // namespace ad_utility

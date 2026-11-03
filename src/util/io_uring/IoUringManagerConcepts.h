@@ -56,16 +56,6 @@ CPP_concept ReadPolicyConcept =
     ql::concepts::unsigned_integral<typename T::BatchHandle> &&
     CPP_requires_ref(ReadPolicy_, T);
 
-namespace detail {
-// Satisfied iff `Policy` has a member callable as `setPageCacheFastPath(true)`,
-// i.e. a switchable page-cache fast path (`PageCacheFirstPolicy`).
-// `BatchManager::setPageCacheFastPath` forwards its argument to such a member
-// and checks at compile time that the member is `noexcept`.
-template <typename Policy>
-CPP_requires(HasPageCacheFastPathSwitch_,
-             requires(Policy& policy)(policy.setPageCacheFastPath(true)));
-}  // namespace detail
-
 }  // namespace ad_utility
 
 #endif  // QLEVER_SRC_UTIL_IO_URING_IOURINGMANAGERCONCEPTS_H

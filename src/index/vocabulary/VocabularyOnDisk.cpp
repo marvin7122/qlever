@@ -327,10 +327,6 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
         "`VocabularyOnDisk::lookupBatch`");
   }};
 
-  // The page-cache fast path belongs to the manager; the runtime parameter can
-  // change between two lookups.
-  manager->setPageCacheFastPath(
-      getRuntimeParameter<&RuntimeParameters::vocabularyPageCacheFastPath_>());
   auto offsetPairs = ad_utility::vocabulary::readOffsetPairs(
       *manager, offsetsFile_.fd(), indices, size());
   return readStrings(*manager, offsetPairs);
@@ -416,7 +412,7 @@ VocabularyOnDisk::WordWriter::~WordWriter() {
 
 // _____________________________________________________________________________
 void VocabularyOnDisk::open(const std::string& filename,
-                            const ad_utility::PageCacheRead& pageCacheRead) {
+                            ad_utility::PageCacheRead pageCacheRead) {
   static std::atomic<uint64_t> nextId = 1;
   id_ = nextId++;
   file_.open(filename, "r");
@@ -429,13 +425,19 @@ void VocabularyOnDisk::open(const std::string& filename,
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
 
-  // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
+  // Initialize the pool of persistent batch managers for `lookupBatch`. They
+  // read the runtime parameter for every batch, so that it can change between
+  // two lookups.
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
   bool preferIoUring = true;
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
     ioManagers_->push(ad_utility::makeBatchManager(
-        preferIoUring, ad_utility::defaultBatchManagerRingSize, pageCacheRead));
+        preferIoUring, ad_utility::defaultBatchManagerRingSize, pageCacheRead,
+        [] {
+          return getRuntimeParameter<
+              &RuntimeParameters::vocabularyPageCacheFastPath_>();
+        }));
   }
 }
