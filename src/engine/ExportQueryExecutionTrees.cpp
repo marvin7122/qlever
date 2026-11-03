@@ -17,6 +17,7 @@
 #include <absl/strings/str_replace.h>
 
 #include <optional>
+#include <range/v3/view/enumerate.hpp>
 #include <string_view>
 
 #include "backports/StartsWithAndEndsWith.h"
@@ -110,12 +111,15 @@ using RowRange = ql::ranges::iota_view<uint64_t, uint64_t>;
 
 // The maximal number of rows that are serialized together in one chunk of a
 // CSV or TSV export (see `csvOrTsvRows` below).
-constexpr uint64_t numRowsPerCsvOrTsvChunk = 8192;
+constexpr uint64_t NUM_ROWS_PER_CSV_OR_TSV_CHUNK = 8192;
 
-// Split `rows` into consecutive chunks of `numRowsPerChunk` rows each (the last
-// chunk may be shorter).
+// Return a view of consecutive `RowRange`s that together cover `rows`, each
+// with `numRowsPerChunk` rows except for the last one, which may be shorter.
+// The view stores copies of its arguments, so it may outlive them.
 auto rowRangeChunks(const RowRange& rows, uint64_t numRowsPerChunk) {
-  AD_CONTRACT_CHECK(numRowsPerChunk > 0);
+  AD_CONTRACT_CHECK(numRowsPerChunk > 0,
+                    "A chunk of a CSV or TSV export must contain at least one "
+                    "row, otherwise the chunks never cover the rows.");
   const uint64_t begin = rows.empty() ? 0 : *rows.begin();
   const uint64_t end = begin + rows.size();
   const uint64_t numChunks =
@@ -135,7 +139,8 @@ auto rowRangeChunks(const RowRange& rows, uint64_t numRowsPerChunk) {
 template <ad_utility::MediaType format>
 std::string csvOrTsvRows(
     const Index& index,
-    const QueryExecutionTree::ColumnIndicesAndTypes& columns,
+    ql::span<const std::optional<QueryExecutionTree::VariableAndColumnIndex>>
+        columns,
     const TableConstRefWithVocab& table, const RowRange& rows,
     const ad_utility::CancellationHandle<>& cancellationHandle) {
   using enum ad_utility::MediaType;
@@ -144,19 +149,20 @@ std::string csvOrTsvRows(
   constexpr auto& escapeFunction =
       format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
   std::string lines;
-  for (uint64_t i : rows) {
-    for (size_t j = 0; j < columns.size(); ++j) {
-      if (columns[j].has_value()) {
-        Id id = table.idTable()(i, columns[j].value().columnIndex_);
-        auto optionalStringAndType =
-            ql::exportIds::idToStringAndType<format == csv>(
-                index, id, table.localVocab(), escapeFunction);
-        if (optionalStringAndType.has_value()) [[likely]] {
-          lines.append(optionalStringAndType.value().first);
-        }
-      }
-      if (j + 1 < columns.size()) {
+  for (uint64_t row : rows) {
+    for (const auto& [j, column] : ::ranges::views::enumerate(columns)) {
+      if (j > 0) {
         lines.push_back(separator);
+      }
+      if (!column.has_value()) {
+        continue;
+      }
+      Id id = table.idTable()(row, column.value().columnIndex_);
+      auto optionalStringAndType =
+          ql::exportIds::idToStringAndType<format == csv>(
+              index, id, table.localVocab(), escapeFunction);
+      if (optionalStringAndType.has_value()) [[likely]] {
+        lines.append(optionalStringAndType.value().first);
       }
     }
     lines.push_back('\n');
@@ -604,7 +610,9 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   // `parallel-csv-tsv-export` is set, the chunks of a block are serialized
   // concurrently on the executor of the query, otherwise one after the other
   // on this thread. The chunks are yielded in their original order in both
-  // cases, so the output is the same.
+  // cases, so the output is the same. All chunks of a block are serialized
+  // before the next block is requested, because `getRowIndices` only keeps the
+  // current block alive.
   const bool inParallel =
       getRuntimeParameter<&RuntimeParameters::parallelCsvTsvExport_>();
   const auto& qec = *qet.getQec();
@@ -617,7 +625,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
       return csvOrTsvRows<format>(qec.getIndex(), selectedColumnIndices, table,
                                   rows, *cancellationHandle);
     };
-    auto chunks = rowRangeChunks(block.view_, numRowsPerCsvOrTsvChunk);
+    auto chunks = rowRangeChunks(block.view_, NUM_ROWS_PER_CSV_OR_TSV_CHUNK);
     if (inParallel) {
       // The view waits for all its tasks when it is destroyed at the end of
       // this iteration, so no task outlives the `table` that it refers to.
