@@ -6,6 +6,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/bind_front.h>
+#include <fcntl.h>
 
 #include <algorithm>
 #include <array>
@@ -430,6 +431,16 @@ void VocabularyOnDisk::open(const std::string& filename) {
   id_ = nextId++;
   file_.open(filename, "r");
   offsetsFile_.open(filename + offsetSuffix_, "r");
+  // Tell the kernel that the reads of these files are random. Otherwise a
+  // page-cache miss can start a readahead window (when it lands next to the
+  // previous read of the file, or after cached pages), which the scattered
+  // reads of `lookupBatch` almost never use. A failure is harmless and
+  // ignored; macOS has no `posix_fadvise`.
+#ifdef POSIX_FADV_RANDOM
+  for (int fd : {file_.fd(), offsetsFile_.fd()}) {
+    ::posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM);
+  }
+#endif
 
   // Read the offset count from the `MmapVectorMetaData` trailer, which is
   // the canonical layout used by both old and new vocabulary files.
