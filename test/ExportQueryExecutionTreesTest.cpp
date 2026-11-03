@@ -16,6 +16,8 @@
 #include "parser/SparqlParser.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/AllocatorTestHelpers.h"
+#include "util/ConcurrencyLimitedExecutor.h"
+#include "util/Forward.h"
 #include "util/GTestHelpers.h"
 #include "util/IdTableHelpers.h"
 #include "util/IdTestHelpers.h"
@@ -373,6 +375,43 @@ std::chrono::milliseconds toChrono(std::string_view string) {
 }  // namespace
 
 namespace {
+// An executor that runs its function objects on an underlying executor and
+// counts them, so that a test can check whether an export submitted tasks.
+class CountingExecutor {
+  ql::any_io_executor executor_;
+  std::shared_ptr<std::atomic<size_t>> numberOfTasks_;
+
+ public:
+  CountingExecutor(ql::any_io_executor executor,
+                   std::shared_ptr<std::atomic<size_t>> numberOfTasks)
+      : executor_{std::move(executor)},
+        numberOfTasks_{std::move(numberOfTasks)} {}
+
+  bool operator==(const CountingExecutor&) const = default;
+
+  // All properties are forwarded to the underlying executor.
+  template <ad_utility::detail::QueryableProperty Property>
+  decltype(auto) query(const Property& property) const {
+    return boost::asio::query(executor_, property);
+  }
+
+  template <ad_utility::detail::RequirableProperty Property>
+  CountingExecutor require(const Property& property) const {
+    return {boost::asio::require(executor_, property), numberOfTasks_};
+  }
+
+  template <ad_utility::detail::PreferableProperty Property>
+  CountingExecutor prefer(const Property& property) const {
+    return {boost::asio::prefer(executor_, property), numberOfTasks_};
+  }
+
+  template <ad_utility::detail::ExecutableFunction Function>
+  void execute(Function&& function) const {
+    ++*numberOfTasks_;
+    executor_.execute(AD_FWD(function));
+  }
+};
+
 // A `QueryExecutionContext` on the index of `getQec(config)` whose operations
 // and parallel CSV or TSV export run on `multiThreadExecutor()` (4 threads).
 // The contexts of `getQec` run on a single thread, on which the chunks of a
@@ -381,6 +420,9 @@ namespace {
 struct MultiThreadQec : ad_utility::NoCopyNoMove {
   QueryResultCache cache_{};
   NamedResultCache namedCache_{};
+  // The number of tasks that have been run on the executor of `qec_`.
+  std::shared_ptr<std::atomic<size_t>> numberOfTasks_ =
+      std::make_shared<std::atomic<size_t>>(0);
   QueryExecutionContext qec_;
   explicit MultiThreadQec(ad_utility::testing::TestIndexConfig config)
       // The index of `getQec` is never destroyed, so the `shared_ptr` does not
@@ -393,7 +435,8 @@ struct MultiThreadQec : ad_utility::NoCopyNoMove {
                  ad_utility::MemorySize::megabytes(100)),
              &namedCache_,
              std::make_shared<MaterializedViewsManager>(),
-             ad_utility::testing::multiThreadExecutor()} {}
+             CountingExecutor{ad_utility::testing::multiThreadExecutor(),
+                              numberOfTasks_}} {}
 };
 
 // Export the result of the SPARQL `query` on `qec` as the `mediaType`, with or
@@ -427,9 +470,10 @@ ad_utility::testing::TestIndexConfig makeConfigWithManyRows(
 // The maximal number of rows of a chunk, and the number of subjects of the
 // knowledge graph of the parallel export tests (two full chunks and a partial
 // one).
-constexpr uint64_t maxRowsPerChunk =
+constexpr uint64_t maxNumberOfRowsPerChunk =
     ExportQueryExecutionTrees::MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK;
-constexpr size_t numberOfSubjectsForParallelExport = 2 * maxRowsPerChunk + 3616;
+constexpr size_t numberOfSubjectsForParallelExport =
+    2 * maxNumberOfRowsPerChunk + 3616;
 }  // namespace
 
 // _____________________________________________________________________________
@@ -491,13 +535,15 @@ TEST(ExportQueryExecutionTrees, csvOrTsvRows) {
 // sequential export, which converts and yields one cell after the other as
 // before `parallel-csv-tsv-export` existed. `ORDER BY DESC(...)` forces an
 // `OrderBy`, whose result is a single block, so each of these results is cut
-// into chunks of at most 8192 rows: 20000 rows (three chunks), exactly one
-// chunk (serialized sequentially), one chunk plus one row (two chunks), exactly
-// two chunks, a block whose rows start at row 5000 (OFFSET), one row, and no
-// row. Without ORDER BY, the result is a lazy scan of many small blocks, each
-// of which is serialized sequentially. The export limit cuts the larger
-// results to 9000 rows (two chunks). With `max-num-threads-per-query` = 1,
-// only two chunks are in flight.
+// into balanced chunks of at most `maxNumberOfRowsPerChunk` rows: the whole
+// result (three chunks), exactly one chunk (serialized sequentially), one chunk
+// plus one row (two chunks), exactly two chunks, a block whose rows start at
+// row 5000 (OFFSET), one row, and no row. Without ORDER BY, the result is a
+// lazy scan of many small blocks, each of which is serialized sequentially.
+// The export limit cuts the larger results to one chunk plus 808 rows (two
+// chunks). With `max-num-threads-per-query` = 1, only two chunks are in
+// flight. The number of tasks on the executor shows whether the parallel path
+// is taken.
 TEST(ExportQueryExecutionTrees, ParallelCsvTsvExport) {
   auto config = makeConfigWithManyRows(numberOfSubjectsForParallelExport);
   QueryExecutionContext& sequentialQec = *ad_utility::testing::getQec(config);
@@ -505,12 +551,12 @@ TEST(ExportQueryExecutionTrees, ParallelCsvTsvExport) {
   using enum ad_utility::MediaType;
   const std::string orderedScan =
       "SELECT ?o ?s WHERE { ?s <p> ?o } ORDER BY DESC(?o)";
-  for (const std::string query : {
+  for (const std::string& query : {
            "SELECT ?s ?o ?b WHERE { ?s <p> ?o OPTIONAL { ?s <q> ?b } } "
            "ORDER BY DESC(?s)"s,
-           absl::StrCat(orderedScan, " LIMIT ", maxRowsPerChunk),
-           absl::StrCat(orderedScan, " LIMIT ", maxRowsPerChunk + 1),
-           absl::StrCat(orderedScan, " LIMIT ", 2 * maxRowsPerChunk),
+           absl::StrCat(orderedScan, " LIMIT ", maxNumberOfRowsPerChunk),
+           absl::StrCat(orderedScan, " LIMIT ", maxNumberOfRowsPerChunk + 1),
+           absl::StrCat(orderedScan, " LIMIT ", 2 * maxNumberOfRowsPerChunk),
            absl::StrCat(orderedScan, " OFFSET 5000 LIMIT 10000"),
            absl::StrCat(orderedScan, " LIMIT 1"),
            absl::StrCat(orderedScan, " LIMIT 0"),
@@ -521,7 +567,7 @@ TEST(ExportQueryExecutionTrees, ParallelCsvTsvExport) {
       auto trace = generateLocationTrace(AD_CURRENT_SOURCE_LOC(), query);
       auto sequential = exportQuery(sequentialQec, query, mediaType, false);
       EXPECT_EQ(exportQuery(parallel.qec_, query, mediaType, true), sequential);
-      const size_t exportLimit = maxRowsPerChunk + 808;
+      const size_t exportLimit = maxNumberOfRowsPerChunk + 808;
       EXPECT_EQ(
           exportQuery(parallel.qec_, query, mediaType, true, exportLimit),
           exportQuery(sequentialQec, query, mediaType, false, exportLimit));
@@ -530,6 +576,24 @@ TEST(ExportQueryExecutionTrees, ParallelCsvTsvExport) {
       EXPECT_EQ(exportQuery(parallel.qec_, query, mediaType, true), sequential);
     }
   }
+  // The number of tasks that an export adds to those of the operations.
+  auto numberOfExportTasks = [&parallel](const std::string& query) {
+    auto numberOfTasks = [&parallel, &query](bool inParallel) {
+      size_t before = *parallel.numberOfTasks_;
+      exportQuery(parallel.qec_, query, csv, inParallel);
+      return *parallel.numberOfTasks_ - before;
+    };
+    size_t sequential = numberOfTasks(false);
+    return numberOfTasks(true) - sequential;
+  };
+  EXPECT_EQ(numberOfExportTasks(orderedScan), 3);
+  EXPECT_EQ(numberOfExportTasks(
+                absl::StrCat(orderedScan, " LIMIT ", maxNumberOfRowsPerChunk)),
+            0);
+  EXPECT_EQ(numberOfExportTasks(absl::StrCat(orderedScan, " LIMIT ",
+                                             maxNumberOfRowsPerChunk + 1)),
+            2);
+
   // The header line plus one line per subject.
   EXPECT_EQ(
       ql::ranges::count(
@@ -651,7 +715,8 @@ TEST(ExportQueryExecutionTrees, ParallelCsvExportCancellationAndEarlyStop) {
   }
 
   // Stop after the first batch; destroying the generator stops the chunks in
-  // flight and waits for them.
+  // flight and waits for them (see `AsyncTransformView`'s test
+  // `stopFlagIsSetOnDestruction`).
   {
     auto [qet, generator] =
         startExport(std::make_shared<ad_utility::CancellationHandle<>>());
@@ -666,7 +731,7 @@ TEST(ExportQueryExecutionTrees, ParallelCsvExportCancellationAndEarlyStop) {
 // read from the text index by the workers) gives the same output as the
 // sequential export.
 TEST(ExportQueryExecutionTrees, ParallelTsvExportOfTextRecords) {
-  constexpr size_t numberOfTextRecords = maxRowsPerChunk + 808;
+  constexpr size_t numberOfTextRecords = maxNumberOfRowsPerChunk + 808;
   std::string wordsFile;
   std::string docsFile;
   for (size_t i = 1; i <= numberOfTextRecords; ++i) {
