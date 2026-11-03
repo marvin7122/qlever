@@ -527,6 +527,18 @@ TEST(FormatTriple, BorrowedTermsAreFormattedLikeOwnedTerms) {
 }
 
 // _____________________________________________________________________________
+// `appendFormattedTriple` appends to what `out` already holds.
+TEST(AppendFormattedTriple, AppendsToTheString) {
+  const EvaluatedTriple triple{makeTerm("<s>"), makeTerm("<p>"),
+                               makeTerm("1.5", XSD_DECIMAL_TYPE)};
+  std::string out = "before\n";
+  appendFormattedTriple(out, triple, ad_utility::MediaType::turtle);
+  appendFormattedTriple(out, triple, ad_utility::MediaType::ntriples);
+  EXPECT_EQ(out, absl::StrCat("before\n<s> <p> 1.5 .\n<s> <p> \"1.5\"^^<",
+                              XSD_DECIMAL_TYPE, "> .\n"));
+}
+
+// _____________________________________________________________________________
 TEST(CreateStringTriple, ReturnsFormattedTerms) {
   auto triple = EvaluatedTriple{makeTerm("<http://s>"), makeTerm("<http://p>"),
                                 makeTerm("<http://o>")};

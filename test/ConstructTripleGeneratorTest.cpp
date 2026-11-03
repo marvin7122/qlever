@@ -6,6 +6,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 #include <gmock/gmock.h>
 
 #include "./util/IdTableHelpers.h"
@@ -480,6 +482,81 @@ INSTANTIATE_TEST_SUITE_P(
         FormattedTriplesParam{ad_utility::MediaType::turtle, "<s> <p> <o> .\n"},
         FormattedTriplesParam{ad_utility::MediaType::csv, "<s>,<p>,<o>\n"},
         FormattedTriplesParam{ad_utility::MediaType::tsv, "<s>\t<p>\t<o>\n"}));
+
+// The formatted triples of several batches come in chunks of many triples, and
+// their concatenation is byte for byte the serialization of each triple, for
+// IRIs and literals of the vocabulary (viewed in the batch-lookup results,
+// also from the `IdCache` after their batch), `LocalVocab` literals (one of
+// which is escaped), integers (typed in N-Triples), and UNDEF (no triple).
+TEST_F(ConstructTripleGeneratorTest, formattedChunksAreTheSerializedTriples) {
+  // Five of six rows yield a triple of at least 13 bytes (`<q> <p> 42 .\n`),
+  // so these rows yield more than two chunks (and span 17 batches).
+  constexpr size_t numberOfRows =
+      ConstructTripleGenerator::FORMATTED_CHUNK_BYTES / 4 + 7;
+  LocalVocab localVocab;
+  const auto& context = qec_->getLocalVocabContext();
+  auto localLiteral = [&localVocab, &context](const std::string& content) {
+    return Id::makeFromLocalVocabIndex(localVocab.getIndexAndAddIfNotContained(
+        LocalVocabEntry::literalWithoutQuotes(content, context)));
+  };
+  const Id idHello = ad_utility::testing::makeGetId(index_)("\"hello\"");
+  const std::string intType = absl::StrCat("\"42\"^^<", XSD_INT_TYPE, ">");
+  // Each object together with its serialization in Turtle and N-Triples
+  // (`std::nullopt` for UNDEF, which yields no triple).
+  struct Object {
+    Id id_;
+    std::optional<std::string> turtle_;
+    std::optional<std::string> ntriples_;
+  };
+  const std::vector<Object> objects{
+      {idO_, "<o>", "<o>"},
+      {idHello, "\"hello\"", "\"hello\""},
+      {localLiteral("local"), "\"local\"", "\"local\""},
+      {localLiteral("line\nbreak"), "\"line\\nbreak\"", "\"line\\nbreak\""},
+      {Id::makeFromInt(42), "42", intType},
+      {U, std::nullopt, std::nullopt}};
+
+  std::vector<std::vector<IntOrId>> rows;
+  std::string expectedTurtle;
+  std::string expectedNTriples;
+  for (size_t i = 0; i < numberOfRows; ++i) {
+    const bool isS = i % 3 != 0;
+    const Object& object = objects.at(i % objects.size());
+    rows.push_back({isS ? idS_ : idQ_, object.id_});
+    if (object.turtle_.has_value()) {
+      const std::string_view subject = isS ? "<s>" : "<q>";
+      absl::StrAppend(&expectedTurtle, subject, " <p> ", object.turtle_.value(),
+                      " .\n");
+      absl::StrAppend(&expectedNTriples, subject, " <p> ",
+                      object.ntriples_.value(), " .\n");
+    }
+  }
+  auto result = std::make_shared<const Result>(makeIdTableFromVector(rows),
+                                               std::vector<ColumnIndex>{},
+                                               std::move(localVocab));
+  auto templateTriples = oneTriple(Variable{"?s"}, iriV("<p>"), Variable{"?o"});
+  VariableToColumnMap varMap;
+  varMap[Variable{"?s"}] = makeAlwaysDefinedColumn(0);
+  varMap[Variable{"?o"}] = makePossiblyUndefinedColumn(1);
+
+  for (const auto& [mediaType, expected] :
+       {std::pair{ad_utility::MediaType::turtle, expectedTurtle},
+        std::pair{ad_utility::MediaType::ntriples, expectedNTriples}}) {
+    const auto chunks =
+        collectFormatted(ConstructTripleGenerator::generateFormattedTriples(
+            templateTriples, varMap,
+            singleTableRange(makeTableWithRange(*result, 0, numberOfRows)), 0,
+            mediaType, makeConfig()));
+    EXPECT_EQ(absl::StrJoin(chunks, ""), expected);
+    // More than one chunk, each but the last at least the chunk size.
+    ASSERT_GT(chunks.size(), 1u);
+    for (size_t i = 0; i + 1 < chunks.size(); ++i) {
+      EXPECT_GE(chunks[i].size(),
+                ConstructTripleGenerator::FORMATTED_CHUNK_BYTES);
+    }
+    EXPECT_FALSE(chunks.back().empty());
+  }
+}
 
 // Only turtle, csv, and tsv are supported. Any other media type triggers a
 // contract check failure when the first triple is pulled from the range.

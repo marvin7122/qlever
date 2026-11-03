@@ -155,11 +155,26 @@ ConstructTripleGenerator::generateFormattedTriples(
       evaluateTables(templateTriples, variableColumns, std::move(rowIndices),
                      rowOffset, config);
 
-  auto transformer = [mediaType](const EvaluatedTriple& triple) {
-    return formatTriple(triple, mediaType);
-  };
-  return InputRangeTypeErased(std::move(evaluatedTriples) |
-                              ql::views::transform(transformer));
+  // Append the formatted triples to one string until it holds at least
+  // `FORMATTED_CHUNK_BYTES`, instead of one string per triple.
+  return InputRangeTypeErased<std::string>{
+      ad_utility::InputRangeFromGetCallable{
+          [triples = std::move(evaluatedTriples), mediaType,
+           exhausted = false]() mutable -> std::optional<std::string> {
+            std::string chunk;
+            while (!exhausted && chunk.size() < FORMATTED_CHUNK_BYTES) {
+              auto triple = triples.get();
+              if (!triple.has_value()) {
+                exhausted = true;
+                break;
+              }
+              appendFormattedTriple(chunk, triple.value(), mediaType);
+            }
+            if (chunk.empty()) {
+              return std::nullopt;
+            }
+            return chunk;
+          }}};
 }
 
 //______________________________________________________________________________
