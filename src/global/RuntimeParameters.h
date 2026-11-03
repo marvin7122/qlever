@@ -255,6 +255,13 @@ struct RuntimeParameters {
   // particular the computation of cache keys) when caching is not required.
   Bool disableCaching_{false, "disable-caching"};
 
+  // Prefer the io_uring backend for the batch managers of
+  // `VocabularyOnDisk::lookupBatch` (see `makeBatchManager`). Read when a
+  // vocabulary is opened. `false` selects the synchronous backend; `true`
+  // selects io_uring, unless it is not compiled in or its setup fails at
+  // runtime, in which case the synchronous backend is used as well.
+  Bool vocabularyPreferIoUring_{true, "vocabulary-prefer-io-uring"};
+
   // The maximal number of blocks per permutation that are queued for or
   // currently being compressed and written (see
   // `CompressedRelationWriter::makeBlockWriteQueue`). Each of them is held in
