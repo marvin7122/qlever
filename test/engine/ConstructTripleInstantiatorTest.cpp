@@ -37,8 +37,9 @@ EvaluatedTerm makeTerm(std::string str, const char* type = nullptr) {
 static constexpr auto matchesEvaluatedTerm = [](const auto& str,
                                                 const char* type) {
   return ::testing::Pointee(::testing::AllOf(
-      AD_FIELD(EvaluatedTermData, rdfTermString_, std::string(str)),
-      AD_FIELD(EvaluatedTermData, rdfTermDataType_, ::testing::Eq(type))));
+      AD_PROPERTY(EvaluatedTermData, rdfTermString,
+                  ::testing::Eq(std::string_view{str})),
+      AD_PROPERTY(EvaluatedTermData, rdfTermDataType, ::testing::Eq(type))));
 };
 
 // Matches an `EvaluatedTriple` by applying `matchesEvaluatedTerm` with
@@ -330,10 +331,10 @@ static constexpr auto testTermFormatting =
 
 // _____________________________________________________________________________
 TEST(FormatTerm, dataTypeNull) {
-  // By the definition of `EvaluatedTermData`, if `rdfTermDataType_`==`nullptr`,
-  // then `rdfTermString_` is expected to already hold the value of the rdf term
-  // string include the complete serialized form (including the appended
-  // datatype string via ^^).
+  // By the definition of `EvaluatedTermData`, if `rdfTermDataType()` is
+  // `nullptr`, then `rdfTermString()` is expected to already hold the value of
+  // the rdf term string include the complete serialized form (including the
+  // appended datatype string via ^^).
 
   // Setting `includeDataType` = true instructs `formatTerm` to append the
   // datataype string (which is contained in `rdfTermDataType`) to the string
@@ -486,6 +487,44 @@ TEST(FormatTriple, UnsupportedMediaType) {
 // ============================================================================
 //                       TESTS FOR `createStringTriple`
 // ============================================================================
+
+// _____________________________________________________________________________
+// A term that views a word of a batch-lookup result is formatted like a term
+// that owns the same string, in every format and position, and stays valid
+// when the other owners of the result are gone.
+TEST(FormatTriple, BorrowedTermsAreFormattedLikeOwnedTerms) {
+  const std::vector<std::string> words{"<http://borrowed>",
+                                       "\"line\nbreak\"@en",
+                                       "\"needs \\\\ escaping, \ttab\""};
+  std::vector<EvaluatedTerm> borrowed;
+  {
+    VocabBatchLookupResult lookupResult =
+        StringVectorVocabBatchLookupData::fromWords(words);
+    for (size_t i = 0; i < words.size(); ++i) {
+      borrowed.push_back(std::make_shared<const EvaluatedTermData>(
+          BorrowedVocabWord{lookupResult, i}));
+    }
+  }
+  std::vector<EvaluatedTerm> owned;
+  for (const auto& word : words) {
+    owned.push_back(makeTerm(word));
+  }
+  const std::vector<EvaluatedTerm> others{
+      makeTerm("<http://s>"), makeTerm("_:b0"), makeTerm("42", XSD_INT_TYPE),
+      makeTerm("NaN", XSD_DOUBLE_TYPE)};
+  using enum ad_utility::MediaType;
+  for (const auto format : {turtle, ntriples, csv, tsv}) {
+    for (size_t i = 0; i < words.size(); ++i) {
+      ASSERT_TRUE(borrowed.at(i)->isBorrowed());
+      for (const auto& other : others) {
+        EXPECT_EQ(formatTriple({borrowed.at(i), other, borrowed.at(i)}, format),
+                  formatTriple({owned.at(i), other, owned.at(i)}, format));
+        EXPECT_EQ(formatTriple({other, borrowed.at(i), other}, format),
+                  formatTriple({other, owned.at(i), other}, format));
+      }
+    }
+  }
+}
 
 // _____________________________________________________________________________
 TEST(CreateStringTriple, ReturnsFormattedTerms) {

@@ -301,6 +301,51 @@ TEST(ExportIds, idsToStringAndTypeBatchMatchesIndividualLookups) {
 }
 
 // _____________________________________________________________________________
+// `idsToStringAndTypeOrBorrowedWord` yields the same strings as
+// `idsToStringAndType`, and borrows exactly the words of the vocabulary that
+// are not blank-node IRIs.
+TEST(ExportIds, idsToStringAndTypeOrBorrowedWordMatchesIdsToStringAndType) {
+  const std::string blankNodeIri =
+      absl::StrCat(QLEVER_INTERNAL_BLANK_NODE_IRI_PREFIX, "_:b0>");
+  auto qec = ad_utility::testing::getQec(absl::StrCat(
+      "<s> <p> <o> . <s> <q> \"hello\"@en . ", blankNodeIri, " <p> 42 ."));
+  const Index& index = qec->getIndex();
+  auto getId = ad_utility::testing::makeGetId(index);
+  LocalVocab localVocab;
+  const Id idLocal =
+      Id::makeFromLocalVocabIndex(localVocab.getIndexAndAddIfNotContained(
+          LocalVocabEntry::literalWithoutQuotes("local",
+                                                qec->getLocalVocabContext())));
+
+  std::vector<Id> ids{getId("<s>"),          getId("<p>"),        getId("<o>"),
+                      getId("\"hello\"@en"), getId(blankNodeIri), idLocal,
+                      Id::makeFromInt(42),   Id::makeUndefined()};
+  ql::ranges::sort(ids);
+  const auto expected =
+      ql::exportIds::idsToStringAndType(index, ids, localVocab);
+  const auto actual =
+      ql::exportIds::idsToStringAndTypeOrBorrowedWord(index, ids, localVocab);
+
+  ASSERT_EQ(actual.size(), ids.size());
+  for (size_t i = 0; i < ids.size(); ++i) {
+    ASSERT_EQ(actual[i].has_value(), expected[i].has_value()) << i;
+    if (!actual[i].has_value()) {
+      continue;
+    }
+    const bool isVocabWord = ids[i].getDatatype() == Datatype::VocabIndex &&
+                             expected[i].value().first != "_:b0";
+    const auto* borrowed = std::get_if<BorrowedVocabWord>(&actual[i].value());
+    ASSERT_EQ(borrowed != nullptr, isVocabWord) << i;
+    if (borrowed != nullptr) {
+      EXPECT_EQ(borrowed->word(), expected[i].value().first) << i;
+      EXPECT_EQ(expected[i].value().second, nullptr) << i;
+    } else {
+      EXPECT_EQ(std::get<0>(actual[i].value()), expected[i].value()) << i;
+    }
+  }
+}
+
+// _____________________________________________________________________________
 // Empty span returns an empty vector.
 TEST(ExportIds, idsToStringAndTypeEmptyInput) {
   auto qec = ad_utility::testing::getQec("<s> <p> <o>");

@@ -33,6 +33,25 @@
 // The result type for a batch of vocabulary lookups.
 using VocabBatchLookupResult = std::shared_ptr<ql::span<std::string_view>>;
 
+// One word of a `VocabBatchLookupResult` that is viewed instead of copied.
+// This object shares the ownership of the result, so `word()` stays valid as
+// long as this object lives.
+class BorrowedVocabWord {
+ private:
+  std::string_view word_;
+  VocabBatchLookupResult owner_;
+
+ public:
+  // The word at position `i` of `owner`.
+  BorrowedVocabWord(VocabBatchLookupResult owner, size_t i)
+      : owner_{std::move(owner)} {
+    AD_CONTRACT_CHECK(owner_ != nullptr && i < owner_->size());
+    word_ = (*owner_)[i];
+  }
+
+  std::string_view word() const { return word_; }
+};
+
 // Type-erased input range of batches (each batch consists of a vector of
 // indices into the underlying Vocabulary, specifying which terms' string
 // representations need to be read from the underlying Vocabulary).
