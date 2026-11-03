@@ -12,6 +12,7 @@
 
 #include "backports/algorithm.h"
 #include "util/Exception.h"
+#include "util/io_uring/IoUringManager.h"
 
 namespace ad_utility::vocabulary {
 

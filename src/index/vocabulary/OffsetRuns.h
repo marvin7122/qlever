@@ -17,12 +17,17 @@
 
 #include "backports/span.h"
 #include "backports/three_way_comparison.h"
-#include "util/io_uring/IoUringManager.h"
 
 // Reading the `.offsets` file of a `VocabularyOnDisk` for a batch of indices.
 // The file stores one `uint64_t` per word (the offset of its first byte in the
 // words file) followed by the end offset of the last word, so the word of index
 // `i` is bounded by the entries `i` and `i + 1`.
+
+namespace ad_utility {
+// Declared in `util/io_uring/IoUringManager.h`, which this header does not need
+// to include for a reference parameter.
+class BatchManagerBase;
+}  // namespace ad_utility
 
 namespace ad_utility::vocabulary {
 
