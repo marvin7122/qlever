@@ -107,7 +107,9 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
   // Serve the reads of the batch that are in the page cache and pass the others
   // on to the decorated policy. If all reads are served, the decorated policy
   // gets an empty batch, so `Policy` must accept `addBatch` with no reads
-  // (`ReadPolicyConcept` does not require that). The arguments have the
+  // (`ReadPolicyConcept` cannot express that; the test
+  // `IoUringManagerTest.emptyBatchHasNothingToWaitFor` checks it for
+  // `SyncIoPolicy` and `IoUringPolicy`). The arguments have the
   // contract of `readPageCacheHits` and `Policy::addBatch`.
   void addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
