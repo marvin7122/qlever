@@ -114,7 +114,10 @@ class BatchManagerPool : public NoCopyNoMove {
 // `preferIoUring`. This only has an effect before the pool exists. Return
 // `true` if the configuration was set, or if the pool already exists with
 // exactly this configuration. Return `false` if the pool already exists with
-// a different one. Thread-safe.
+// a different one. Thread-safe, but a configuration that was set can still be
+// replaced by another call before the pool exists; call this again after
+// `globalBatchManagerPool()` to confirm the configuration of the pool, as
+// `setUpGlobalBatchManagerPool` does.
 bool trySetGlobalBatchManagerPoolConfig(size_t numManagers, bool preferIoUring);
 
 // Return the process-wide pool, creating it on the first call. Thread-safe.

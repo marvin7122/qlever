@@ -127,8 +127,12 @@ BatchManagerPool& globalBatchManagerPool() {
 
 // _____________________________________________________________________________
 void setUpGlobalBatchManagerPool(size_t numManagers, bool preferIoUring) {
+  trySetGlobalBatchManagerPoolConfig(numManagers, preferIoUring);
+  const auto& pool = globalBatchManagerPool();
+  // Now that the pool exists, the call reports whether the pool has this
+  // configuration, also if another thread changed the configuration between
+  // the first call and the creation.
   if (!trySetGlobalBatchManagerPoolConfig(numManagers, preferIoUring)) {
-    const auto& pool = globalBatchManagerPool();
     AD_LOG_WARN << "The pool of batch I/O managers already exists with "
                 << pool.size() << " managers (io_uring "
                 << (pool.usesIoUring() ? "used" : "not used")
@@ -137,7 +141,6 @@ void setUpGlobalBatchManagerPool(size_t numManagers, bool preferIoUring) {
                 << (preferIoUring ? "preferred" : "not preferred")
                 << ") is ignored" << std::endl;
   }
-  const auto& pool = globalBatchManagerPool();
   AD_LOG_INFO << "Batched vocabulary reads use " << pool.size()
               << " I/O managers ("
               << (pool.usesIoUring() ? "io_uring" : "synchronous pread") << ")"

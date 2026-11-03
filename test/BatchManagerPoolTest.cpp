@@ -220,23 +220,32 @@ TEST(BatchManagerPool, zeroManagersAreRejected) {
 
 // The process-wide pool takes its configuration from the calls before its
 // creation and keeps it afterwards, when it rejects another configuration.
-// NOTE: The process-wide pool cannot be reset, so this has to stay the only
-// test in this binary that uses it.
+// NOTE: The process-wide pool cannot be reset. When this test runs in its own
+// binary, it is the first user of the pool and creates it with two synchronous
+// managers. In the single test binary (`SINGLE_TEST_BINARY=ON`) the pool
+// already exists with the default configuration, so only the assertions that
+// hold for an existing pool are made.
 TEST(BatchManagerPool, globalPoolIsConfiguredBeforeItsCreation) {
-  EXPECT_TRUE(ad_utility::trySetGlobalBatchManagerPoolConfig(
-      2, /*preferIoUring=*/false));
+  const bool configured = ad_utility::trySetGlobalBatchManagerPoolConfig(
+      2, /*preferIoUring=*/false);
   auto& pool = ad_utility::globalBatchManagerPool();
-  EXPECT_EQ(pool.size(), 2u);
-  EXPECT_FALSE(pool.usesIoUring());
   EXPECT_EQ(&pool, &ad_utility::globalBatchManagerPool());
-  EXPECT_TRUE(ad_utility::trySetGlobalBatchManagerPoolConfig(
-      2, /*preferIoUring=*/false));
+  if (configured) {
+    EXPECT_EQ(pool.size(), 2u);
+    EXPECT_FALSE(pool.usesIoUring());
+    EXPECT_TRUE(ad_utility::trySetGlobalBatchManagerPoolConfig(
+        2, /*preferIoUring=*/false));
+    EXPECT_FALSE(ad_utility::trySetGlobalBatchManagerPoolConfig(
+        2, /*preferIoUring=*/true));
+  }
+  const size_t size = pool.size();
+  const bool usesIoUring = pool.usesIoUring();
   EXPECT_FALSE(ad_utility::trySetGlobalBatchManagerPoolConfig(
-      3, /*preferIoUring=*/false));
+      size + 1, /*preferIoUring=*/false));
   EXPECT_FALSE(ad_utility::trySetGlobalBatchManagerPoolConfig(
-      2, /*preferIoUring=*/true));
-  EXPECT_EQ(pool.size(), 2u);
-  EXPECT_FALSE(pool.usesIoUring());
+      size + 1, /*preferIoUring=*/true));
+  EXPECT_EQ(pool.size(), size);
+  EXPECT_EQ(pool.usesIoUring(), usesIoUring);
   EXPECT_THROW(ad_utility::trySetGlobalBatchManagerPoolConfig(
                    0, /*preferIoUring=*/false),
                ad_utility::Exception);
