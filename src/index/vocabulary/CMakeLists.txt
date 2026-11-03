@@ -10,8 +10,10 @@
 add_library(vocabulary VocabularyInMemory.h VocabularyInMemory.cpp
                        VocabularyInMemoryBinSearch.cpp VocabularyInternalExternal.cpp
                        BuildFilteredVocabulary.cpp
-                       VocabularyOnDisk.cpp SplitVocabulary.cpp GeoVocabulary.cpp PolymorphicVocabulary.cpp
+                       VocabularyOnDisk.cpp OffsetRuns.cpp SplitVocabulary.cpp GeoVocabulary.cpp PolymorphicVocabulary.cpp
                        Vocabulary.cpp EncodedIriManager.cpp
                        EncodedIriPattern.cpp PrefixHeuristic.cpp
                        SecondaryVocabulary.cpp)
-qlever_target_link_libraries(vocabulary qlever_util rdfTypes)
+# The vocabulary library only needs the utilities, the RDF types and the
+# globals (runtime parameters); notably not the `index` library.
+qlever_target_link_libraries(vocabulary qlever_util rdfTypes global)

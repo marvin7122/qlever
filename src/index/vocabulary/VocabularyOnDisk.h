@@ -1,6 +1,12 @@
-// Copyright 2016, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Authors: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2016 - 2026, The QLever Authors, in particular:
+//
+// 2016 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
@@ -10,16 +16,17 @@
 #include <string_view>
 #include <vector>
 
+#include "index/vocabulary/OffsetRuns.h"
 #include "index/vocabulary/VocabularyBinarySearchMixin.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Algorithm.h"
 #include "util/File.h"
 #include "util/Generator.h"
-#include "util/IoUringManager.h"
 #include "util/Iterators.h"
 #include "util/Serializer/Serializer.h"
 #include "util/ThreadSafeQueue.h"
 #include "util/UninitializedAllocator.h"
+#include "util/io_uring/IoUringManager.h"
 
 // On-disk vocabulary of strings. Each entry is a pair of <ID, String>. The IDs
 // are ascending, but not (necessarily) contiguous. If the strings are sorted,
@@ -223,21 +230,12 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // deduced, so this function can only be used within `VocabularyOnDisk.cpp`.
   auto chunkToWords(ql::span<const uint64_t> offsets) const;
 
-  // A word's start offset and the start offset of the following word (which
-  // marks the end of the word), stored contiguously in the `.offsets` file.
-  struct OffsetPair {
-    uint64_t offset_;
-    uint64_t nextOffset_;
-  };
+  using OffsetPair = ad_utility::vocabulary::OffsetPair;
 
-  // Phase 1 of `lookupBatch`: for each requested index, read its `OffsetPair`
-  // (16 bytes) from the `.offsets` file in a single batched read via `manager`.
-  std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
-                                          ql::span<const size_t> indices) const;
-
-  // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1, read the
-  // string data from `file_` into one contiguous buffer in a single batched
-  // read via `manager`, and return it as a `VocabBatchLookupResult`.
+  // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1
+  // (`ad_utility::vocabulary::readOffsetPairs`), read the string data from
+  // `file_` into one contiguous buffer in a single batched read via `manager`,
+  // and return it as a `VocabBatchLookupResult`.
   VocabBatchLookupResult readStrings(
       ad_utility::BatchManagerBase& manager,
       ql::span<const OffsetPair> offsetPairs) const;

@@ -1,6 +1,12 @@
-// Copyright 2022, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "index/vocabulary/VocabularyOnDisk.h"
 
@@ -12,6 +18,7 @@
 #include <atomic>
 
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
@@ -271,28 +278,6 @@ VocabularyScanRange VocabularyOnDisk::scanAll() const {
 }
 
 // _____________________________________________________________________________
-std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
-    ad_utility::BatchManagerBase& manager,
-    ql::span<const size_t> indices) const {
-  // For each requested index `i`, read its offset together with the next offset
-  // (which bounds the string) as one 16-byte pair from `.offsets`.
-  const size_t numIndices = indices.size();
-  std::vector<OffsetPair> offsetPairs(numIndices);
-  std::vector<size_t> sizes(numIndices, sizeof(OffsetPair));
-  std::vector<uint64_t> fileOffsets(numIndices);
-  std::vector<char*> targets(numIndices);
-  for (auto&& [fileOffset, index, target, offsetPair] :
-       ::ranges::views::zip(fileOffsets, indices, targets, offsetPairs)) {
-    AD_CONTRACT_CHECK(index < size());
-    fileOffset = index * sizeof(uint64_t);
-    target = reinterpret_cast<char*>(&offsetPair);
-  }
-  manager.wait(
-      manager.addBatch(offsetsFile_.fd(), sizes, fileOffsets, targets));
-  return offsetPairs;
-}
-
-// _____________________________________________________________________________
 VocabBatchLookupResult VocabularyOnDisk::readStrings(
     ad_utility::BatchManagerBase& manager,
     ql::span<const OffsetPair> offsetPairs) const {
@@ -342,7 +327,12 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
         "`VocabularyOnDisk::lookupBatch`");
   }};
 
-  auto offsetPairs = readOffsetPairs(*manager, indices);
+  // The page-cache fast path belongs to the manager; the runtime parameter can
+  // change between two lookups.
+  manager->setPageCacheFastPath(
+      getRuntimeParameter<&RuntimeParameters::vocabularyPageCacheFastPath_>());
+  auto offsetPairs = ad_utility::vocabulary::readOffsetPairs(
+      *manager, offsetsFile_.fd(), indices, size());
   return readStrings(*manager, offsetPairs);
 }
 
@@ -443,7 +433,12 @@ void VocabularyOnDisk::open(const std::string& filename) {
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
   bool preferIoUring = true;
-  for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
+  auto makeManager = [&preferIoUring]() {
+    return ad_utility::makeBatchManager(preferIoUring);
+  };
+  for (auto& manager :
+       ::ranges::views::generate_n(makeManager, NUM_VOCAB_BATCH_IO_MANAGERS) |
+           ::ranges::to_vector) {
+    ioManagers_->push(std::move(manager));
   }
 }
