@@ -86,7 +86,9 @@ constexpr auto areAdjacent = [](const auto& previous, const auto& next) {
 // True if a page-cache read that failed with `errorCode` will fail for every
 // later run as well: the kernel or file system rejects `RWF_NOWAIT`
 // (`EOPNOTSUPP`), `preadv2` does not exist (`ENOSYS`, Linux < 4.6), or a
-// seccomp filter forbids it (`ENOSYS` or `EPERM`).
+// seccomp filter forbids it (`ENOSYS` or `EPERM`). `EAGAIN` is the normal
+// miss and is always retried, also on a file system that answers every
+// `RWF_NOWAIT` read with it; there, each run costs one failed call.
 bool failsForGood(int errorCode) {
   return errorCode == EOPNOTSUPP || errorCode == ENOSYS || errorCode == EPERM;
 }
