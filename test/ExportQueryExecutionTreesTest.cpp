@@ -145,13 +145,10 @@ struct TestCaseConstructQuery {
   size_t numTriples = 1;
 };
 
-// Run a single test case for a SELECT query.
-void runSelectQueryTestCase(
-    const TestCaseSelectQuery& testCase, bool useTextIndex = false,
-    ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
-  auto cleanup = setRuntimeParameterForTest<
-      &RuntimeParameters::sparqlResultsJsonWithTime_>(false);
-  auto trace = generateLocationTrace(l, "runSelectQueryTestCase");
+// Run a single test case for a SELECT query with the current runtime
+// parameters.
+void runSelectQueryTestCaseImpl(const TestCaseSelectQuery& testCase,
+                                bool useTextIndex) {
   using enum ad_utility::MediaType;
   EXPECT_EQ(
       runQueryStreamableResult(testCase.kg, testCase.query, tsv, useTextIndex),
@@ -186,6 +183,36 @@ void runSelectQueryTestCase(
     ASSERT_EQ(resultJson["resultSizeTotal"], testCase.resultSize);
     ASSERT_EQ(resultJson["resultSizeExported"],
               std::min(exportLimit, testCase.resultSize));
+  }
+}
+
+// Run a single test case for a SELECT query. The test case is run with four
+// configurations of the term cache of the SELECT export (see
+// `ql::exportIds::IdToStringAndTypeCache`), which must all give the same
+// result: the default, disabled, a capacity of one (every new term evicts the
+// previous one), and switched off after the first lookup.
+void runSelectQueryTestCase(
+    const TestCaseSelectQuery& testCase, bool useTextIndex = false,
+    ad_utility::source_location l = AD_CURRENT_SOURCE_LOC()) {
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::sparqlResultsJsonWithTime_>(false);
+  auto trace = generateLocationTrace(l, "runSelectQueryTestCase");
+  using Config = ql::exportIds::IdToStringAndTypeCache::Config;
+  for (const Config& config : {Config{}, Config{0, 0, 0.0}, Config{1, 0, 0.0},
+                               Config{1 << 16, 1, 1.0}}) {
+    auto traceConfig = generateLocationTrace(
+        AD_CURRENT_SOURCE_LOC(),
+        absl::StrCat("term cache capacity ", config.capacity_, ", window ",
+                     config.windowSize_, ", minimal hit rate ",
+                     config.minHitRate_));
+    auto capacity = setRuntimeParameterForTest<
+        &RuntimeParameters::selectExportTermCacheCapacity_>(config.capacity_);
+    auto window = setRuntimeParameterForTest<
+        &RuntimeParameters::selectExportTermCacheWindow_>(config.windowSize_);
+    auto minHitRate = setRuntimeParameterForTest<
+        &RuntimeParameters::selectExportTermCacheMinHitRate_>(
+        config.minHitRate_);
+    runSelectQueryTestCaseImpl(testCase, useTextIndex);
   }
 }
 
