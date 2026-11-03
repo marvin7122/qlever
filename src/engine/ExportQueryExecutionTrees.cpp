@@ -13,7 +13,6 @@
 
 #include "engine/ExportQueryExecutionTrees.h"
 
-#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 
@@ -114,7 +113,6 @@ template <ad_utility::MediaType format>
 auto idToCsvOrTsvField(const Index& index, Id id,
                        const LocalVocab& localVocab) {
   using enum ad_utility::MediaType;
-  static_assert(format == csv || format == tsv);
   constexpr auto& escapeFunction =
       format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
   return ql::exportIds::idToStringAndType<format == csv>(index, id, localVocab,
@@ -132,7 +130,7 @@ ExportQueryExecutionTrees::csvOrTsvRows(
     const TableConstRefWithVocab& table,
     ql::ranges::iota_view<uint64_t, uint64_t> rows,
     const ad_utility::AllocatorWithLimit<char>& allocator,
-    const ad_utility::CancellationHandle<>& cancellationHandle,
+    ad_utility::CancellationHandle<>& cancellationHandle,
     const std::atomic<bool>& stop) {
   static constexpr char separator = format == tsv ? '\t' : ',';
   CsvOrTsvChunk lines{allocator};
@@ -166,14 +164,14 @@ ExportQueryExecutionTrees::csvOrTsvRows<ad_utility::MediaType::csv>(
     ql::span<const std::optional<QueryExecutionTree::VariableAndColumnIndex>>,
     const TableConstRefWithVocab&, ql::ranges::iota_view<uint64_t, uint64_t>,
     const ad_utility::AllocatorWithLimit<char>&,
-    const ad_utility::CancellationHandle<>&, const std::atomic<bool>&);
+    ad_utility::CancellationHandle<>&, const std::atomic<bool>&);
 template ExportQueryExecutionTrees::CsvOrTsvChunk
 ExportQueryExecutionTrees::csvOrTsvRows<ad_utility::MediaType::tsv>(
     const Index&,
     ql::span<const std::optional<QueryExecutionTree::VariableAndColumnIndex>>,
     const TableConstRefWithVocab&, ql::ranges::iota_view<uint64_t, uint64_t>,
     const ad_utility::AllocatorWithLimit<char>&,
-    const ad_utility::CancellationHandle<>&, const std::atomic<bool>&);
+    ad_utility::CancellationHandle<>&, const std::atomic<bool>&);
 
 // __________________________________________________________________________
 InputRangeTypeErased<TableConstRefWithVocab>
@@ -640,25 +638,25 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
           MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK;
       const uint64_t numberOfRowsPerChunk =
           (numberOfRows + numberOfChunks - 1) / numberOfChunks;
-      auto chunks =
-          ql::views::iota(uint64_t{0}, numberOfChunks) |
-          ql::views::transform(
-              [firstRow, endRow, numberOfRowsPerChunk](uint64_t chunkIndex) {
-                uint64_t begin = firstRow + chunkIndex * numberOfRowsPerChunk;
-                return ql::ranges::iota_view<uint64_t, uint64_t>{
-                    begin, std::min(begin + numberOfRowsPerChunk, endRow)};
-              });
-      // Set when this block is left, also when the consumer destroys the
-      // export early (for example, after a client disconnect), so that the
-      // chunks that are still in flight stop instead of serializing rows that
+      // The chunks are stored, so that the view moves them into its tasks
+      // (the elements of a `transform_view` are temporaries).
+      std::vector<ql::ranges::iota_view<uint64_t, uint64_t>> chunks;
+      chunks.reserve(numberOfChunks);
+      for (uint64_t begin = firstRow; begin < endRow;
+           begin += numberOfRowsPerChunk) {
+        chunks.emplace_back(begin,
+                            std::min(begin + numberOfRowsPerChunk, endRow));
+      }
+      // When the consumer leaves this block early (for example, after a client
+      // disconnect), the view sets the `stop` flag of the chunks that are
+      // still in flight, so that they stop instead of serializing rows that
       // nobody reads. The destructor of the view waits for them.
-      std::atomic<bool> stop = false;
       auto serializeChunk =
           [&qec, &selectedColumnIndices, &table = pair, &cancellationHandle,
-           &stop,
            allocator =
                ad_utility::AllocatorWithLimit<char>{qec.getAllocator()}](
-              ql::ranges::iota_view<uint64_t, uint64_t> rows) {
+              ql::ranges::iota_view<uint64_t, uint64_t> rows,
+              const std::atomic<bool>& stop) {
             return csvOrTsvRows<format>(qec.getIndex(), selectedColumnIndices,
                                         table, rows, allocator,
                                         *cancellationHandle, stop);
@@ -668,10 +666,10 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
       ad_utility::AsyncTransformView serializedChunks{
           std::move(chunks), serializeChunk, maxNumberOfChunksInFlight,
           qec.executor()};
-      // Declared after the view, so that it is destroyed (and sets `stop`)
-      // before the view waits for its tasks.
-      absl::Cleanup stopChunksInFlight = [&stop] { stop = true; };
       for (const CsvOrTsvChunk& serializedChunk : serializedChunks) {
+        // The chunks in flight may have been serialized before a
+        // cancellation, so check it here too.
+        cancellationHandle->throwIfCancelled();
         STREAMABLE_YIELD(std::string_view{serializedChunk});
       }
       continue;

@@ -70,7 +70,9 @@ class ExportQueryExecutionTrees {
 
   // The serialized rows of one chunk of a parallel CSV or TSV export. The
   // memory is allocated with the allocator of the query, so it counts towards
-  // the memory limit of the query.
+  // the `memory-for-queries` budget that all queries share. An allocation that
+  // does not fit first evicts unpinned entries of the query cache and then
+  // fails the export.
   using CsvOrTsvChunk = std::basic_string<char, std::char_traits<char>,
                                           ad_utility::AllocatorWithLimit<char>>;
 
@@ -209,7 +211,7 @@ class ExportQueryExecutionTrees {
       const TableConstRefWithVocab& table,
       ql::ranges::iota_view<uint64_t, uint64_t> rows,
       const ad_utility::AllocatorWithLimit<char>& allocator,
-      const ad_utility::CancellationHandle<>& cancellationHandle,
+      ad_utility::CancellationHandle<>& cancellationHandle,
       const std::atomic<bool>& stop);
 
   // Yield all `IdTables` provided by the given `result`.
