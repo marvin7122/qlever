@@ -30,12 +30,8 @@ namespace ql::exportIds {
 // `idToStringAndType`. The cached strings are post-escaping, so one instance
 // serves a single call site (fixed template arguments and escape function).
 //
-// `Id`s of type `LocalVocabIndex` are never cached: they point into a
-// `LocalVocab` that can be destroyed while the export is still running (lazy
-// results free each block's vocabulary after it is exported), after which the
-// same address, and hence the same `Id`, can denote a different word. All
-// other `Id`s resolve identically for the whole export (the on-disk
-// vocabulary is static, the other datatypes are encoded in the `Id` bits).
+// Only `Id`s for which `canBeCachedForWholeExport` holds are cached (this
+// excludes `LocalVocabIndex`, see there for the reason).
 class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
  public:
   using Value = std::optional<std::pair<std::string, const char*>>;
@@ -112,7 +108,7 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
   // call.
   template <typename Compute>
   const Value& getOrCompute(Id id, Compute compute) {
-    if (id.getDatatype() == Datatype::LocalVocabIndex) {
+    if (!canBeCachedForWholeExport(id)) {
       uncached_ = compute();
       return uncached_;
     }
