@@ -389,6 +389,11 @@ addLinkAndDiscoverTest(ForwardTest)
 
 addLinkAndDiscoverTestNoLibs(CompressorStreamTest Boost::iostreams)
 
+# Not for Emscripten, where the server (the only user) is not built either.
+if (NOT EMSCRIPTEN)
+    addLinkAndDiscoverTestNoLibs(ParallelCompressorStreamTest parallelCompressorStream Boost::iostreams)
+endif ()
+
 addLinkAndDiscoverTestNoLibs(AsyncStreamTest)
 
 addLinkAndDiscoverTest(BitUtilsTest)

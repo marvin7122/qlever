@@ -19,4 +19,12 @@ qlever_target_link_libraries(antlrErrorHandling stringUtils antlr4_umbrella)
 add_library(qlever_util GlobalExecutor.cpp BinaryDiffApplier.cpp RegexSet.cpp ParseableDuration.cpp UnitOfMeasurement.cpp Date.cpp DateYearDuration.cpp Duration.cpp CancellationHandle.cpp LazyJsonParser.cpp BlankNodeManager.cpp IoUringManager.cpp FilesystemHelpers.cpp QueryEventLog.cpp ResourceMonitor.cpp)
 qlever_target_link_libraries(qlever_util antlrErrorHandling s2 pb_util pb_util_geo pb_util_json rdfTypes antlr4_umbrella)
 
+# The parallel compression of HTTP responses, which only the server uses (see
+# `CMakeLists.txt` in `src/engine`). Like the `http` library, it needs
+# coroutines.
+if (NOT EMSCRIPTEN AND NOT REDUCED_FEATURE_SET_FOR_CPP17)
+  add_library(parallelCompressorStream ParallelCompressorStream.cpp)
+  qlever_target_link_libraries(parallelCompressorStream qlever_util ZLIB::ZLIB)
+endif ()
+
 add_subdirectory(metrics)
