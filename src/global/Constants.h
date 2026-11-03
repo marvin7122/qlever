@@ -368,8 +368,9 @@ constexpr inline std::string_view GSP_DIRECT_GRAPH_IDENTIFICATION_PREFIX =
     "http-graph-store";
 
 // The number of batch managers pooled by `VocabularyOnDisk` for batched
-// vocabulary lookups (`lookupBatch`). Each manager owns an io_uring ring; the
-// pool size bounds how many batch lookups can be served concurrently.
+// vocabulary lookups (`lookupBatch`). Each manager owns its I/O backend (an
+// io_uring ring, or synchronous reads, see `makeBatchManager`); the pool size
+// bounds how many batch lookups can be served concurrently.
 constexpr inline size_t NUM_VOCAB_BATCH_IO_MANAGERS = 8;
 
 #endif  // QLEVER_SRC_GLOBAL_CONSTANTS_H

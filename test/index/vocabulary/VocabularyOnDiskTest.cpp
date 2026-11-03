@@ -329,12 +329,18 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
       *vocab, withFastPath, indices);
 }
 
-// The batch-manager backend is chosen when the vocabulary is opened, from
-// the `vocabulary-prefer-io-uring` runtime parameter. With the parameter
-// off, the synchronous backend is used; the lookup results must be the
-// same either way.
+// `VocabularyOnDisk::open` builds its batch managers with the
+// `vocabulary-prefer-io-uring` runtime parameter: with the parameter off they
+// use the synchronous backend, with it on the io_uring backend where io_uring
+// is available. This test checks that the lookups are correct with both
+// settings; which backend `makeBatchManager` builds for a given flag is checked
+// by the `MakeBatchManager` tests in `IoUringManagerTest.cpp`. The page-cache
+// fast path is switched off, because it would serve every read of the small
+// test file, so that no read would reach either backend.
 TEST(VocabularyOnDisk, LookupBatchFollowsThePreferIoUringParameter) {
   std::array<size_t, 8> indices{2, 0, 3, 1, 1, 4, 0, 3};
+  auto resetFastPath = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyPageCacheFastPath_>(false);
   auto resetParameter =
       setRuntimeParameterForTest<&RuntimeParameters::vocabularyPreferIoUring_>(
           false);
