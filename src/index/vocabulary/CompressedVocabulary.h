@@ -39,14 +39,14 @@ CPP_concept IterableVocabulary =
 // A compression wrapper that can decompress a word into reused buffers (see
 // `DecoderMultiplexer::decompressWithScratch`).
 template <typename CompressionWrapper>
-CPP_requires(DecompressesWithScratch_,
+CPP_requires(WrapperDecompressesWithScratch_,
              requires(const CompressionWrapper& wrapper, std::string_view str,
                       FsstDecompressionScratch& scratch)(
                  wrapper.decompressWithScratch(str, size_t{0}, scratch)));
 
 template <typename CompressionWrapper>
-CPP_concept DecompressesWithScratch =
-    CPP_requires_ref(DecompressesWithScratch_, CompressionWrapper);
+CPP_concept WrapperDecompressesWithScratch =
+    CPP_requires_ref(WrapperDecompressesWithScratch_, CompressionWrapper);
 
 }  // namespace detail
 
@@ -184,7 +184,8 @@ class CompressedVocabulary {
       AD_CORRECTNESS_CHECK(compressedWords->size() == indices.size(),
                            "the underlying vocabulary returned a different "
                            "number of words than requested");
-      if constexpr (detail::DecompressesWithScratch<CompressionWrapper>) {
+      if constexpr (detail::WrapperDecompressesWithScratch<
+                        CompressionWrapper>) {
         return decompressBatchIntoArena(*compressedWords, indices);
       } else {
         auto words = ::ranges::to<std::vector<std::string>>(
