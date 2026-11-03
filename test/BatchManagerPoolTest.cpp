@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "util/BatchManagerPool.h"
+#include "util/Exception.h"
 
 using ad_utility::BatchManagerBase;
 using ad_utility::BatchManagerPool;
@@ -34,10 +35,10 @@ struct TempFile {
   explicit TempFile(const std::string& contents) {
     char name[] = "/tmp/batchManagerPoolTestXXXXXX";
     fd_ = mkstemp(name);
-    EXPECT_NE(fd_, -1);
+    AD_CORRECTNESS_CHECK(fd_ != -1);
     name_ = name;
-    EXPECT_EQ(::write(fd_, contents.data(), contents.size()),
-              static_cast<ssize_t>(contents.size()));
+    AD_CORRECTNESS_CHECK(::write(fd_, contents.data(), contents.size()) ==
+                         static_cast<ssize_t>(contents.size()));
   }
   ~TempFile() {
     ::close(fd_);
@@ -46,8 +47,8 @@ struct TempFile {
 };
 
 // Read four bytes at `offset` from the `file` via the `manager`.
-std::string readFour(BatchManagerBase& manager, const TempFile& file,
-                     uint64_t offset) {
+std::string readFourBytesAt(BatchManagerBase& manager, const TempFile& file,
+                            uint64_t offset) {
   std::string target(4, '\0');
   std::array<size_t, 1> numBytes{4};
   std::array<uint64_t, 1> offsets{offset};
@@ -56,7 +57,8 @@ std::string readFour(BatchManagerBase& manager, const TempFile& file,
   return target;
 }
 
-bool isSync(BatchManagerBase& manager) {
+// Return `true` iff the `manager` reads with the synchronous fallback.
+bool usesSyncBackend(BatchManagerBase& manager) {
   return dynamic_cast<ad_utility::BatchManager<ad_utility::SyncIoPolicy>*>(
              &manager) != nullptr;
 }
@@ -70,23 +72,29 @@ TEST(BatchManagerPool, managersReadThroughTheBackend) {
   EXPECT_FALSE(pool.usesIoUring());
   TempFile file{"AAAABBBBCCCC"};
   auto lease = pool.acquire();
-  EXPECT_TRUE(isSync(*lease));
-  EXPECT_EQ(readFour(*lease, file, 4), "BBBB");
-  EXPECT_EQ(readFour(*lease, file, 8), "CCCC");
+  EXPECT_TRUE(usesSyncBackend(*lease));
+  EXPECT_EQ(readFourBytesAt(*lease, file, 4), "BBBB");
+  EXPECT_EQ(readFourBytesAt(*lease, file, 8), "CCCC");
 }
 
-// With io_uring preferred, the backend depends on whether io_uring is
-// compiled in and works at runtime (it can be blocked, e.g. by seccomp inside
-// Docker). Either way, `usesIoUring()` tells which backend the managers have.
+// With io_uring preferred, the managers use io_uring iff it is compiled in and
+// works at runtime (it can be blocked, e.g. by seccomp inside Docker), and
+// `usesIoUring()` tells which backend the managers have.
 TEST(BatchManagerPool, backendMatchesUsesIoUring) {
   BatchManagerPool pool{2, /*preferIoUring=*/true};
   TempFile file{"AAAABBBBCCCC"};
   auto lease = pool.acquire();
-  EXPECT_EQ(isSync(*lease), !pool.usesIoUring());
-#ifndef QLEVER_HAS_IO_URING
+  EXPECT_EQ(usesSyncBackend(*lease), !pool.usesIoUring());
+#ifdef QLEVER_HAS_IO_URING
+  if (!pool.usesIoUring()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  EXPECT_FALSE(usesSyncBackend(*lease));
+#else
   EXPECT_FALSE(pool.usesIoUring());
 #endif
-  EXPECT_EQ(readFour(*lease, file, 0), "AAAA");
+  EXPECT_EQ(readFourBytesAt(*lease, file, 0), "AAAA");
 }
 
 // A manager goes back to the pool when its lease ends, also after an
@@ -206,11 +214,14 @@ TEST(BatchManagerPool, noManagerIsUsedByTwoThreadsAtOnce) {
 
 // A pool without managers is rejected.
 TEST(BatchManagerPool, zeroManagersAreRejected) {
-  EXPECT_ANY_THROW((BatchManagerPool{0, /*preferIoUring=*/false}));
+  EXPECT_THROW((BatchManagerPool{0, /*preferIoUring=*/false}),
+               ad_utility::Exception);
 }
 
 // The process-wide pool takes its configuration from the calls before its
-// creation, and reports a different configuration afterwards.
+// creation and keeps it afterwards, when it rejects another configuration.
+// NOTE: The process-wide pool cannot be reset, so this has to stay the only
+// test in this binary that uses it.
 TEST(BatchManagerPool, globalPoolIsConfiguredBeforeItsCreation) {
   EXPECT_TRUE(ad_utility::trySetGlobalBatchManagerPoolConfig(
       2, /*preferIoUring=*/false));
@@ -224,9 +235,12 @@ TEST(BatchManagerPool, globalPoolIsConfiguredBeforeItsCreation) {
       3, /*preferIoUring=*/false));
   EXPECT_FALSE(ad_utility::trySetGlobalBatchManagerPoolConfig(
       2, /*preferIoUring=*/true));
-  EXPECT_ANY_THROW(ad_utility::trySetGlobalBatchManagerPoolConfig(
-      0, /*preferIoUring=*/false));
+  EXPECT_EQ(pool.size(), 2u);
+  EXPECT_FALSE(pool.usesIoUring());
+  EXPECT_THROW(ad_utility::trySetGlobalBatchManagerPoolConfig(
+                   0, /*preferIoUring=*/false),
+               ad_utility::Exception);
   TempFile file{"AAAABBBBCCCC"};
   auto lease = pool.acquire();
-  EXPECT_EQ(readFour(*lease, file, 8), "CCCC");
+  EXPECT_EQ(readFourBytesAt(*lease, file, 8), "CCCC");
 }

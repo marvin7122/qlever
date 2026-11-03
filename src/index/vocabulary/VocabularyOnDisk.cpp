@@ -214,8 +214,9 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
 
-  // The lease gives the manager back to the pool on every exit path, also when
-  // phase 1 throws (e.g. for an out-of-range index).
+  // The lease `manager` gives the manager back to the pool when it goes out of
+  // scope at the end of this function, also when phase 1 throws (e.g. for an
+  // out-of-range index).
   auto manager = ad_utility::globalBatchManagerPool().acquire();
   auto offsetPairs = readOffsetPairs(*manager, indices);
   return readStrings(*manager, offsetPairs);

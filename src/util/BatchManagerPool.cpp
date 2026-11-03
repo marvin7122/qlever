@@ -40,8 +40,10 @@ BatchManagerPool::BatchManagerPool(size_t numManagers, bool preferIoUring)
     : numManagers_{numManagers} {
   AD_CONTRACT_CHECK(numManagers > 0);
   idle_.reserve(numManagers);
-  // `makeBatchManager` clears `preferIoUring` when the io_uring setup fails,
-  // so after the first failure the remaining managers are synchronous ones.
+  // `makeBatchManager` clears `preferIoUring` (a reference parameter) when the
+  // io_uring setup fails or io_uring is not compiled in, so after the first
+  // failure the remaining managers are synchronous ones, and the flag is still
+  // set after the loop iff all managers use io_uring.
   for (size_t i = 0; i < numManagers; ++i) {
     idle_.push_back(makeBatchManager(preferIoUring));
   }
@@ -62,6 +64,9 @@ void BatchManagerPool::release(
     std::unique_ptr<BatchManagerBase> manager) noexcept {
   {
     std::lock_guard lock{mutex_};
+    // The pool only ever hands out its own managers, so there is always room
+    // and the `push_back` does not allocate.
+    AD_CORRECTNESS_CHECK(idle_.size() < numManagers_);
     idle_.push_back(std::move(manager));
   }
   managerReturned_.notify_one();
@@ -110,9 +115,12 @@ BatchManagerPool& globalBatchManagerPool() {
   static std::unique_ptr<BatchManagerPool> pool = []() {
     auto& conf = config();
     std::lock_guard lock{conf.mutex_};
+    auto pool = std::make_unique<BatchManagerPool>(conf.numManagers_,
+                                                   conf.preferIoUring_);
+    // Only mark the configuration as final once the pool exists, so that a
+    // constructor that throws leaves the configuration changeable.
     conf.poolWasCreated_ = true;
-    return std::make_unique<BatchManagerPool>(conf.numManagers_,
-                                              conf.preferIoUring_);
+    return pool;
   }();
   return *pool;
 }
@@ -120,11 +128,14 @@ BatchManagerPool& globalBatchManagerPool() {
 // _____________________________________________________________________________
 void setUpGlobalBatchManagerPool(size_t numManagers, bool preferIoUring) {
   if (!trySetGlobalBatchManagerPoolConfig(numManagers, preferIoUring)) {
+    const auto& pool = globalBatchManagerPool();
     AD_LOG_WARN << "The pool of batch I/O managers already exists with "
-                << globalBatchManagerPool().size() << " managers, so the "
-                << numManagers
-                << " managers that were configured cannot be applied to it"
-                << std::endl;
+                << pool.size() << " managers (io_uring "
+                << (pool.usesIoUring() ? "used" : "not used")
+                << "), so the requested configuration of " << numManagers
+                << " managers (io_uring "
+                << (preferIoUring ? "preferred" : "not preferred")
+                << ") is ignored" << std::endl;
   }
   const auto& pool = globalBatchManagerPool();
   AD_LOG_INFO << "Batched vocabulary reads use " << pool.size()
