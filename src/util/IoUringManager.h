@@ -18,7 +18,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <variant>
 #include <vector>
@@ -177,29 +176,31 @@ struct SyncIoPolicy {
 
 #ifdef QLEVER_HAS_IO_URING
 
-// The operations of an io_uring instance that `IoUringPolicy` uses. An
-// interface so that unit tests can run the policy against a simulated ring
-// (`test/util/FakeIoUring.h`) that takes only some of the submitted requests,
-// fails submits and completes requests in any order.
+// The io_uring calls that `IoUringPolicy` makes, behind an interface, so that
+// tests can run the policy on a simulated ring (`test/util/FakeIoUring.h`) and
+// inject the failures that a real kernel produces only rarely (partial and
+// failed submits, interrupted and failed waits, failed or short reads,
+// completions in any order).
 class IoUringInterface {
  public:
-  // A reaped completion: the request id of its SQE and its result (the
-  // CQE's `res`): for a read, the number of bytes read on success, or
-  // `-errno` on failure.
+  // The most completions that `popCompletions` moves per call.
+  static constexpr size_t MAX_COMPLETIONS_PER_POP = 64;
+
+  // A reaped completion: the request id of its SQE and its result (the CQE's
+  // `res`): the number of bytes read on success, or `-errno` on failure.
   struct Completion {
     uint64_t requestId;
     int result;
   };
 
-  // Virtual, because `IoUringPolicy` owns its ring as
-  // `std::unique_ptr<IoUringInterface>`.
   virtual ~IoUringInterface() = default;
 
   // Fill a free SQE with a read of `numberOfBytes` bytes at `offset` of `fd`
-  // into `buffer`, tagged with `requestId`. Return false if no SQE is free. An
-  // implementation must have a free SQE whenever fewer requests than
-  // `sqCapacity()` are queued or in the kernel: `IoUringPolicy` never exceeds
-  // that bound and treats a `false` as a broken invariant.
+  // into `buffer`, tagged with `requestId`. Return false if no SQE is free.
+  // The kernel sees the SQE only at a later `submit`. An implementation must
+  // have a free SQE whenever fewer requests than `sqCapacity()` are queued or
+  // in the kernel: `IoUringPolicy` never exceeds that bound and treats a
+  // `false` as a broken invariant.
   virtual bool prepareRead(int fd, char* buffer, size_t numberOfBytes,
                            uint64_t offset, uint64_t requestId) = 0;
 
@@ -210,42 +211,32 @@ class IoUringInterface {
   virtual size_t sqCapacity() const = 0;
   virtual size_t cqCapacity() const = 0;
 
-  // `io_uring_submit`: hand the queued SQEs to the kernel, which takes them in
-  // the order in which they were prepared. Return the number of SQEs taken, or
-  // `-errno`.
+  // `io_uring_submit`: hand the prepared SQEs to the kernel, which takes them
+  // in the order in which they were prepared, possibly not all of them. Return
+  // the number of SQEs taken, or `-errno`.
   virtual int submit() = 0;
 
-  // Block until at least `minComplete` completions are ready. Return 0 or
-  // `-errno`. Must neither hand queued SQEs to the kernel nor consume
-  // completions: `IoUringPolicy` learns which SQEs the kernel took only from
-  // `submit`, and counts every completion that `popCompletions` returns.
+  // `io_uring_wait_cqes`: block until at least `minComplete` completions are
+  // ready. Return 0 or `-errno`. Neither submits prepared SQEs nor consumes
+  // completions.
   virtual int waitForCompletions(unsigned minComplete) = 0;
 
-  // Move up to `completions.size()` ready completions into `completions` and
-  // release their CQ slots. Return how many were moved.
+  // Move up to `completions.size()` (at most `MAX_COMPLETIONS_PER_POP`) ready
+  // completions into `completions` and release their CQ slots. Return how many
+  // were moved; 0 if none is ready.
   virtual size_t popCompletions(ql::span<Completion> completions) = 0;
 
-  // Rewrite every queued SQE into a no-op tagged with `noOpRequestId`, so that
-  // it no longer refers to a buffer. Return the request ids of the rewritten
-  // SQEs that were not no-ops already, in queue order.
+  // Rewrite every prepared SQE that the kernel has not taken yet into a no-op
+  // tagged with `noOpRequestId`, so that it no longer refers to a buffer. The
+  // no-ops are submitted with the next `submit` and complete with result 0.
+  // Return the request ids of the rewritten SQEs that were not no-ops already,
+  // in queue order.
   virtual std::vector<uint64_t> cancelQueued(uint64_t noOpRequestId) = 0;
 
-  // Wait a moment before a submit that failed with `EAGAIN` is retried
-  // without any completion to wait for.
+  // Wait a moment before a submit that failed with `EAGAIN` is retried while
+  // nothing is in the kernel (so there is no completion to wait for instead).
   virtual void backOff() = 0;
 };
-
-namespace detail {
-// The text of `errno` value `errorNumber`.
-std::string errorText(int errorNumber);
-
-// Log that `operation` failed with `errorNumber` and terminate the process.
-// Used where the kernel may still hold reads while the ring cannot be used any
-// more: throwing would let the caller free buffers that the kernel still
-// writes into.
-[[noreturn]] void terminateBecauseRingIsUnusable(std::string_view operation,
-                                                 int errorNumber) noexcept;
-}  // namespace detail
 
 // Return an `IoUringInterface` backed by liburing with (at least) `ringSize`
 // SQEs; liburing rounds the size up to a power of two. Throw if the ring
@@ -262,13 +253,13 @@ std::unique_ptr<IoUringInterface> makeLiburingRing(unsigned ringSize);
 // A batch's error is thrown only once the kernel holds none of the batch's
 // reads, because the caller frees the target buffers when it unwinds:
 // - A failed or short read is thrown by the `wait()` of its batch.
-// - An `io_uring_submit` that keeps failing with `EAGAIN` (the kernel is out of
-//   memory for requests), or that keeps taking no SQE, makes `addBatch` throw.
-//   Its queued reads are rewritten into no-ops first, which refer to no buffer.
-// - Any other submit error does the same if the kernel holds no read. If it
-//   does hold reads, the process terminates, since the ring is unusable.
+// - If `io_uring_submit` keeps failing with `EAGAIN` or `ENOMEM` (the kernel is
+//   out of memory for requests), keeps taking no SQE, or fails with any other
+//   error, `addBatch` rewrites the queued reads into no-ops, which refer to no
+//   buffer, reaps the reads of the batch that the kernel holds, and throws.
 // - A failed wait for completions terminates the process: the kernel may
-//   still write into the buffers of the reads it holds.
+//   still write into the buffers of the reads it holds, and there is no way to
+//   learn when it is done.
 //
 // Neither copyable nor movable: the policy owns the ring, whose kernel-side
 // state cannot be duplicated, and it lives inside its `BatchManager`.
@@ -276,6 +267,7 @@ class IoUringPolicy : public NoCopyNoMove {
  public:
   using BatchHandle = uint64_t;
 
+ private:
   // The request id of a no-op (the no-ops of cancelled reads keep this id). The
   // reads get their ids from a counter that starts at 0, so no read gets this
   // id. It is not `uint64_t` max: that is liburing's `LIBURING_UDATA_TIMEOUT`,
@@ -284,19 +276,21 @@ class IoUringPolicy : public NoCopyNoMove {
   static constexpr uint64_t NO_OP_REQUEST_ID =
       std::numeric_limits<uint64_t>::max() - 1;
 
- private:
+  // How often in a row an `io_uring_submit` that fails with `EAGAIN` or
+  // `ENOMEM` (or takes no SQE) is retried, after a back-off, before the queued
+  // reads are cancelled.
+  static constexpr unsigned MAX_SUBMIT_RETRIES = 16;
+
   std::unique_ptr<IoUringInterface> ring_;
   // The most requests (reads and no-ops) that the policy keeps in the ring.
-  size_t ringSize_;
-
-  // How often in a row an `io_uring_submit` that fails with `EAGAIN` (or takes
-  // no SQE) is retried before the queued reads are cancelled.
-  static constexpr unsigned MAX_SUBMIT_RETRIES = 16;
+  const size_t ringSize_;
 
   // Total number of reads that occupy a ring slot but have not yet been reaped
   // via a completion queue entry (CQE), i.e. that are prepared or submitted but
   // not yet completed. Used to detect whether the ring is full.
-  size_t numInFlightReadRequests_ = 0;
+  size_t numberOfInFlightReads_ = 0;
+  // Of those, the reads that are prepared but not yet taken by the kernel.
+  size_t numberOfQueuedReads_ = 0;
 
   // No-ops of cancelled reads that are queued or in the kernel. They occupy
   // ring slots until their CQE is reaped. The queued no-ops precede every
@@ -326,7 +320,7 @@ class IoUringPolicy : public NoCopyNoMove {
     std::optional<ReadFailure> firstFailure = std::nullopt;
   };
 
-  // The same in-flight reads as `numInFlightReadRequests_`, but broken down per
+  // The same in-flight reads as `numberOfInFlightReads_`, but broken down per
   // batch. The entry of a batch is removed once all of its reads have
   // completed, unless one of them failed: then the `wait()` of the batch
   // removes it when it throws the failure.
@@ -334,11 +328,11 @@ class IoUringPolicy : public NoCopyNoMove {
 
   // Per-read metadata needed when a completion is reaped: which batch the read
   // belongs to, and how many bytes it was supposed to read (so that reading
-  // fewer bytes than expected can be detected). See
+  // fewer bytes than requested can be detected). See
   // `inFlightReadsByRequestId_`.
   struct InFlightRead {
     BatchHandle batchHandle;
-    size_t expectedNumBytes;
+    size_t numberOfRequestedBytes;
   };
 
   // Monotonically increasing counter that mints a unique request id for each
@@ -351,10 +345,12 @@ class IoUringPolicy : public NoCopyNoMove {
   // `drainOneCqe`, or when the read is cancelled.
   ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
 
-  // The reads, and all requests, that the kernel has taken and whose
+  // The requests (reads and no-ops) that the kernel has taken and whose
   // completion has not been reaped yet.
-  size_t numberOfReadsInKernel() const;
-  size_t numberOfRequestsInKernel() const;
+  size_t numberOfRequestsInKernel() const {
+    return numberOfInFlightReads_ - numberOfQueuedReads_ +
+           numberOfNoOpsInKernel_;
+  }
 
   // Wait for one CQE and update the in-flight bookkeeping. A failed or short
   // read is recorded in its batch, not thrown, so that the caller can reap the
@@ -365,12 +361,15 @@ class IoUringPolicy : public NoCopyNoMove {
   // Reap completions until no read of the batch `handle` is in flight.
   void drainBatch(BatchHandle handle);
 
-  // Hand the queued SQEs to the kernel. Retries `EINTR`, and retries `EAGAIN`
-  // (or a submit that takes no SQE) up to `MAX_SUBMIT_RETRIES` times in a row.
-  // If the submit fails for good, cancels the queued reads and returns the
-  // error, or terminates if the error shows the ring to be unusable while the
-  // kernel holds reads.
+  // Hand the queued SQEs to the kernel. Retries `EINTR` at once, and retries
+  // `EAGAIN` and `ENOMEM` (or a submit that takes no SQE) up to
+  // `MAX_SUBMIT_RETRIES` times in a row after a back-off. If the submit fails
+  // for good, cancels the queued reads and returns the error.
   std::optional<std::string> submitQueued();
+
+  // The kernel took `numberOfTakenSqes` SQEs: first the queued no-ops, then
+  // reads.
+  void onTaken(size_t numberOfTakenSqes);
 
   // Rewrite the queued reads into no-ops and forget them.
   void cancelQueuedReads();

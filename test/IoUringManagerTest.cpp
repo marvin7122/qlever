@@ -799,6 +799,7 @@ TEST_F(IoUringPolicyFailureTest, failedSubmitCancelsQueuedReadsIntoNoOps) {
         failing.addTo(policy, fd, 0),
         HasSubstr("io_uring_submit failed in IoUringPolicy"));
     EXPECT_TRUE(script.submitResults.empty());
+    EXPECT_EQ(script.numberOfBackOffs, 16U);
     EXPECT_EQ(script.numberOfTakenRequests, ringSize);
     EXPECT_EQ(script.numberOfReapedCompletions, ringSize);
     // The reads that the kernel took are complete, the others never started.
@@ -820,29 +821,50 @@ TEST_F(IoUringPolicyFailureTest, failedSubmitCancelsQueuedReadsIntoNoOps) {
   EXPECT_EQ(failing.result()[ringSize], std::string(4, '\0'));
 }
 
-// A submit that fails with `EAGAIN`, or takes no SQE, is retried. If the
-// kernel holds requests, the policy reaps one before each retry (completed
-// requests free kernel memory), otherwise it backs off.
+// A submit that fails with `EAGAIN` or `ENOMEM`, or takes no SQE, is retried
+// after a back-off, and `EINTR` at once. Only failures in a row count towards
+// the retries.
 TEST_F(IoUringPolicyFailureTest, transientSubmitFailuresAreRetried) {
   auto [content, small] = chunkedFileAndBatch(3);
   auto [tmp, fd] = makeTempFile(content);
   RingScript script;
   auto policy = makePolicy(64, script);
-  script.submitResults = {-EAGAIN, 0, -EINTR, -EAGAIN};
+  script.submitResults = {-EAGAIN, 0, -EINTR, -ENOMEM};
   small.addTo(policy, fd, 0);
   policy.wait(0);
   EXPECT_THAT(small.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
   EXPECT_EQ(script.numberOfBackOffs, 3U);
 
+  // Ten failures, progress, ten more failures: 20 in total, but never more
+  // than 16 in a row.
   auto [content2, large] = chunkedFileAndBatch(100);
   auto [tmp2, fd2] = makeTempFile(content2);
-  script.submitResults = {std::nullopt, -EAGAIN, -EAGAIN, 0};
+  script.submitResults = {std::nullopt};
+  script.submitResults.insert(script.submitResults.end(), 10, -EAGAIN);
+  script.submitResults.push_back(std::nullopt);
+  script.submitResults.insert(script.submitResults.end(), 10, -ENOMEM);
   large.addTo(policy, fd2, 1);
   policy.wait(1);
+  EXPECT_TRUE(script.submitResults.empty());
   EXPECT_EQ(::ranges::to_vector(large.result() | ql::views::join),
             ::ranges::to_vector(content2));
-  EXPECT_EQ(script.numberOfBackOffs, 3U);
+  EXPECT_EQ(script.numberOfBackOffs, 23U);
   EXPECT_EQ(script.numberOfReapedCompletions, script.numberOfTakenRequests);
+
+  // The same within one submit of the queued reads: ten failures, a partial
+  // submit, ten more failures.
+  using ad_utility::testing::FakeIoUring;
+  FakeIoUring::Faults faults;
+  faults.scriptedSubmits.assign(10, -EAGAIN);
+  faults.scriptedSubmits.push_back(1);
+  faults.scriptedSubmits.insert(faults.scriptedSubmits.end(), 10, -ENOMEM);
+  ad_utility::IoUringPolicy fakePolicy{
+      std::make_unique<FakeIoUring>(content, 8, faults, 0)};
+  ReadBatchForTesting onFake;
+  onFake.add({{0, 4}, {4, 4}, {8, 4}});
+  onFake.addTo(fakePolicy, -1, 0);
+  fakePolicy.wait(0);
+  EXPECT_THAT(onFake.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
 }
 
 // After a whole ring of reads was cancelled, the ring holds only queued no-ops.
@@ -883,32 +905,49 @@ TEST_F(IoUringPolicyFailureTest, ringFullOfNoOpsIsSubmittedPartially) {
   EXPECT_EQ(fake.numberOfQueued(), 0U);
 }
 
-// A submit error other than `EINTR` and `EAGAIN` makes the ring unusable. If
-// the kernel holds no read, the queued reads are cancelled and `addBatch`
-// throws. If it holds reads, the process terminates: their buffers must not be
-// freed, and they cannot be reaped safely.
-TEST_F(IoUringPolicyFailureTest, brokenSubmitTerminatesOnlyWithReadsInKernel) {
-  auto [content, batch] = chunkedFileAndBatch(3);
+// A submit error other than `EINTR`, `EAGAIN` and `ENOMEM` is not retried. The
+// queued reads are cancelled, and `addBatch` throws once the reads of the batch
+// that the kernel holds have been reaped.
+TEST_F(IoUringPolicyFailureTest, brokenSubmitThrowsAfterReapingTheKernelReads) {
+  constexpr size_t ringSize = 64;
+  auto [content, batch] = chunkedFileAndBatch(100);
   auto [tmp, fd] = makeTempFile(content);
   RingScript script;
-  auto policy = makePolicy(64, script);
-  script.submitResults.push_back(-EBADF);
+  auto policy = makePolicy(ringSize, script);
+  // Nothing is in the kernel when the submit fails.
+  script.submitResults = {-EBADF};
   AD_EXPECT_THROW_WITH_MESSAGE(batch.addTo(policy, fd, 0),
                                HasSubstr("io_uring_submit failed"));
   EXPECT_THAT(batch.result(), Each(Eq(std::string(4, '\0'))));
   EXPECT_EQ(script.numberOfTakenRequests, 0U);
 
-  // The death test runs in a child process that shares the memory of a ring
-  // with this process, so it gets a ring of its own.
-  auto [content2, large] = chunkedFileAndBatch(100);
+  // A full ring of reads is in the kernel when the submit fails. (A fresh
+  // policy, whose ring holds no no-ops of the first batch.)
   RingScript script2;
+  auto policy2 = makePolicy(ringSize, script2);
+  ReadBatchForTesting again = batch;
   script2.submitResults = {std::nullopt, -EBADF};
-  EXPECT_DEATH(
-      {
-        auto policy2 = makePolicy(64, script2);
-        large.addTo(policy2, fd, 0);
-      },
-      "io_uring_submit failed");
+  AD_EXPECT_THROW_WITH_MESSAGE(again.addTo(policy2, fd, 0),
+                               HasSubstr("io_uring_submit failed"));
+  EXPECT_EQ(script2.numberOfBackOffs, 0U);
+  EXPECT_EQ(script2.numberOfTakenRequests, ringSize);
+  EXPECT_EQ(script2.numberOfReapedCompletions, ringSize);
+  for (size_t i = 0; i < 100; ++i) {
+    EXPECT_EQ(again.result()[i],
+              i < ringSize ? content.substr(4 * i, 4) : std::string(4, '\0'))
+        << i;
+  }
+
+  // Both policies still work, the first one after handing its ring of no-ops
+  // to the kernel.
+  auto [content3, next2] = chunkedFileAndBatch(3);
+  next2.addTo(policy2, fd, 1);
+  policy2.wait(1);
+  EXPECT_THAT(next2.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
+  auto [content2, next] = chunkedFileAndBatch(3);
+  next.addTo(policy, fd, 2);
+  policy.wait(2);
+  EXPECT_THAT(next.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
 }
 
 // A wait that fails with an error other than `EINTR` terminates the process:
@@ -920,7 +959,7 @@ TEST_F(IoUringPolicyFailureTest, brokenWaitTerminates) {
   auto policy = makePolicy(64, script);
   batch.addTo(policy, fd, 0);
   script.brokenWaitErrno = EIO;
-  EXPECT_DEATH(policy.wait(0), "io_uring_wait_cqe failed");
+  EXPECT_DEATH(policy.wait(0), "io_uring_wait_cqes failed");
   script.brokenWaitErrno = 0;
   policy.wait(0);
   EXPECT_THAT(batch.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
@@ -933,7 +972,7 @@ TEST_F(IoUringPolicyFailureTest, interruptedWaitsAreRetried) {
   auto [tmp, fd] = makeTempFile(content);
   RingScript script;
   ReadBatchForTesting unwaited;
-  unwaited.add(4, 4);
+  unwaited.add({{4, 4}, {0, 4}, {4, 4}});
   {
     auto policy = makePolicy(64, script);
     waited.addTo(policy, fd, 0);
@@ -944,10 +983,11 @@ TEST_F(IoUringPolicyFailureTest, interruptedWaitsAreRetried) {
     unwaited.addTo(policy, fd, 1);
     script.numberOfWaitsToInterrupt = 1;
   }
+  // The destructor reaped all three reads of the unwaited batch.
   EXPECT_EQ(script.numberOfWaitsToInterrupt, 0U);
-  EXPECT_EQ(script.numberOfTakenRequests, 3U);
-  EXPECT_EQ(script.numberOfReapedCompletions, 3U);
-  EXPECT_THAT(unwaited.result(), ElementsAre("BBBB"));
+  EXPECT_EQ(script.numberOfTakenRequests, 5U);
+  EXPECT_EQ(script.numberOfReapedCompletions, 5U);
+  EXPECT_THAT(unwaited.result(), ElementsAre("BBBB", "AAAA", "BBBB"));
 }
 
 // The failure of a read is thrown by the `wait()` of its own batch, whichever
@@ -971,10 +1011,24 @@ TEST_F(IoUringPolicyFailureTest, failedReadIsThrownByTheWaitOfItsOwnBatch) {
   }
 }
 
+// The first failed read of a batch is the one that its `wait()` throws.
+TEST_F(IoUringPolicyFailureTest, firstFailureOfABatchIsThrown) {
+  using ad_utility::testing::FakeIoUring;
+  // A ring with a single SQE handles the reads one after the other.
+  ad_utility::IoUringPolicy policy{
+      std::make_unique<FakeIoUring>("AAAABBBB", 1, FakeIoUring::Faults{}, 0)};
+  ReadBatchForTesting batch;
+  batch.add({{0, 16}, {4, 16}, {0, 4}});
+  batch.addTo(policy, -1, 0);
+  AD_EXPECT_THROW_WITH_MESSAGE(policy.wait(0), HasSubstr("(8 of 16 bytes)"));
+}
+
 // On a simulated ring with random faults (partial and interrupted submits,
 // bursts of `EAGAIN` longer than the retries, interrupted waits, short and
 // failed reads, completions in any order), no read is left in the ring after a
-// batch, and a batch fails iff one of its reads failed or its submit failed.
+// batch. A batch fails iff one of its reads failed, or the submit failed at
+// least `MAX_SUBMIT_RETRIES + 1` times. Half of the seeds use a completion
+// queue that is no larger than the submission queue.
 TEST_F(IoUringPolicyFailureTest, randomFaults) {
   using ad_utility::testing::FakeIoUring;
   std::string file;
@@ -994,7 +1048,9 @@ TEST_F(IoUringPolicyFailureTest, randomFaults) {
     // batches, so that a batch starts with a ring full of no-ops.
     faults.submitOutOfMemory = seed % 3 == 0 ? 0.01 : 0.05;
     faults.maxEagainBurst = seed % 3 == 0 ? 100 : 20;
-    auto fakeOwner = std::make_unique<FakeIoUring>(file, 8, faults, seed);
+    auto fakeOwner = std::make_unique<FakeIoUring>(
+        file, 8, faults, seed,
+        seed % 2 == 0 ? std::nullopt : std::optional<size_t>{8});
     FakeIoUring& fake = *fakeOwner;
     ad_utility::IoUringPolicy policy{std::move(fakeOwner)};
     std::mt19937 random{seed};
@@ -1009,6 +1065,7 @@ TEST_F(IoUringPolicyFailureTest, randomFaults) {
         expected.push_back(file.substr(offset, numberOfBytes));
       }
       fake.resetObservations();
+      const FakeIoUring::FaultCounts before = fake.faultCounts();
       std::optional<std::string> error;
       try {
         batch.addTo(policy, -1, handle);
@@ -1020,9 +1077,16 @@ TEST_F(IoUringPolicyFailureTest, randomFaults) {
       const bool submitFailed =
           error.has_value() &&
           error.value().find("io_uring_submit failed") != std::string::npos;
-      if (fake.injectedReadFault()) {
+      // Only failed submits and partial submits (which may take no SQE) count
+      // towards the retries.
+      const size_t numberOfFailedSubmits =
+          fake.faultCounts().outOfMemorySubmits - before.outOfMemorySubmits +
+          fake.faultCounts().partialSubmits - before.partialSubmits;
+      if (submitFailed) {
+        EXPECT_GE(numberOfFailedSubmits, 17U) << seed;
+      } else if (fake.injectedReadFault()) {
         EXPECT_TRUE(error.has_value()) << seed;
-      } else if (!submitFailed) {
+      } else {
         EXPECT_FALSE(error.has_value()) << seed << ": " << error.value();
         EXPECT_EQ(batch.result(), expected) << seed;
       }
