@@ -300,7 +300,9 @@ struct RecordingPolicy {
   }
 
   explicit RecordingPolicy([[maybe_unused]] unsigned ringSize) {}
-  void addBatch(int fd, ql::span<const size_t> numBytes,
+  // Reads synchronously, but reports the reads as in flight, so that the
+  // tests can see whether `wait` reaches the policy.
+  bool addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 [[maybe_unused]] BatchHandle handle) {
     batchSizes_.push_back(numBytes.size());
@@ -310,6 +312,7 @@ struct RecordingPolicy {
       ad_utility::SyncIoPolicy::readFullyOrThrow(
           fd, targetBuffer, numberOfBytesToRead, fileOffset);
     }
+    return true;
   }
   void wait(BatchHandle handle) const { waitedFor_.push_back(handle); }
 };
@@ -338,14 +341,14 @@ TEST(PageCacheFirstPolicy, onlyTheMissesAreForwarded) {
   EXPECT_THAT(RecordingPolicy::batchSizes_, ElementsAre(size_t{2}));
   EXPECT_THAT(RecordingPolicy::receivedOffsets_,
               ElementsAre(uint64_t{12}, uint64_t{8}));
-  EXPECT_THAT(RecordingPolicy::waitedFor_, ElementsAre(handle));
+  EXPECT_THAT(RecordingPolicy::waitedFor_, ElementsAre(handle.id_));
   EXPECT_EQ(numberOfReads, size_t{3});
 }
 
 // _____________________________________________________________________________
 // If the page-cache read serves every read, the decorated policy is not
-// involved at all: it receives no batch, and waiting for the batch returns
-// without asking it.
+// involved at all: it receives no batch, the handle says that no read is in
+// flight, and waiting for the batch (also twice) returns without asking it.
 TEST(PageCacheFirstPolicy, aBatchThatIsServedCompletelyHasNothingToWaitFor) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
@@ -354,7 +357,10 @@ TEST(PageCacheFirstPolicy, aBatchThatIsServedCompletelyHasNothingToWaitFor) {
   RecordedManager manager(64, counted(numberOfReads, &fullyCached));
   ReadBatchForTesting batch;
   batch.add({{0, 4}, {8, 4}});
-  manager.wait(batch.submitTo(manager, fd));
+  const auto handle = batch.submitTo(manager, fd);
+  EXPECT_FALSE(handle.hasReadsInFlight_);
+  manager.wait(handle);
+  manager.wait(handle);
   EXPECT_THAT(batch.result(), ElementsAre("AAAA", "CCCC"));
   EXPECT_THAT(RecordingPolicy::batchSizes_, IsEmpty());
   EXPECT_THAT(RecordingPolicy::waitedFor_, IsEmpty());

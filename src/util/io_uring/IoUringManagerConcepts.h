@@ -30,15 +30,20 @@ namespace ad_utility {
 
 // The member functions of a `ReadPolicy`: `addBatch` starts the reads of one
 // batch (read `i` reads `numBytes[i]` bytes at file offset `offsets[i]` of `fd`
-// into `buffers[i]`) and tags them with `handle`; `wait(handle)` blocks until
-// all reads of that batch have completed.
+// into `buffers[i]`), tags them with `handle`, and returns whether any of them
+// is still in flight; `wait(handle)` blocks until all reads of that batch have
+// completed. `BatchManager` calls `wait` only for a batch for which `addBatch`
+// returned `true`.
 template <typename T>
-CPP_requires(ReadPolicy_,
-             requires(T& policy, int fd, ql::span<const size_t> numBytes,
-                      ql::span<const uint64_t> offsets, ql::span<char*> buffers,
-                      typename T::BatchHandle handle)(
-                 policy.addBatch(fd, numBytes, offsets, buffers, handle),
-                 policy.wait(handle)));
+CPP_requires(
+    ReadPolicy_,
+    requires(T& policy, int fd, ql::span<const size_t> numBytes,
+             ql::span<const uint64_t> offsets, ql::span<char*> buffers,
+             typename T::BatchHandle handle)(
+        ::concepts::requires_<ql::concepts::same_as<
+            decltype(policy.addBatch(fd, numBytes, offsets, buffers, handle)),
+            bool>>,
+        policy.wait(handle)));
 
 // A `ReadPolicy`, used as the template argument of `BatchManager` and
 // `PageCacheFirstPolicy`: it has the member functions of `ReadPolicy_` above,

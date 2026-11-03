@@ -41,7 +41,7 @@ void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
 }
 
 //______________________________________________________________________________
-void SyncIoPolicy::addBatch(int fd,
+bool SyncIoPolicy::addBatch(int fd,
                             ql::span<const size_t> numBytesToReadPerRequest,
                             ql::span<const uint64_t> fileOffsetPerRequest,
                             ql::span<char*> targetBufferPerRequest,
@@ -51,6 +51,7 @@ void SyncIoPolicy::addBatch(int fd,
                             targetBufferPerRequest)) {
     SyncIoPolicy::readFullyOrThrow(fd, targetBuf, numBytesToRead, fileOffset);
   }
+  return false;
 }
 
 #ifdef QLEVER_HAS_IO_URING
@@ -95,7 +96,7 @@ IoUringPolicy::~IoUringPolicy() {
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::addBatch(int fd,
+bool IoUringPolicy::addBatch(int fd,
                              ql::span<const size_t> numBytesToReadPerRequest,
                              ql::span<const uint64_t> fileOffsetPerRequest,
                              ql::span<char*> targetBufferPerRequest,
@@ -103,7 +104,7 @@ void IoUringPolicy::addBatch(int fd,
   const size_t numReadRequestsToPerform = numBytesToReadPerRequest.size();
 
   if (numReadRequestsToPerform == 0) {
-    return;
+    return false;
   }
   numInFlightReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
 
@@ -145,6 +146,7 @@ void IoUringPolicy::addBatch(int fd,
   // submits when the submission queue is full, so the last group of SQEs has
   // not yet been submitted).
   io_uring_submit(&ring_);
+  return true;
 }
 
 //______________________________________________________________________________

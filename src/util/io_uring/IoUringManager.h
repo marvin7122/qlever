@@ -48,7 +48,17 @@ namespace ad_utility {
 // `ReadPolicy`s behind a unified interface and pick the backend at runtime.
 class BatchManagerBase {
  public:
-  using BatchHandle = uint64_t;
+  // The id of a batch, unique per manager; the `ReadPolicy` tags the reads of
+  // the batch with it.
+  using BatchId = uint64_t;
+  // What `addBatch` returns and `wait` takes: the id of the batch, and whether
+  // any of its reads was still in flight when `addBatch` returned. If none was
+  // (all reads were done synchronously or served from the page cache), `wait`
+  // returns at once without involving the `ReadPolicy`.
+  struct BatchHandle {
+    BatchId id_ = 0;
+    bool hasReadsInFlight_ = true;
+  };
   virtual ~BatchManagerBase() = default;
 
   [[nodiscard]] virtual BatchHandle addBatch(int fd,
@@ -73,11 +83,11 @@ class BatchManager final : public BatchManagerBase, public NoCopyNoMove {
   static_assert(
       ReadPolicyConcept<ReadPolicy>,
       "BatchManager's ReadPolicy must satisfy the ReadPolicyConcept concept.");
-  // The policy is only valid if the policy's handle type matches the base's.
+  // The policy is only valid if it tags reads with the base's batch ids.
   static_assert(
       std::is_same_v<typename ReadPolicy::BatchHandle,
-                     BatchManagerBase::BatchHandle>,
-      "ReadPolicy::BatchHandle must match BatchManagerBase::BatchHandle.");
+                     BatchManagerBase::BatchId>,
+      "ReadPolicy::BatchHandle must match BatchManagerBase::BatchId.");
 
  public:
   using BatchHandle = typename BatchManagerBase::BatchHandle;
@@ -93,16 +103,22 @@ class BatchManager final : public BatchManagerBase, public NoCopyNoMove {
                                      ql::span<char*> buffers) override {
     validateSameLength(numBytes, offsets, buffers);
 
-    BatchHandle handle = nextBatchHandle_++;
+    const BatchId id = nextBatchId_++;
 
     // Delegate the I/O work to the policy.
-    policy_.addBatch(fd, numBytes, offsets, buffers, handle);
+    const bool hasReadsInFlight =
+        policy_.addBatch(fd, numBytes, offsets, buffers, id);
 
-    return handle;
+    return BatchHandle{id, hasReadsInFlight};
   }
 
-  // Block until every read in `handle` has completed.
-  void wait(BatchHandle handle) override { policy_.wait(handle); }
+  // Block until every read in `handle` has completed. Nothing to do if no read
+  // of the batch was in flight when `addBatch` returned.
+  void wait(BatchHandle handle) override {
+    if (handle.hasReadsInFlight_) {
+      policy_.wait(handle.id_);
+    }
+  }
 
   // Forward the switch to the policy if it has one.
   void setPageCacheFastPath([[maybe_unused]] bool enabled) noexcept override {
@@ -117,7 +133,7 @@ class BatchManager final : public BatchManagerBase, public NoCopyNoMove {
 
  private:
   [[no_unique_address]] ReadPolicy policy_;
-  BatchHandle nextBatchHandle_ = 0;
+  BatchId nextBatchId_ = 0;
 
   template <typename Span0, typename... Spans>
   static void validateSameLength(const Span0& first, const Spans&... rest) {
@@ -147,8 +163,8 @@ struct SyncIoPolicy : public NoCopyNoMove {
   // descriptor `fd`, starting at offset `fileOffsetPerRequest[i]` (from the
   // start of the file), into the buffer starting at
   // `targetBufferPerRequest[i]`. `handle` is unused (the batch completes before
-  // `addBatch` returns).
-  void addBatch(int fd, ql::span<const size_t> numBytesToReadPerRequest,
+  // `addBatch` returns), so it always returns `false` (no read in flight).
+  bool addBatch(int fd, ql::span<const size_t> numBytesToReadPerRequest,
                 ql::span<const uint64_t> fileOffsetPerRequest,
                 ql::span<char*> targetBufferPerRequest,
                 BatchHandle handle) const;
@@ -224,8 +240,9 @@ class IoUringPolicy : public NoCopyNoMove {
   // reads `numBytesToRead[i]` bytes from file descriptor `fd`, starting at
   // offset `offsets[i]` (from the start of the file), into the buffer starting
   // at `buffers[i]`. The reads are tracked under `handle`, which can be passed
-  // to `wait()` to block until this batch has completed.
-  void addBatch(int fd, ql::span<const size_t> numBytesToRead,
+  // to `wait()` to block until this batch has completed. Return `false` for an
+  // empty batch (nothing to wait for) and `true` otherwise.
+  bool addBatch(int fd, ql::span<const size_t> numBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle);
 
