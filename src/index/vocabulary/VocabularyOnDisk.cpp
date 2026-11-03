@@ -431,16 +431,21 @@ void VocabularyOnDisk::open(const std::string& filename) {
   id_ = nextId++;
   file_.open(filename, "r");
   offsetsFile_.open(filename + offsetSuffix_, "r");
-  // Switch off the kernel readahead for both files. `lookupBatch` reads
-  // exactly the offsets and words it needs, `operator[]` reads ahead itself
-  // for sequential lookups (see `ReadAheadState`), and `scanAll` reads chunks
-  // of up to `VOCABULARY_SCAN_MAX_WORD_DATA_PER_BATCH`. For scattered lookups,
-  // the kernel readahead mostly reads pages that are never used. The advice
-  // only applies to these two file descriptors. A failure is harmless (the
-  // kernel then keeps reading ahead), so it is ignored.
+  // Switch off the kernel readahead for both files. For a scattered batch of
+  // `lookupBatch`, every page-cache miss would otherwise also read the
+  // readahead window around the page, which is almost never used. For a
+  // sorted, contiguous batch, the kernel then no longer prefetches the
+  // following pages; `operator[]` reads ahead itself for sequential lookups
+  // (see `ReadAheadState`), and `scanAll` reads chunks of up to
+  // `VOCABULARY_SCAN_MAX_WORD_DATA_PER_BATCH`. The advice only applies to these
+  // two file descriptors, and is skipped on platforms without
+  // `posix_fadvise` (macOS). A failure is harmless (the kernel then keeps
+  // reading ahead), so it is ignored.
+#ifdef POSIX_FADV_RANDOM
   for (int fd : {file_.fd(), offsetsFile_.fd()}) {
     ::posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM);
   }
+#endif
 
   // Read the offset count from the `MmapVectorMetaData` trailer, which is
   // the canonical layout used by both old and new vocabulary files.
