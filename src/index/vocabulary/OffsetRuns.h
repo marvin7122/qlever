@@ -67,14 +67,14 @@ inline constexpr size_t MAX_NUMBER_OF_INDICES_PER_RUN = size_t{1} << 24;
     size_t maxNumberOfIndicesPerRun = MAX_NUMBER_OF_INDICES_PER_RUN);
 
 // Read the `OffsetPair` of each of the `indices` from the `.offsets` file `fd`
-// of a vocabulary with `numWords` words, with one batch of `manager`, and
+// of a vocabulary with `numberOfWords` words, with one batch of `manager`, and
 // return them in the order of `indices`. Throw if an index is not smaller than
-// `numWords`. Reading each run of consecutive indices (see `splitIntoRuns`) as
-// one range is only an optimization: a run of `k` indices needs `k + 1`
-// entries instead of `2 * k`, in one read instead of `k`.
+// `numberOfWords`. Reading each run of consecutive indices (see
+// `splitIntoRuns`) as one range is only an optimization: a run of `k` indices
+// needs `k + 1` entries instead of `2 * k`, in one read instead of `k`.
 [[nodiscard]] std::vector<OffsetPair> readOffsetPairs(
     ad_utility::BatchManagerBase& manager, int fd,
-    ql::span<const size_t> indices, size_t numWords);
+    ql::span<const size_t> indices, size_t numberOfWords);
 
 }  // namespace ad_utility::vocabulary
 

@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -151,8 +152,9 @@ TEST(ReadOffsetPairs, indicesMustBeSmallerThanTheNumberOfWords) {
       ioUringManagerTestHelpers::makeTempFile(offsetsFileContent({1, 2}));
   RecordingManager manager;
   std::vector<size_t> indices{0, 2};
-  AD_EXPECT_THROW_WITH_MESSAGE(readOffsetPairs(manager, fd, indices, 2),
-                               HasSubstr("index < numWords"));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      std::ignore = readOffsetPairs(manager, fd, indices, 2),
+      HasSubstr("index < numberOfWords"));
   EXPECT_THAT(manager.batches_, IsEmpty());
 }
 
