@@ -25,6 +25,7 @@
 #include "util/Exception.h"
 #include "util/HashMap.h"
 #include "util/Log.h"
+#include "util/NoCopyNoMove.h"
 
 #ifdef QLEVER_HAS_IO_URING
 #include <liburing.h>
@@ -68,7 +69,7 @@ class BatchManagerBase {
 // Vocabulary to the `Policy`, which must satisfy `ReadPolicyConcept` (see
 // `util/io_uring/IoUringManagerConcepts.h`).
 template <typename ReadPolicy>
-class BatchManager final : public BatchManagerBase {
+class BatchManager final : public BatchManagerBase, public NoCopyNoMove {
   static_assert(
       ReadPolicyConcept<ReadPolicy>,
       "BatchManager's ReadPolicy must satisfy the ReadPolicyConcept concept.");
@@ -82,9 +83,6 @@ class BatchManager final : public BatchManagerBase {
   using BatchHandle = typename BatchManagerBase::BatchHandle;
 
   explicit BatchManager(unsigned ringSize = 256) : policy_(ringSize) {}
-
-  BatchManager(const BatchManager&) = delete;
-  BatchManager& operator=(const BatchManager&) = delete;
 
   [[nodiscard]] BatchHandle addBatch(int fd, ql::span<const size_t> numBytes,
                                      ql::span<const uint64_t> offsets,
@@ -130,7 +128,7 @@ class BatchManager final : public BatchManagerBase {
 
 // Fallback implementation for the `IoUringPolicy` below. Schedules pread calls
 // in a synchronous (blocking) manner. Single-threaded use only.
-struct SyncIoPolicy {
+struct SyncIoPolicy : public NoCopyNoMove {
   using BatchHandle = uint64_t;
 
   // `ringSize` is ignored; it exists only so the policy is constructible the
@@ -139,10 +137,6 @@ struct SyncIoPolicy {
   // NOTE: GCC rejects `[[maybe_unused]]` on a defaulted parameter; cast to
   // void.
   explicit SyncIoPolicy(unsigned ringSize = 256) { (void)ringSize; }
-
-  ~SyncIoPolicy() = default;
-  SyncIoPolicy(const SyncIoPolicy&) = delete;
-  SyncIoPolicy& operator=(const SyncIoPolicy&) = delete;
 
   // Immediately execute a batch of reads synchronously. This blocks the calling
   // thread. Read `i` reads `numBytesToReadPerRequest[i]` bytes from file
@@ -174,7 +168,7 @@ struct SyncIoPolicy {
 // for more details.
 #ifdef QLEVER_HAS_IO_URING
 
-class IoUringPolicy {
+class IoUringPolicy : public NoCopyNoMove {
  public:
   using BatchHandle = uint64_t;
 
@@ -216,9 +210,6 @@ class IoUringPolicy {
   void drainOneCqe();
 
  public:
-  IoUringPolicy(const IoUringPolicy&) = delete;
-  IoUringPolicy& operator=(const IoUringPolicy&) = delete;
-
   // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
   explicit IoUringPolicy(unsigned ringSize);
   ~IoUringPolicy();
