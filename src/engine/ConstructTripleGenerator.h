@@ -17,12 +17,17 @@
 #include "engine/VariableToColumnMap.h"
 #include "index/Index.h"
 #include "parser/data/Types.h"
+#include "util/AllocatorWithLimit.h"
 #include "util/CancellationHandle.h"
 #include "util/ConstructDeduplicationMode.h"
 #include "util/Iterators.h"
 #include "util/http/MediaTypes.h"
 
 namespace qlever::constructExport {
+
+namespace detail {
+struct ChunkFormatter;
+}
 
 using ad_utility::InputRangeTypeErased;
 using CancellationHandle = ad_utility::SharedCancellationHandle;
@@ -40,11 +45,27 @@ struct EvaluationConfig {
   ad_utility::DeduplicationMode mode_ = ad_utility::DeduplicationMode::none();
 };
 
+// The formatted triples of one chunk of rows of a parallel export (see
+// `generateFormattedChunksInParallel`). The memory is allocated with the
+// allocator of the query, so it counts towards the `memory-for-queries` budget
+// that all queries share. An allocation that does not fit first evicts
+// unpinned entries of the query cache and then fails the export.
+using FormattedChunk = std::basic_string<char, std::char_traits<char>,
+                                         ad_utility::AllocatorWithLimit<char>>;
+
+// How long the tables of the `rowIndices` of a parallel export stay valid:
+// until the export is done (the tables of a fully materialized result, which
+// the export keeps alive), or only until the next table is requested (the
+// blocks of a lazy result).
+enum class TableLifetime { WholeExport, UntilNextTable };
+
 // Generates triples from the CONSTRUCT query results by instantiating the
 // template triple patterns with the values from the result table produced by
 // the WHERE clause of the CONSTRUCT query.
 class ConstructTripleGenerator {
   friend class ConstructTripleGeneratorTest;
+  // For `makeIdCache`.
+  friend struct detail::ChunkFormatter;
 
  public:
   // the number of `IdTable` rows that one batch consists of.
@@ -52,6 +73,11 @@ class ConstructTripleGenerator {
   // the number of entries in the `IdCache` for each variable in the construct
   // clause template.
   static constexpr size_t CACHE_ENTRIES_PER_VARIABLE = 2048;
+  // The maximal number of rows of a chunk of a parallel export (see
+  // `generateFormattedChunksInParallel`). A chunk has to be large enough that
+  // scheduling a task costs little compared to its formatting. This value has
+  // not been tuned yet.
+  static constexpr size_t MAX_NUMBER_OF_ROWS_PER_CHUNK = 8 * BATCH_SIZE;
 
   // Instantiates `templateTriples` for each row in `rowIndices` and returns a
   // lazy range of triples serialized according to `mediaType`.
@@ -61,6 +87,34 @@ class ConstructTripleGenerator {
       const VariableToColumnMap& variableColumns,
       InputRangeTypeErased<TableWithRange> rowIndices, size_t rowOffset,
       ad_utility::MediaType mediaType, const EvaluationConfig& config);
+
+  // Like `generateFormattedTriples`, but the rows of `rowIndices` are cut into
+  // chunks of `MAX_NUMBER_OF_ROWS_PER_CHUNK` rows (the last one may be
+  // smaller), across the boundaries of the tables, and the triples of these
+  // chunks are instantiated and formatted concurrently on the executor of
+  // `config.qec_`. The result has one element per chunk, in the order of the
+  // rows, and their concatenation is the same as that of the elements of
+  // `generateFormattedTriples`. If reading `rowIndices` throws, the chunks
+  // before the exception are yielded first. With `TableLifetime::WholeExport`,
+  // the chunks refer to the rows of the tables; otherwise, the columns of the
+  // tables that the template uses are copied.
+  //
+  // Memory: at most `maxNumberOfChunksInFlight` chunks are submitted but not
+  // yet yielded (each with its rows and its formatted triples), plus the rows
+  // of the next chunk, which are read (and, for a lazy result, computed) one
+  // chunk ahead, plus the chunk that is being yielded. Destroying the result
+  // stops the chunks in flight and waits for them. This must not be consumed
+  // from a thread of the executor (see `TaskQueueOnExecutor`).
+  //
+  // Precondition: `config.mode_` is `DeduplicationMode::None` (the
+  // deduplication depends on the order in which the triples are seen).
+  static InputRangeTypeErased<FormattedChunk> generateFormattedChunksInParallel(
+      const Triples& templateTriples,
+      const VariableToColumnMap& variableColumns,
+      InputRangeTypeErased<TableWithRange> rowIndices,
+      TableLifetime tableLifetime, size_t rowOffset,
+      ad_utility::MediaType mediaType, const EvaluationConfig& config,
+      size_t maxNumberOfChunksInFlight);
 
   // Instantiates `templateTriples` for each row in `rowIndices` and returns a
   // lazy range of `StringTriple`.
