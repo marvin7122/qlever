@@ -6,11 +6,13 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
 
 #include "./util/IdTableHelpers.h"
 #include "./util/IndexTestHelpers.h"
 #include "engine/ConstructBatchEvaluator.h"
+#include "global/Constants.h"
 
 namespace {
 
@@ -18,17 +20,17 @@ using namespace qlever::constructExport;
 using ::testing::Each;
 using ::testing::ElementsAre;
 using ::testing::Eq;
-using ::testing::Field;
 using ::testing::Optional;
 using ::testing::Pointee;
+using ::testing::Property;
 
 // Matcher for `std::optional<EvaluatedTerm>` (i.e.
 // `std::optional<std::shared_ptr<const EvaluatedTermData>>`): asserts the
-// optional is non-empty and the pointed-to term's `rdfTermString_` field equals
+// optional is non-empty and the pointed-to term's `rdfTermString()` equals
 // `expected`.
 constexpr auto evalTerm = [](const std::string& expected) {
-  return Optional(
-      Pointee(Field(&EvaluatedTermData::rdfTermString_, Eq(expected))));
+  return Optional(Pointee(Property(&EvaluatedTermData::rdfTermString,
+                                   Eq(std::string_view{expected}))));
 };
 
 const EvaluatedVariableValues& getColumn(const BatchEvaluationResult& result,
@@ -285,6 +287,87 @@ TEST_F(ConstructBatchEvaluatorTest, localVocabIdBypassesIdCache) {
   EXPECT_FALSE(idCache.tryGet(idLocal).has_value());
   EXPECT_TRUE(idCache.tryGet(idS_).has_value());
   EXPECT_TRUE(idCache.tryGet(idO_).has_value());
+}
+
+// The words of the vocabulary are not copied: their terms view the words in
+// the batch-lookup result, which they keep alive. So a term in `idCache` stays
+// readable after the batch that looked it up is gone, also when later batches
+// are evaluated with the same cache.
+TEST_F(ConstructBatchEvaluatorTest, borrowedVocabTermsOutliveTheirBatch) {
+  IdCache idCache{1024};
+  {
+    auto idTable = makeIdTableFromVector({{idS_}, {getId_("\"hello\"")}});
+    auto result = evaluateIdTable({0}, idTable, idCache);
+    ASSERT_EQ(result.numRows_, 2);
+    EXPECT_THAT(getColumn(result, 0),
+                ElementsAre(evalTerm("<s>"), evalTerm("\"hello\"")));
+  }
+  {
+    // A later batch with other words and one cache hit.
+    auto idTable = makeIdTableFromVector({{idO_}, {idS_}, {idQ_}});
+    auto result = evaluateIdTable({0}, idTable, idCache);
+    EXPECT_THAT(getColumn(result, 0),
+                ElementsAre(evalTerm("<o>"), evalTerm("<s>"), evalTerm("<q>")));
+  }
+
+  for (const auto& [id, expected] : std::vector<std::pair<Id, std::string>>{
+           {idS_, "<s>"},
+           {getId_("\"hello\""), "\"hello\""},
+           {idO_, "<o>"},
+           {idQ_, "<q>"}}) {
+    const auto cached = idCache.tryGet(id);
+    ASSERT_TRUE(cached.has_value()) << expected;
+    EXPECT_THAT(cached.value(), evalTerm(expected));
+    EXPECT_TRUE(cached.value().value()->isBorrowed()) << expected;
+  }
+}
+
+// A term of a `LocalVocab` word owns its bytes, so it stays readable after the
+// `LocalVocab` (that is, the result block that it belongs to) is gone.
+TEST_F(ConstructBatchEvaluatorTest, localVocabTermOutlivesItsLocalVocab) {
+  IdCache idCache{1024};
+  EvaluatedVariableValues column;
+  {
+    LocalVocab localVocab;
+    const Id idLocal =
+        Id::makeFromLocalVocabIndex(localVocab.getIndexAndAddIfNotContained(
+            LocalVocabEntry::literalWithoutQuotes(
+                "local-word", qec_->getLocalVocabContext())));
+    auto idTable = makeIdTableFromVector({{idLocal}, {idS_}});
+    const BatchEvaluationContext ctx{idTable.asStaticView<0>(), 0,
+                                     idTable.numRows()};
+    column = getColumn(
+        ConstructBatchEvaluator::evaluateBatch(std::vector<ColumnIndex>{0}, ctx,
+                                               localVocab, index_, idCache),
+        0);
+  }
+  ASSERT_EQ(column.size(), 2);
+  EXPECT_THAT(column, ElementsAre(evalTerm("\"local-word\""), evalTerm("<s>")));
+  EXPECT_FALSE(column.at(0).value()->isBorrowed());
+  EXPECT_TRUE(column.at(1).value()->isBorrowed());
+}
+
+// A blank-node IRI of the vocabulary is serialized as a different string
+// (`_:b0`) than the word, so its term owns that string instead of viewing the
+// word.
+TEST_F(ConstructBatchEvaluatorTest, blankNodeIriOfTheVocabularyIsOwned) {
+  const std::string blankNodeIri =
+      absl::StrCat(QLEVER_INTERNAL_BLANK_NODE_IRI_PREFIX, "_:b0>");
+  QueryExecutionContext* qec =
+      ad_utility::testing::getQec(absl::StrCat(blankNodeIri, " <p> <o> ."));
+  const Index& index = qec->getIndex();
+  auto getId = ad_utility::testing::makeGetId(index);
+  auto idTable = makeIdTableFromVector({{getId(blankNodeIri)}, {getId("<o>")}});
+  IdCache idCache{1024};
+  const BatchEvaluationContext ctx{idTable.asStaticView<0>(), 0,
+                                   idTable.numRows()};
+  auto result = ConstructBatchEvaluator::evaluateBatch(
+      std::vector<ColumnIndex>{0}, ctx, localVocab_, index, idCache);
+
+  const auto& column = getColumn(result, 0);
+  EXPECT_THAT(column, ElementsAre(evalTerm("_:b0"), evalTerm("<o>")));
+  EXPECT_FALSE(column.at(0).value()->isBorrowed());
+  EXPECT_TRUE(column.at(1).value()->isBorrowed());
 }
 
 // Simulates the `IdTable` that would result from:

@@ -13,37 +13,69 @@
 #include <array>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
 #include "global/Id.h"
 #include "index/LocalVocab.h"
+#include "index/vocabulary/VocabularyTypes.h"
+#include "util/OverloadCallOperator.h"
 
 namespace qlever::constructExport {
 
 // Canonical representation of a resolved RDF term stored in the LRU cache.
 //
 // Two fundamentally different representations are used, distinguished by
-// whether `rdfTermDataType_` is null:
-// 1) `rdfTermDataType_` != nullptr: `rdfTermString_` represents an encoded
-// literal (directly encoded into `ValueId`). `rdfTermString_` is the raw
-// unquoted value (e.g. `42` for an xsd:int, `3.14` for an xsd:decimal). `type`
-// points to the compile-time XSD type string constant (e.g. XSD_INT_TYPE).
-// Whether to emit the short form ("42") or the fully-qualified form
-// ("\"42\"^^<xsd:integer>") is decided at formatting time by `formatTerm`.
-// 2) `rdfTermDataType` == nullptr: an IRI, a blank node, or a
-// vocabulary-indexed literal. `rdfTermString_` already holds the complete,
+// whether `rdfTermDataType()` is null:
+// 1) `rdfTermDataType()` != nullptr: `rdfTermString()` represents an encoded
+// literal (directly encoded into `ValueId`). `rdfTermString()` is the raw
+// unquoted value (e.g. `42` for an xsd:int, `3.14` for an xsd:decimal). The
+// type points to the compile-time XSD type string constant (e.g.
+// XSD_INT_TYPE). Whether to emit the short form ("42") or the fully-qualified
+// form ("\"42\"^^<xsd:integer>") is decided at formatting time by
+// `formatTerm`.
+// 2) `rdfTermDataType()` == nullptr: an IRI, a blank node, or a
+// vocabulary-indexed literal. `rdfTermString()` already holds the complete,
 // ready-to-emit serialized form (e.g. "<http://example.org/>", "\"hello\"@en").
 // No further formatting is needed; the value is returned as-is for every
 // format. This is the legacy format returned by `ExportIds::idToStringAndType`.
-struct EvaluatedTermData {
-  std::string rdfTermString_;
+//
+// The bytes of `rdfTermString()` are either owned by this object, or (for a
+// word of the vocabulary, see `BorrowedVocabWord`) viewed in the batch-lookup
+// result that the word was read from, which this object keeps alive. A
+// borrowed word is always of the second kind.
+class EvaluatedTermData {
+ private:
+  std::variant<std::string, BorrowedVocabWord> rdfTerm_;
   const char* rdfTermDataType_;  // non-null iff encoded literal (case 1 above)
 
+ public:
   //____________________________________________________________________________
   EvaluatedTermData(std::string rdfTermString, const char* rdfTermDataType)
-      : rdfTermString_{std::move(rdfTermString)},
-        rdfTermDataType_{rdfTermDataType} {}
+      : rdfTerm_{std::move(rdfTermString)}, rdfTermDataType_{rdfTermDataType} {}
+
+  // A term that views the vocabulary word `word` instead of copying it.
+  explicit EvaluatedTermData(BorrowedVocabWord word)
+      : rdfTerm_{std::move(word)}, rdfTermDataType_{nullptr} {}
+
+  // The string of the term, see above. Valid as long as this object lives.
+  std::string_view rdfTermString() const {
+    return std::visit(
+        ad_utility::OverloadCallOperator{
+            [](const std::string& owned) -> std::string_view { return owned; },
+            [](const BorrowedVocabWord& borrowed) { return borrowed.word(); }},
+        rdfTerm_);
+  }
+
+  // The XSD type of an encoded literal, `nullptr` otherwise, see above.
+  const char* rdfTermDataType() const { return rdfTermDataType_; }
+
+  // True iff the bytes of `rdfTermString()` are viewed in a batch-lookup
+  // result instead of owned. Only used by tests.
+  bool isBorrowed() const {
+    return std::holds_alternative<BorrowedVocabWord>(rdfTerm_);
+  }
 };
 
 // Shared ownership of `EvaluatedTermData`. The shared_ptr allows cheap copying

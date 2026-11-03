@@ -9,8 +9,31 @@
 #include "engine/ConstructBatchEvaluator.h"
 
 #include "index/ExportIds.h"
+#include "util/OverloadCallOperator.h"
 
 namespace qlever::constructExport {
+
+namespace {
+// Convert one result of `idsToStringAndTypeOrBorrowedWord` to an
+// `EvaluatedTerm`. A borrowed word stays borrowed (its bytes are not copied).
+std::optional<EvaluatedTerm> toEvaluatedTerm(
+    std::optional<ql::exportIds::StringAndTypeOrBorrowedWord>&& resolved) {
+  if (!resolved.has_value()) {
+    return std::nullopt;
+  }
+  return std::visit(
+      ad_utility::OverloadCallOperator{
+          [](std::pair<std::string, const char*>&& stringAndType) {
+            auto& [str, type] = stringAndType;
+            return std::make_shared<const EvaluatedTermData>(std::move(str),
+                                                             type);
+          },
+          [](BorrowedVocabWord&& word) {
+            return std::make_shared<const EvaluatedTermData>(std::move(word));
+          }},
+      std::move(resolved.value()));
+}
+}  // namespace
 
 // _____________________________________________________________________________
 BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
@@ -32,15 +55,6 @@ BatchEvaluationResult ConstructBatchEvaluator::evaluateBatch(
 }
 
 // _____________________________________________________________________________
-std::optional<EvaluatedTerm>
-ConstructBatchEvaluator::stringAndTypeToEvaluatedTerm(
-    std::optional<std::pair<std::string, const char*>>&& optStringAndType) {
-  if (!optStringAndType.has_value()) return std::nullopt;
-  auto& [str, type] = optStringAndType.value();
-  return std::make_shared<const EvaluatedTermData>(std::move(str), type);
-}
-
-// _____________________________________________________________________________
 EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
     size_t idTableColumnIdx, const BatchEvaluationContext& ctx,
     const LocalVocab& localVocab, const Index& index, IdCache& idCache) {
@@ -51,8 +65,8 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
 
   // Build a `(rowInBatch, Id)` index vector and sort by `Id`. This ensures
   // that `VocabIndex` IDs form a contiguous, sorted block (see
-  // `idsToStringAndType`), converting vocabulary lookups from random-access
-  // reads to sequential reads for I/O locality.
+  // `idsToStringAndTypeOrBorrowedWord`), converting vocabulary lookups from
+  // random-access reads to sequential reads for I/O locality.
   auto sortedIndices = ::ranges::to_vector(::ranges::views::enumerate(col));
 
   ql::ranges::sort(sortedIndices, {}, ad_utility::second);
@@ -88,8 +102,13 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
   }
 
   // Phase 2: batch-resolve cache misses. `missIds` is deduplicated and sorted
-  // (inherited from `sortedIndices`), satisfying the `idsToStringAndType`
-  // precondition for sequential VocabIndex I/O. `LocalVocabIndex` Ids are
+  // (inherited from `sortedIndices`), satisfying the
+  // `idsToStringAndTypeOrBorrowedWord` precondition for sequential VocabIndex
+  // I/O. Most vocabulary words are not copied: their term views the word in
+  // the batch-lookup result, which the term keeps alive, also in `idCache`
+  // after this batch. A cached term thus keeps the words of its whole batch
+  // lookup in memory, so the memory held by `idCache` is bounded by its
+  // capacity times the size of one batch lookup. `LocalVocabIndex` Ids are
   // resolved per block but never inserted into `idCache`: the
   // `LocalVocabEntry` they point to is owned by the current result block's
   // `LocalVocab` and would dangle once the export advances to the next block,
@@ -97,13 +116,12 @@ EvaluatedVariableValues ConstructBatchEvaluator::evaluateVariableByColumn(
   // (heap-use-after-free in `LocalVocabEntry::compareThreeWay`). Resolving
   // them per block is fine performance-wise: `LocalVocabEntry`s live in RAM,
   // so there is no disk I/O to amortize across batches.
-  auto missResolved =
-      ql::exportIds::idsToStringAndType(index, missIds, localVocab);
+  auto missResolved = ql::exportIds::idsToStringAndTypeOrBorrowedWord(
+      index, missIds, localVocab);
   for (auto&& [id, resolved, rows] :
        ::ranges::views::zip(missIds, missResolved, missRows)) {
     auto evaluate = [&resolved](const Id&) {
-      return ConstructBatchEvaluator::stringAndTypeToEvaluatedTerm(
-          std::move(resolved));
+      return toEvaluatedTerm(std::move(resolved));
     };
     const std::optional<EvaluatedTerm> evaluated =
         id.getDatatype() == Datatype::LocalVocabIndex
