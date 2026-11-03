@@ -2613,6 +2613,34 @@ TEST(ExportQueryExecutionTrees, compensateForLimitOffsetClause) {
 }
 
 // _____________________________________________________________________________
+// The blank nodes of a CONSTRUCT template are numbered by the position of the
+// row in the result, also when the OFFSET ends inside a block of a lazy
+// result, so that different rows get different blank nodes.
+TEST(ExportQueryExecutionTrees, constructBlankNodesWithOffsetInsideBlock) {
+  auto* qec = ad_utility::testing::getQec();
+  std::vector<IdTable> blocks;
+  using ad_utility::testing::IntId;
+  blocks.push_back(makeIdTableFromVector({{0}, {1}, {2}}, IntId));
+  blocks.push_back(makeIdTableFromVector({{3}, {4}}, IntId));
+  auto qet = ad_utility::makeExecutionTree<ValuesForTesting>(
+      qec, std::move(blocks),
+      std::vector<std::optional<Variable>>{Variable{"?a"}}, true);
+  qec->clearCacheUnpinnedOnly();
+  auto pq = parseQuery("CONSTRUCT { _:x <p> ?a } WHERE { ?a ?b ?c } OFFSET 2");
+  ad_utility::Timer timer{ad_utility::Timer::Started};
+  std::string result;
+  for (const auto& batch : ExportQueryExecutionTrees::computeResult(
+           pq, *qet, ad_utility::MediaType::turtle, timer,
+           std::make_shared<ad_utility::CancellationHandle<>>())) {
+    result += batch;
+  }
+  EXPECT_EQ(result,
+            "_:u2_x <p> 2 .\n"
+            "_:u3_x <p> 3 .\n"
+            "_:u4_x <p> 4 .\n");
+}
+
+// _____________________________________________________________________________
 TEST(ExportQueryExecutionTrees, EncodedIriManagerUsage) {
   // Test that encoded IRIs are properly handled during export
 
