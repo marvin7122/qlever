@@ -527,7 +527,7 @@ TEST(LiburingRing, cancelledReadsCompleteAsNoOps) {
   auto ring = ad_utility::makeLiburingRing(ad_utility::RingSize{8});
   constexpr size_t NUMBER_OF_READS = 3;
   std::vector<std::string> buffers(NUMBER_OF_READS, std::string(4, '-'));
-  for (size_t i = 0; i < NUMBER_OF_READS; ++i) {
+  for (size_t i : ql::views::iota(size_t{0}, NUMBER_OF_READS)) {
     ASSERT_TRUE(ring->prepareRead(fd, buffers[i].data(), 4, 4 * i, i));
   }
   EXPECT_THAT(ring->cancelQueued(noOp), ElementsAre(0, 1, 2));
@@ -560,11 +560,11 @@ TEST(LiburingRing, cancelledReadsCompleteAsNoOps) {
 TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
   using ad_utility::testing::FakeIoUring;
   std::string file;
-  for (size_t i = 0; i < 64; ++i) {
+  for (size_t i : ql::views::iota(size_t{0}, size_t{64})) {
     file += absl::StrFormat("%04zu", i);
   }
   FakeIoUring::FaultCounts total;
-  for (uint32_t seed = 0; seed < 300; ++seed) {
+  for (uint32_t seed : ql::views::iota(uint32_t{0}, uint32_t{300})) {
     SCOPED_TRACE(absl::StrCat("seed ", seed));
     std::mt19937 random{seed};
     auto pick = [&random](std::initializer_list<double> values) {
@@ -586,11 +586,12 @@ TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
     ad_utility::IoUringPolicy policy{ad_utility::RingSize{ringSize},
                                      std::move(fakeRing)};
 
-    for (size_t batchIndex = 0; batchIndex < 10; ++batchIndex) {
+    for (size_t batchIndex : ql::views::iota(size_t{0}, size_t{10})) {
       ReadBatchForTesting batch;
       const size_t numReads =
           std::uniform_int_distribution<size_t>{0, 40}(random);
-      for (size_t i = 0; i < numReads; ++i) {
+      for ([[maybe_unused]] size_t read :
+           ql::views::iota(size_t{0}, numReads)) {
         const size_t numBytes =
             std::uniform_int_distribution<size_t>{1, 16}(random);
         const size_t offset = std::uniform_int_distribution<size_t>{
@@ -609,12 +610,11 @@ TEST(IoUringPolicyModel, randomFaultsNeverLeaveReadsInTheRing) {
       ASSERT_EQ(fake.numReadsInRing(), 0u);
       EXPECT_EQ(threw, fake.injectedReadFault() || fake.cancelled());
       if (!threw) {
-        std::vector<std::string> expected;
-        expected.reserve(numReads);
-        for (size_t i = 0; i < numReads; ++i) {
-          expected.push_back(
-              file.substr(batch.offset(i), batch.result()[i].size()));
-        }
+        const auto expected = ::ranges::to<std::vector>(
+            ql::views::iota(size_t{0}, numReads) |
+            ql::views::transform([&batch, &file](size_t i) {
+              return file.substr(batch.offset(i), batch.result()[i].size());
+            }));
         EXPECT_THAT(batch.result(), ::testing::ElementsAreArray(expected));
       }
     }

@@ -84,6 +84,8 @@ namespace {
       operation, " failed in IoUringPolicy: ", std::strerror(error),
       ". The kernel may still write into the buffers of submitted reads, so "
       "the process cannot continue safely. Terminating");
+  // `std::endl` on purpose: `std::terminate` does not flush the streams, so
+  // without the flush the reason for the termination could be lost.
   AD_LOG_ERROR << message << std::endl;
   std::cerr << message << std::endl;
   std::terminate();
@@ -162,11 +164,16 @@ class LiburingRing final : public IoUringInterface {
   std::vector<uint64_t> cancelQueued(uint64_t noOpRequestId) override {
     // liburing consumes completions with this id itself (see
     // `IoUringPolicy::NO_OP_REQUEST_ID`).
-    AD_CORRECTNESS_CHECK(noOpRequestId != LIBURING_UDATA_TIMEOUT);
+    AD_CORRECTNESS_CHECK(noOpRequestId != LIBURING_UDATA_TIMEOUT,
+                         "liburing consumes the completions of "
+                         "LIBURING_UDATA_TIMEOUT itself, so a no-op with this "
+                         "id would never be reaped.");
     // Without `IORING_SETUP_SQPOLL`, the kernel reads SQEs only inside our own
     // `io_uring_enter` calls, so the SQEs it has not taken can safely be
     // rewritten between two calls.
-    AD_CORRECTNESS_CHECK((ring_.flags & IORING_SETUP_SQPOLL) == 0);
+    AD_CORRECTNESS_CHECK((ring_.flags & IORING_SETUP_SQPOLL) == 0,
+                         "Rewriting queued SQEs is only safe if the kernel "
+                         "reads SQEs only inside io_uring_enter (no SQPOLL).");
     // The queued SQEs are the `io_uring_sq_ready` positions from the kernel's
     // head on, and liburing hands out the SQE of position `p` as
     // `sqes[p & mask]` (`io_uring_get_sqe`, in every version). The SQ array is
@@ -261,7 +268,9 @@ void IoUringPolicy::run(int fd, ql::span<const uint64_t> offsets,
                ringSize_.value()) {
       const size_t i = batch.numQueued;
       AD_CORRECTNESS_CHECK(
-          ring_->prepareRead(fd, buffers[i], batch.numBytes[i], offsets[i], i));
+          ring_->prepareRead(fd, buffers[i], batch.numBytes[i], offsets[i], i),
+          "Fewer than `ringSize` requests are in the ring, so a free SQE must "
+          "exist.");
       batch.states[i] = ReadState::Queued;
       ++batch.numQueued;
     }
@@ -272,8 +281,11 @@ void IoUringPolicy::run(int fd, ql::span<const uint64_t> offsets,
     if (numInKernel == 0) {
       // The queue is empty or holds only no-ops (`submit` cancels the reads it
       // cannot submit), so the batch is done or has failed.
-      AD_CORRECTNESS_CHECK(batch.numDone == numReads ||
-                           batch.error.has_value());
+      AD_CORRECTNESS_CHECK(
+          batch.numDone == numReads || batch.error.has_value(),
+          "With nothing in the kernel and no read left to queue, every read "
+          "must be done, unless the batch failed and its reads were "
+          "cancelled.");
       return;
     }
     // Wait for a wave of completions, but never for more requests than the
@@ -348,10 +360,13 @@ void IoUringPolicy::onTaken(Batch& batch, size_t numTaken) {
   const size_t numNoOps = std::min(numTaken, numNoOpsQueued_);
   numNoOpsQueued_ -= numNoOps;
   numNoOpsInKernel_ += numNoOps;
-  for (size_t k = numNoOps; k < numTaken; ++k) {
-    AD_CORRECTNESS_CHECK(batch.numTaken < batch.numQueued);
+  for ([[maybe_unused]] size_t taken : ql::views::iota(numNoOps, numTaken)) {
+    AD_CORRECTNESS_CHECK(batch.numTaken < batch.numQueued,
+                         "The kernel cannot take more SQEs than are queued.");
     ReadState& state = batch.states[batch.numTaken++];
-    AD_CORRECTNESS_CHECK(state == ReadState::Queued);
+    AD_CORRECTNESS_CHECK(state == ReadState::Queued,
+                         "The kernel takes SQEs in queue order, so the next "
+                         "SQE it takes is the next queued read.");
     state = ReadState::InKernel;
   }
 }
@@ -359,12 +374,16 @@ void IoUringPolicy::onTaken(Batch& batch, size_t numTaken) {
 //______________________________________________________________________________
 void IoUringPolicy::cancelQueuedReads(Batch& batch, std::string errorMessage) {
   const std::vector<uint64_t> cancelled = ring_->cancelQueued(NO_OP_REQUEST_ID);
-  AD_CORRECTNESS_CHECK(cancelled.size() == batch.numQueued - batch.numTaken);
+  AD_CORRECTNESS_CHECK(cancelled.size() == batch.numQueued - batch.numTaken,
+                       "Every queued read of the batch, and no other read, "
+                       "must have been rewritten into a no-op.");
   for (const uint64_t requestId : cancelled) {
-    AD_CORRECTNESS_CHECK(requestId >= batch.numTaken &&
-                         requestId < batch.numQueued);
+    AD_CORRECTNESS_CHECK(
+        requestId >= batch.numTaken && requestId < batch.numQueued,
+        "The queued reads are those in [numTaken, numQueued).");
     ReadState& state = batch.states[requestId];
-    AD_CORRECTNESS_CHECK(state == ReadState::Queued);
+    AD_CORRECTNESS_CHECK(state == ReadState::Queued,
+                         "Only a queued read can be cancelled.");
     state = ReadState::Done;
   }
   // The cancelled reads are done; their SQEs stay queued as no-ops.
@@ -378,9 +397,11 @@ void IoUringPolicy::cancelQueuedReads(Batch& batch, std::string errorMessage) {
 
 //______________________________________________________________________________
 void IoUringPolicy::reap(Batch& batch, unsigned minComplete) {
-  AD_CORRECTNESS_CHECK(minComplete > 0 &&
-                       minComplete <=
-                           batch.numReadsInKernel() + numNoOpsInKernel_);
+  AD_CORRECTNESS_CHECK(
+      minComplete > 0 &&
+          minComplete <= batch.numReadsInKernel() + numNoOpsInKernel_,
+      "A wait for no completion, or for more completions than requests in "
+      "the kernel, would return at once or block forever.");
   int ret = 0;
   do {
     ret = ring_->waitForCompletions(minComplete);
@@ -398,14 +419,18 @@ void IoUringPolicy::reap(Batch& batch, unsigned minComplete) {
     for (const auto& [requestId, result] :
          ql::views::take(completions, numReady)) {
       if (requestId == NO_OP_REQUEST_ID) {
-        AD_CORRECTNESS_CHECK(numNoOpsInKernel_ > 0);
+        AD_CORRECTNESS_CHECK(
+            numNoOpsInKernel_ > 0,
+            "A no-op completes only after the kernel took it.");
         --numNoOpsInKernel_;
         continue;
       }
       // A read's request id is its index in the batch.
-      AD_CORRECTNESS_CHECK(requestId < batch.numTaken);
+      AD_CORRECTNESS_CHECK(requestId < batch.numTaken,
+                           "Only a read that the kernel took can complete.");
       ReadState& state = batch.states[requestId];
-      AD_CORRECTNESS_CHECK(state == ReadState::InKernel);
+      AD_CORRECTNESS_CHECK(state == ReadState::InKernel,
+                           "Each read completes exactly once.");
       state = ReadState::Done;
       ++batch.numDone;
       // `result` < 0 is `-errno`. A result smaller than requested (a partial
@@ -431,8 +456,11 @@ void IoUringPolicy::reap(Batch& batch, unsigned minComplete) {
 
 //______________________________________________________________________________
 void IoUringPolicy::checkQueue(const Batch& batch) const {
-  AD_CORRECTNESS_CHECK(ring_->numQueued() ==
-                       numNoOpsQueued_ + (batch.numQueued - batch.numTaken));
+  AD_CORRECTNESS_CHECK(
+      ring_->numQueued() ==
+          numNoOpsQueued_ + (batch.numQueued - batch.numTaken),
+      "The SQEs in the ring's queue must be exactly the queued no-ops and "
+      "the queued reads of the batch.");
 }
 
 #endif  // QLEVER_HAS_IO_URING
