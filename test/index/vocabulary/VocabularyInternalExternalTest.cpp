@@ -5,6 +5,7 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
+#include "../../util/RuntimeParametersTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "index/vocabulary/VocabularyInternalExternal.h"
@@ -238,6 +239,31 @@ TEST(VocabularyInternalExternal, LookupBatchResultOutlivesLaterLookups) {
   vocab.close();
   for (const auto& [index, word] : ::ranges::views::zip(first, *firstResult)) {
     EXPECT_EQ(word, words[index]);
+  }
+}
+
+// _____________________________________________________________________________
+// Test that the runtime parameter `vocabulary-internal-rank-directory` decides
+// at `open` whether the internal vocabulary builds a rank directory, and that
+// the lookups return the same words either way.
+TEST(VocabularyInternalExternal, RankDirectoryOfInternalVocabulary) {
+  const auto words = makeWords(1000);
+  for (const bool useRankDirectory : {false, true}) {
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::vocabularyInternalRankDirectory_>(useRankDirectory);
+    const auto vocab =
+        createVocabulary("RankDirectoryOfInternalVocabulary")(words);
+    // `[0, 1000)` fits in 3 blocks of 448 indices.
+    EXPECT_EQ(vocab.internalVocab().numberOfBytesOfRankDirectory(),
+              useRankDirectory ? 3 * 64 : 0);
+    for (const size_t index : {0, 1, 2, 447, 448, 449, 998, 999}) {
+      EXPECT_EQ(isInternal(vocab, index), index == 0 || index % 2 == 1)
+          << index;
+      EXPECT_EQ(vocab[index], words[index]);
+    }
+    checkLookupBatch(
+        vocab, ::ranges::to_vector(ql::views::iota(size_t{0}, words.size())));
+    checkLookupBatch(vocab, std::vector<size_t>{999, 0, 448, 447, 2, 449});
   }
 }
 

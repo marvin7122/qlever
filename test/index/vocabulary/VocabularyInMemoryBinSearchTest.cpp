@@ -5,6 +5,8 @@
 #include <absl/cleanup/cleanup.h>
 #include <gtest/gtest.h>
 
+#include <array>
+
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
@@ -158,12 +160,14 @@ const std::vector<uint64_t> indicesWithHoles{0, 3, 4, 9};
 const std::vector<uint64_t> missingIndices{1, 2, 5, 6, 7, 8, 10, 12345};
 
 // Create a `VocabularyInMemoryBinSearch` with the given `words` and `indices`
-// via a `WordWriter` that writes to `filename`. The vocabulary keeps all its
-// contents in RAM, so the caller may delete the files as soon as this function
-// has returned.
+// via a `WordWriter` that writes to `filename`, and open it with the given
+// `positionLookup`. The vocabulary keeps all its contents in RAM, so the caller
+// may delete the files as soon as this function has returned.
 VocabularyInMemoryBinSearch createVocabularyWithIndices(
     const std::string& filename, const std::vector<std::string>& words,
-    const std::vector<uint64_t>& indices) {
+    const std::vector<uint64_t>& indices,
+    VocabularyInMemoryBinSearch::PositionLookup positionLookup =
+        VocabularyInMemoryBinSearch::PositionLookup::BinarySearch) {
   AD_CORRECTNESS_CHECK(words.size() == indices.size());
   {
     VocabularyInMemoryBinSearch::WordWriter writer{filename};
@@ -173,9 +177,15 @@ VocabularyInMemoryBinSearch createVocabularyWithIndices(
     writer.finish();
   }
   VocabularyInMemoryBinSearch vocabulary;
-  vocabulary.open(filename);
+  vocabulary.open(filename, positionLookup);
   return vocabulary;
 }
+
+// All ways to find the position of an index.
+constexpr std::array positionLookups{
+    VocabularyInMemoryBinSearch::PositionLookup::BinarySearch,
+    VocabularyInMemoryBinSearch::PositionLookup::RankDirectory,
+    VocabularyInMemoryBinSearch::PositionLookup::RankDirectoryIfSmaller};
 
 // An `absl::Cleanup` that deletes all the files that a
 // `VocabularyInMemoryBinSearch` with the given base `filename` consists of.
@@ -209,29 +219,77 @@ std::vector<std::pair<uint64_t, std::string>> expectedIndicesAndWords() {
 TEST(VocabularyInMemoryBinSearch, positionOfIndexAndAccessOperator) {
   std::string filename = gtestCurrentTestName();
   auto cleanup = getFileCleanup(filename);
-  auto vocab =
-      createVocabularyWithIndices(filename, wordsWithHoles, indicesWithHoles);
+  for (const auto positionLookup : positionLookups) {
+    auto vocab = createVocabularyWithIndices(filename, wordsWithHoles,
+                                             indicesWithHoles, positionLookup);
 
-  ASSERT_EQ(vocab.size(), wordsWithHoles.size());
-  EXPECT_THAT(vocab.indices(), ::testing::ElementsAreArray(indicesWithHoles));
-  for (size_t position = 0; position < wordsWithHoles.size(); ++position) {
-    uint64_t index = indicesWithHoles.at(position);
-    EXPECT_EQ(vocab.positionOfIndex(index), std::optional{position});
-    EXPECT_EQ(vocab.indexAtPosition(position), index);
-    EXPECT_EQ(vocab.wordAtPosition(position), wordsWithHoles.at(position));
-    EXPECT_EQ(vocab[index], std::optional{wordsWithHoles.at(position)});
+    ASSERT_EQ(vocab.size(), wordsWithHoles.size());
+    EXPECT_THAT(vocab.indices(), ::testing::ElementsAreArray(indicesWithHoles));
+    for (size_t position = 0; position < wordsWithHoles.size(); ++position) {
+      uint64_t index = indicesWithHoles.at(position);
+      EXPECT_EQ(vocab.positionOfIndex(index), std::optional{position});
+      EXPECT_EQ(vocab.indexAtPosition(position), index);
+      EXPECT_EQ(vocab.wordAtPosition(position), wordsWithHoles.at(position));
+      EXPECT_EQ(vocab[index], std::optional{wordsWithHoles.at(position)});
+    }
+
+    // The indices that are not contained (the "holes") have neither a position
+    // nor a word.
+    for (uint64_t index : missingIndices) {
+      EXPECT_EQ(vocab.positionOfIndex(index), std::nullopt);
+      EXPECT_EQ(vocab[index], std::nullopt);
+    }
+
+    // A position that is out of range is a bug and hence throws.
+    EXPECT_THROW(vocab.indexAtPosition(vocab.size()), ad_utility::Exception);
+    EXPECT_THROW(vocab.wordAtPosition(vocab.size()), ad_utility::Exception);
+  }
+}
+
+// _____________________________________________________________________________
+TEST(VocabularyInMemoryBinSearch, rankDirectory) {
+  constexpr auto BinarySearch =
+      VocabularyInMemoryBinSearch::PositionLookup::BinarySearch;
+  constexpr auto RankDirectory =
+      VocabularyInMemoryBinSearch::PositionLookup::RankDirectory;
+  std::string filename = gtestCurrentTestName();
+  auto cleanup = getFileCleanup(filename);
+  auto vocab = createVocabularyWithIndices(filename, wordsWithHoles,
+                                           indicesWithHoles, RankDirectory);
+  // One block of 448 indices covers `[0, endIndex()) = [0, 10)`.
+  EXPECT_EQ(vocab.numberOfBytesOfRankDirectory(), 64);
+  EXPECT_EQ(createVocabularyWithIndices(filename, wordsWithHoles,
+                                        indicesWithHoles, BinarySearch)
+                .numberOfBytesOfRankDirectory(),
+            0);
+  EXPECT_EQ(createVocabularyWithIndices(filename, {}, {}, RankDirectory)
+                .numberOfBytesOfRankDirectory(),
+            0);
+
+  // The batch lookup (which finds the positions via `positionOfIndex`) yields
+  // the same words, also for the holes.
+  std::vector<size_t> indices{4, 0, 9, 3, 0, 5, 12345};
+  auto expected = createVocabularyWithIndices(filename, wordsWithHoles,
+                                              indicesWithHoles, BinarySearch)
+                      .lookupBatch(indices);
+  auto result = vocab.lookupBatch(indices);
+  ASSERT_EQ(result->size(), expected->size());
+  for (size_t i = 0; i < indices.size(); ++i) {
+    EXPECT_EQ((*result)[i], (*expected)[i]) << indices[i];
   }
 
-  // The indices that are not contained (the "holes") have neither a position
-  // nor a word.
-  for (uint64_t index : missingIndices) {
-    EXPECT_EQ(vocab.positionOfIndex(index), std::nullopt);
-    EXPECT_EQ(vocab[index], std::nullopt);
-  }
-
-  // A position that is out of range is a bug and hence throws.
-  EXPECT_THROW(vocab.indexAtPosition(vocab.size()), ad_utility::Exception);
-  EXPECT_THROW(vocab.wordAtPosition(vocab.size()), ad_utility::Exception);
+  // Deserialization uses the binary search, closing drops the directory.
+  ad_utility::serialization::ByteBufferWriteSerializer writeSerializer;
+  writeSerializer << vocab;
+  VocabularyInMemoryBinSearch readVocab;
+  ad_utility::serialization::ByteBufferReadSerializer readSerializer{
+      std::move(writeSerializer).data()};
+  readSerializer >> readVocab;
+  expectVocabulariesAreEqual(vocab, readVocab);
+  EXPECT_EQ(readVocab.numberOfBytesOfRankDirectory(), 0);
+  vocab.close();
+  EXPECT_EQ(vocab.numberOfBytesOfRankDirectory(), 0);
+  EXPECT_EQ(vocab.positionOfIndex(3), std::nullopt);
 }
 
 // _____________________________________________________________________________

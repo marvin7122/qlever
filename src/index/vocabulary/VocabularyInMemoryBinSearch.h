@@ -11,6 +11,7 @@
 
 #include "backports/algorithm.h"
 #include "backports/span.h"
+#include "index/vocabulary/SortedVocabIndices.h"
 #include "index/vocabulary/VocabularyBinarySearchMixin.h"
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Algorithm.h"
@@ -23,7 +24,9 @@
 
 // A vocabulary that stores all words in memory. The vocabulary supports
 // "holes", meaning that the indices of the contained words don't have to be
-// contiguous (but ascending). All accesses are implemented using binary search.
+// contiguous (but ascending). All accesses are implemented using binary search,
+// except for the lookup of the position of an index, which can also use a rank
+// directory (see `PositionLookup`).
 class VocabularyInMemoryBinSearch
     : public VocabularyBinarySearchMixin<VocabularyInMemoryBinSearch> {
  public:
@@ -31,8 +34,10 @@ class VocabularyInMemoryBinSearch
   using StringView = std::basic_string_view<CharType>;
   using String = std::basic_string<CharType>;
   using Words = CompactVectorOfStrings<CharType>;
-  using IndexStorage = ad_utility::OwnedOrViewedVector<uint64_t>;
-  using IndicesView = IndexStorage::View;
+  using Indices = ad_utility::vocabulary::SortedVocabIndices;
+  using IndexStorage = Indices::Storage;
+  using IndicesView = Indices::View;
+  using PositionLookup = ad_utility::vocabulary::PositionLookup;
 
   // This suffix is appended to the base filename in order to get the name of
   // the file in which the (because of the holes, explicit) indices of the words
@@ -54,9 +59,11 @@ class VocabularyInMemoryBinSearch
   // ones. The indices are stored
   // either as an owned vector (after `open()`, or after reading from a
   // regular, non-zero-copy serializer), or as a non-owning view into
-  // externally-owned memory (after `fromZeroCopyDeserializer`).
+  // externally-owned memory (after `fromZeroCopyDeserializer`). Only `open()`
+  // can request the rank directory (see `PositionLookup`), all other ways of
+  // setting the indices use the binary search.
   std::shared_ptr<const Words> words_ = std::make_shared<const Words>();
-  IndexStorage indices_;
+  Indices indices_;
 
   // Const access to the words.
   const Words& words() const { return *words_; }
@@ -82,7 +89,9 @@ class VocabularyInMemoryBinSearch
     VocabularyInMemoryBinSearch result;
     result.words_ = std::make_shared<const Words>(
         Words::fromZeroCopyDeserializer(serializer));
-    result.indices_ = IndexStorage::fromZeroCopyDeserializer(serializer);
+    result.indices_ =
+        Indices{IndexStorage::fromZeroCopyDeserializer(serializer),
+                PositionLookup::BinarySearch};
     return result;
   }
 
@@ -90,14 +99,28 @@ class VocabularyInMemoryBinSearch
   // only viewed.
   IndicesView indices() const { return indices_.view(); }
 
+  // The number of bytes of the rank directory, `0` if there is none (see
+  // `open`).
+  size_t numberOfBytesOfRankDirectory() const {
+    return indices_.numberOfBytesOfRankDirectory();
+  }
+
   // A share of the ownership of the words, for a batch-lookup result that
   // returns views into them (see `lookupBatch` below and
   // `VocabularyInternalExternal::lookupBatch`).
   std::shared_ptr<const Words> sharedWords() const { return words_; }
 
   // Read the vocabulary from a file. The file must have been created using a
-  // `WordWriter`.
-  void open(const std::string& fileName);
+  // `WordWriter`. The `positionLookup` decides how `positionOfIndex` (and hence
+  // every lookup by index) works: a binary search, or a constant-time rank
+  // directory that costs 8/7 bits of memory per index in `[0, endIndex())`.
+  void open(const std::string& fileName, PositionLookup positionLookup);
+
+  // The `open` of the generic vocabulary interface, with
+  // `PositionLookup::BinarySearch`.
+  void open(const std::string& fileName) {
+    open(fileName, PositionLookup::BinarySearch);
+  }
 
   // Return the total number of words
   [[nodiscard]] size_t size() const {
@@ -108,7 +131,11 @@ class VocabularyInMemoryBinSearch
   // Return the position (i.e. the offset into the words) of the word with the
   // given vocabulary `index`, or `std::nullopt` if `index` is not contained in
   // this vocabulary (which can happen because of the "holes", see above).
-  std::optional<size_t> positionOfIndex(uint64_t index) const;
+  // Constant time with a rank directory, a binary search otherwise (see
+  // `open`).
+  std::optional<size_t> positionOfIndex(uint64_t index) const {
+    return indices_.positionOf(index);
+  }
 
   // Return the vocabulary index of the word at the given `position`. The
   // `position` must be smaller than `size()`.
@@ -123,7 +150,7 @@ class VocabularyInMemoryBinSearch
   // Return the vocabulary index one past the largest index that is contained
   // in this vocabulary, or `0` if the vocabulary is empty. Because of the
   // holes, this is in general much larger than `size()`.
-  uint64_t endIndex() const;
+  uint64_t endIndex() const { return indices_.endIndex(); }
 
   // Return the range of vocabulary indices at which `word` is stored, or the
   // empty range at the index at which it would be stored if it is not
@@ -222,7 +249,13 @@ class VocabularyInMemoryBinSearch
     } else {
       serializer | *arg.words_;
     }
-    serializer | arg.indices_;
+    if constexpr (ad_utility::serialization::ReadSerializer<S>) {
+      IndexStorage indices;
+      serializer | indices;
+      arg.indices_ = Indices{std::move(indices), PositionLookup::BinarySearch};
+    } else {
+      serializer | arg.indices_.storage();
+    }
   }
 };
 
