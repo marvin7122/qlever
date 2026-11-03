@@ -22,6 +22,7 @@
 
 #include "backports/algorithm.h"
 #include "backports/span.h"
+#include "util/HashSet.h"
 #include "util/NoCopyNoMove.h"
 #include "util/OverloadCallOperator.h"
 #include "util/io_uring/IoUringManagerConcepts.h"
@@ -57,13 +58,15 @@ struct UnservedReads {
   // No read was served (none was in the page cache, the fast path is not
   // supported, or the batch is empty): the caller issues the batch unchanged.
   struct NothingRead {};
-  // At least one read was served. `positions_` are the positions in the batch
-  // of the reads that were not served, in ascending order; empty if every read
-  // was served.
+  // Every read of a non-empty batch was served: the caller issues nothing.
+  struct AllRead {};
+  // Some, but not all reads were served. `positions_` are the positions in the
+  // batch of the reads that were not served, in ascending order; neither empty
+  // nor all positions of the batch.
   struct RemainingPositions {
     std::vector<size_t> positions_;
   };
-  std::variant<NothingRead, RemainingPositions> reads_;
+  std::variant<NothingRead, AllRead, RemainingPositions> reads_;
 };
 
 // Serves the reads of a batch that are completely in the page cache with one
@@ -151,16 +154,16 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
 
   // Serve the reads of the batch that are in the page cache and pass the others
   // on to the decorated policy. If all reads are served, the decorated policy
-  // gets an empty batch, so `Policy` must accept `addBatch` with no reads
-  // (`ReadPolicyConcept` cannot express that; the test
-  // `IoUringManagerTest.emptyBatchHasNothingToWaitFor` checks it for
-  // `SyncIoPolicy` and `IoUringPolicy`). The arguments have the contract of
-  // `PageCacheReader::readPageCacheHits` and `Policy::addBatch`.
+  // is not involved at all, neither here nor in `wait`. The arguments have the
+  // contract of `PageCacheReader::readPageCacheHits` and `Policy::addBatch`.
   void addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle) {
     auto forwardAll = [&](const UnservedReads::NothingRead&) {
       policy_.addBatch(fd, numBytes, offsets, buffers, handle);
+    };
+    auto forwardNothing = [&](const UnservedReads::AllRead&) {
+      batchesServedCompletely_.insert(handle);
     };
     auto forwardRemaining =
         [&](const UnservedReads::RemainingPositions& remaining) {
@@ -172,19 +175,29 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
     const UnservedReads unserved =
         enabled_ ? reader_.readPageCacheHits(fd, numBytes, offsets, buffers)
                  : UnservedReads{UnservedReads::NothingRead{}};
-    std::visit(OverloadCallOperator{forwardAll, forwardRemaining},
-               unserved.reads_);
+    std::visit(
+        OverloadCallOperator{forwardAll, forwardNothing, forwardRemaining},
+        unserved.reads_);
   }
 
   // Block until every read of the batch `handle` has completed. The reads that
   // `addBatch` served from the page cache are complete already, so this only
-  // waits for the reads that were passed on (none if all were served).
-  void wait(BatchHandle handle) { policy_.wait(handle); }
+  // waits for the reads that were passed on, and returns at once without
+  // calling the decorated policy if there were none.
+  void wait(BatchHandle handle) {
+    if (batchesServedCompletely_.erase(handle) > 0) {
+      return;
+    }
+    policy_.wait(handle);
+  }
 
  private:
   Policy policy_;
   PageCacheReader reader_;
   bool enabled_ = true;
+  // The batches whose reads `addBatch` all served from the page cache, so that
+  // the decorated policy has nothing to do for them. `wait` removes a batch.
+  ad_utility::HashSet<BatchHandle> batchesServedCompletely_;
 };
 
 }  // namespace ad_utility

@@ -179,6 +179,9 @@ UnservedReads PageCacheReader::readPageCacheHits(
   if (notServed.size() == numBytes.size()) {
     return {UnservedReads::NothingRead{}};
   }
+  if (notServed.empty()) {
+    return {UnservedReads::AllRead{}};
+  }
   return {UnservedReads::RemainingPositions{std::move(notServed)}};
 #else
   (void)fd;
