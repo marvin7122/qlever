@@ -4,7 +4,6 @@
 
 #include "index/vocabulary/VocabularyOnDisk.h"
 
-#include <absl/cleanup/cleanup.h>
 #include <absl/functional/bind_front.h>
 
 #include <algorithm>
@@ -12,6 +11,7 @@
 #include <atomic>
 
 #include "global/Constants.h"
+#include "util/BatchManagerPool.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
@@ -328,20 +328,13 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
 VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  AD_CONTRACT_CHECK(ioManagers_ != nullptr,
+  AD_CONTRACT_CHECK(file_.isOpen(),
                     "`open()` must be called before `lookupBatch()`");
 
-  auto manager = ioManagers_->pop().value();
-  // Return the `manager` to the pool on every exit path (including exceptions,
-  // e.g. an out-of-range index in phase 1), so we never leak an `IoManager`
-  // (and its io_uring buffers) out of the pool.
-  absl::Cleanup returnManager{[this, &manager]() {
-    ad_utility::terminateIfThrows(
-        [this, &manager]() { ioManagers_->push(std::move(manager)); },
-        "returning the `IoManager` to the pool in "
-        "`VocabularyOnDisk::lookupBatch`");
-  }};
-
+  // The lease `manager` gives the manager back to the pool when it goes out of
+  // scope at the end of this function, also when phase 1 throws (e.g. for an
+  // out-of-range index).
+  auto manager = ad_utility::globalBatchManagerPool().acquire();
   auto offsetPairs = readOffsetPairs(*manager, indices);
   return readStrings(*manager, offsetPairs);
 }
@@ -437,13 +430,4 @@ void VocabularyOnDisk::open(const std::string& filename) {
       ad_utility::MmapVectorMetaData::readFromFile(offsetsFile_).size_;
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
-
-  // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
-  ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
-      std::unique_ptr<ad_utility::BatchManagerBase>>>(
-      NUM_VOCAB_BATCH_IO_MANAGERS);
-  bool preferIoUring = true;
-  for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
-  }
 }

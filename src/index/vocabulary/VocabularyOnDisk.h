@@ -18,7 +18,6 @@
 #include "util/IoUringManager.h"
 #include "util/Iterators.h"
 #include "util/Serializer/Serializer.h"
-#include "util/ThreadSafeQueue.h"
 #include "util/UninitializedAllocator.h"
 
 // On-disk vocabulary of strings. Each entry is a pair of <ID, String>. The IDs
@@ -45,11 +44,6 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // vocabulary in the read-ahead of `operator[]`; unlike the address, it is
   // never reused.
   uint64_t id_ = 0;
-
-  // Pool of persistent `BatchIoManager`s for `lookupBatch`.
-  mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
-      std::unique_ptr<ad_utility::BatchManagerBase>>>
-      ioManagers_;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.

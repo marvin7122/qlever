@@ -5,6 +5,7 @@
 //
 // Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
+#include <algorithm>
 #include <boost/program_options.hpp>
 #include <cstdint>
 #include <cstdlib>
@@ -423,6 +424,10 @@ int main(int argc, char** argv) {
                             ad_utility::ResourceMonitor::Mode::Append,
                             std::chrono::seconds{resourceUsageIntervalS});
     }
+    // One batch I/O manager per query thread (but at least one, the pool must
+    // not be empty), see `EngineConfig`.
+    config.numBatchIoManagers_ =
+        std::max<size_t>(1, static_cast<size_t>(numSimultaneousQueries));
     auto metricsReader = ad_utility::metrics::initialize(metricsEnabled);
     Server server(port, numSimultaneousQueries, std::move(accessToken), config,
                   noAccessCheck, std::move(metricsReader),

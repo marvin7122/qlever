@@ -31,6 +31,7 @@
 #include "index/TextIndexBuilder.h"
 #include "libqlever/QleverTypes.h"
 #include "parser/SparqlParser.h"
+#include "util/BatchManagerPool.h"
 #include "util/Exception.h"
 #include "util/File.h"
 #include "util/FilesystemHelpers.h"
@@ -99,6 +100,9 @@ Qlever::Qlever(const EngineConfig& config, bool skipLoading,
   // allocator. Clear the action of a previous instance, so that the parameter
   // is bound to nothing.
   globalRuntimeParameters.wlock()->memoryForQueries_.clearOnUpdateAction();
+
+  ad_utility::setUpGlobalBatchManagerPool(config.numBatchIoManagers_,
+                                          config.preferIoUring_);
 
   // If `skipLoading` is set, we do not touch the on-disk index at all; the
   // instance is expected to be populated later from a blob (see

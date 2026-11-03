@@ -293,6 +293,24 @@ struct EngineConfig : CommonConfig {
   // via the `index-description` and `text-description` API commands.
   std::optional<std::string> indexDescription_;
   std::optional<std::string> textDescription_;
+
+  // The number of batch I/O managers (one io_uring ring each, or the
+  // synchronous fallback) that batched vocabulary reads share, see
+  // `util/BatchManagerPool.h`. A manager serves one batched read at a time, so
+  // this is the number of threads that can perform such reads at the same
+  // time; the server sets it to its number of query threads. The pool is
+  // process-wide and is created once, by the first engine that is constructed
+  // in the process; a later engine with another value keeps the existing pool
+  // and only logs a warning. Defaults to the number of hardware threads of the
+  // machine, but at least one.
+  size_t numBatchIoManagers_ =
+      std::max<size_t>(1, std::thread::hardware_concurrency());
+
+  // If `true` (the default), the batch I/O managers use io_uring when it is
+  // compiled in and its setup succeeds at runtime; otherwise they read with
+  // synchronous `pread` calls. Like `numBatchIoManagers_`, this is fixed when
+  // the pool is created.
+  bool preferIoUring_ = true;
 };
 
 // Class to use QLever as an embedded database, without the HTTP server. See
