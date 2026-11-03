@@ -10,8 +10,10 @@
 
 #include "util/IoUringManager.h"
 
+#include <absl/strings/str_cat.h>
 #include <unistd.h>
 
+#include <cstring>
 #include <stdexcept>
 
 #include "util/Exception.h"
@@ -66,7 +68,29 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
   // details.
   int ret = io_uring_queue_init(ringSize_, &ring_, /*flags=*/0);
   if (ret < 0) {
-    AD_THROW("io_uring_queue_init failed in IoUringManager");
+    AD_THROW(absl::StrCat("io_uring_queue_init failed in IoUringManager: ",
+                          std::strerror(-ret)));
+  }
+  // `IORING_OP_READ` exists since Linux 5.6. On 5.1 to 5.5 the ring can be set
+  // up, but every read would complete with `EINVAL`, so throw here and let
+  // `makeBatchManager` fall back to `pread`. The probe also exists only since
+  // 5.6; it can also fail if `io_uring_register` is blocked or memory is short.
+  io_uring_probe* probe = io_uring_get_probe_ring(&ring_);
+  const bool probed = probe != nullptr;
+  const bool readIsSupported =
+      probed && io_uring_opcode_supported(probe, IORING_OP_READ);
+  if (probed) {
+    io_uring_free_probe(probe);
+  }
+  if (!readIsSupported) {
+    // The destructor does not run if the constructor throws.
+    io_uring_queue_exit(&ring_);
+    AD_THROW(probed ? "the kernel does not support IORING_OP_READ for io_uring "
+                      "(it exists since Linux 5.6)"
+                    : "io_uring could not confirm that the kernel supports "
+                      "IORING_OP_READ: the probe (IORING_REGISTER_PROBE) "
+                      "failed, which happens before Linux 5.6, if "
+                      "io_uring_register is blocked, or if memory is short");
   }
 }
 
