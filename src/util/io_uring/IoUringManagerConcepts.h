@@ -8,8 +8,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_UTIL_IOURINGMANAGERCONCEPTS_H
-#define QLEVER_SRC_UTIL_IOURINGMANAGERCONCEPTS_H
+#ifndef QLEVER_SRC_UTIL_IO_URING_IOURINGMANAGERCONCEPTS_H
+#define QLEVER_SRC_UTIL_IO_URING_IOURINGMANAGERCONCEPTS_H
 
 #include <cstdint>
 
@@ -52,4 +52,4 @@ CPP_requires(HasPageCacheFastPathSwitch,
 
 }  // namespace ad_utility
 
-#endif  // QLEVER_SRC_UTIL_IOURINGMANAGERCONCEPTS_H
+#endif  // QLEVER_SRC_UTIL_IO_URING_IOURINGMANAGERCONCEPTS_H

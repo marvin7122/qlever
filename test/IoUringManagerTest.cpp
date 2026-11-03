@@ -23,10 +23,10 @@
 #include "util/Exception.h"
 #include "util/File.h"
 #include "util/GTestHelpers.h"
-#include "util/IoUringManager.h"
 #include "util/IoUringManagerTestHelpers.h"
 #include "util/Log.h"
-#include "util/PageCacheFirstPolicy.h"
+#include "util/io_uring/IoUringManager.h"
+#include "util/io_uring/PageCacheFirstPolicy.h"
 
 namespace {
 
