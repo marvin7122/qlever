@@ -69,7 +69,7 @@ class TestBatch {
   explicit TestBatch(size_t numberOfReads, size_t firstBlock = 0)
       : buffers_(numberOfReads, std::string(4, '\0')) {
     for (size_t i = 0; i < numberOfReads; ++i) {
-      numBytes_.push_back(4);
+      numberOfBytesPerRead_.push_back(4);
       offsets_.push_back(4 * ((firstBlock + i) % 64));
       pointers_.push_back(buffers_[i].data());
     }
@@ -77,7 +77,8 @@ class TestBatch {
 
   void addTo(IoUringPolicy& policy, IoUringPolicy::BatchHandle handle) {
     // The simulated kernel ignores the file descriptor.
-    policy.addBatch(/*fd=*/-1, numBytes_, offsets_, pointers_, handle);
+    policy.addBatch(/*fd=*/-1, numberOfBytesPerRead_, offsets_, pointers_,
+                    handle);
   }
 
   // Whether read `i` has written its bytes of `file` into its buffer.
@@ -108,7 +109,7 @@ class TestBatch {
   }
 
  private:
-  std::vector<size_t> numBytes_;
+  std::vector<size_t> numberOfBytesPerRead_;
   std::vector<uint64_t> offsets_;
   std::vector<std::string> buffers_;
   std::vector<char*> pointers_;
@@ -498,8 +499,10 @@ class IoUringPolicyOnRealRing : public ::testing::Test {
   }
 };
 
-// A failed read is thrown by the `wait()` of its own batch, also when the
-// `wait()` of another batch reaped its CQE, and only once.
+// A short read on a real ring is thrown by the `wait()` of its own batch, and
+// only once; the other batch is not affected. (That this also holds when the
+// `wait()` of another batch reaps the failed read is ensured by
+// `IoUringPolicyOnFakeRing.failureIsThrownByItsOwnBatch`.)
 TEST_F(IoUringPolicyOnRealRing, failureIsThrownByItsOwnBatch) {
   using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
