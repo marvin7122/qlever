@@ -26,6 +26,15 @@
 
 namespace pageCacheReadTestHelpers {
 
+//______________________________________________________________________________
+// Switch the page-cache fast path on again after an injected (or a real)
+// `EOPNOTSUPP` or `ENOSYS` switched it off for the process. Has no effect where
+// the fast path is not compiled in (`pageCacheFastPathIsSupported()` stays
+// false there).
+inline void resetPageCacheFastPathSupport() noexcept {
+  ad_utility::detail::pageCacheFastPathSupported().store(true);
+}
+
 // Replace the `preadv2(RWF_NOWAIT)` call of `ad_utility::readPageCacheHits`
 // with `function` for the lifetime of this object, and restore the state
 // that the test found on destruction. Two pieces of global state are
@@ -54,7 +63,7 @@ class ScopedPageCacheRead : public ad_utility::NoCopyNoMove {
     // Restore 2: undo an injected `EOPNOTSUPP`, but only if the fast
     // path was supported before this test (see the class comment).
     if (wasSupported_) {
-      ad_utility::detail::resetPageCacheFastPathSupport();
+      resetPageCacheFastPathSupport();
     }
   }
 

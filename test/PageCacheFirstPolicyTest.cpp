@@ -126,7 +126,7 @@ int64_t zeroBytes(int, const ::iovec*, int, int64_t) noexcept { return 0; }
 // on: an earlier real `preadv2(RWF_NOWAIT)` in this process may have switched
 // it off, but the tests below inject their own page-cache read.
 #define SKIP_WITHOUT_PAGE_CACHE_FAST_PATH()                   \
-  ad_utility::detail::resetPageCacheFastPathSupport();        \
+  pageCacheReadTestHelpers::resetPageCacheFastPathSupport();  \
   if (!ad_utility::pageCacheFastPathIsSupported()) {          \
     GTEST_SKIP() << "preadv2(RWF_NOWAIT) is not compiled in"; \
   }

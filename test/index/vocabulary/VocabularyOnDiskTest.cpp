@@ -311,7 +311,7 @@ TEST(VocabularyOnDisk, LookupBatchMatchesIndividualLookups) {
 // result must be byte-identical to the result without the fast path, for runs
 // of consecutive indices as well as for reordered and duplicated indices.
 TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
-  ad_utility::detail::resetPageCacheFastPathSupport();
+  pageCacheReadTestHelpers::resetPageCacheFastPathSupport();
   if (!ad_utility::pageCacheFastPathIsSupported()) {
     GTEST_SKIP() << "preadv2(RWF_NOWAIT) is not compiled in";
   }
@@ -343,7 +343,7 @@ TEST(VocabularyOnDisk, LookupBatchFollowsThePageCacheFastPathParameter) {
   // An earlier real `preadv2(RWF_NOWAIT)` may have switched the fast path off;
   // this test injects its own page-cache read. `open()` decides whether to use
   // the fast path, so this must come before `createExampleVocabulary()`.
-  ad_utility::detail::resetPageCacheFastPathSupport();
+  pageCacheReadTestHelpers::resetPageCacheFastPathSupport();
   if (!ad_utility::pageCacheFastPathIsSupported()) {
     GTEST_SKIP() << "preadv2(RWF_NOWAIT) is not compiled in";
   }
@@ -382,7 +382,7 @@ int64_t everyOtherReadCached(int fd, const ::iovec* iov, int iovcnt,
 // some of them, and all after the fast path was found unsupported) go
 // through the batch manager; the result always matches `operator[]`.
 TEST(VocabularyOnDisk, LookupBatchPageCacheMissesGoThroughTheManager) {
-  ad_utility::detail::resetPageCacheFastPathSupport();
+  pageCacheReadTestHelpers::resetPageCacheFastPathSupport();
   if (!ad_utility::pageCacheFastPathIsSupported()) {
     GTEST_SKIP() << "preadv2(RWF_NOWAIT) is not compiled in";
   }

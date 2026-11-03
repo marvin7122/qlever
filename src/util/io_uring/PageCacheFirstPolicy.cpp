@@ -36,16 +36,6 @@ namespace ad_utility {
 #define QL_PAGE_CACHE_FAST_PATH
 #endif
 
-namespace {
-#ifdef QL_PAGE_CACHE_FAST_PATH
-// Cleared once a `preadv2(RWF_NOWAIT)` fails with `EOPNOTSUPP` or `ENOSYS`.
-// The flag is a best-effort hint without associated data; the default
-// sequential consistency (Sonar cpp:S8417) keeps the publication of the
-// disabled state obvious.
-std::atomic<bool> pageCacheFastPathSupported{true};
-#endif
-}  // namespace
-
 namespace detail {
 //______________________________________________________________________________
 int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
@@ -72,17 +62,19 @@ PageCacheRead& pageCacheRead() noexcept {
 }
 
 //______________________________________________________________________________
-void resetPageCacheFastPathSupport() noexcept {
-#ifdef QL_PAGE_CACHE_FAST_PATH
-  pageCacheFastPathSupported.store(true);
-#endif
+std::atomic<bool>& pageCacheFastPathSupported() noexcept {
+  // A best-effort hint without associated data; the default sequential
+  // consistency (Sonar cpp:S8417) keeps the publication of the disabled state
+  // obvious.
+  static std::atomic<bool> supported{true};
+  return supported;
 }
 }  // namespace detail
 
 //______________________________________________________________________________
 bool pageCacheFastPathIsSupported() noexcept {
 #ifdef QL_PAGE_CACHE_FAST_PATH
-  return pageCacheFastPathSupported.load();
+  return detail::pageCacheFastPathSupported().load();
 #else
   return false;
 #endif
@@ -113,7 +105,7 @@ constexpr auto areAdjacent = [](const auto& previous, const auto& next) {
 // and switch the fast path off for the rest of the process.
 void switchOffFastPathIfUnsupported(int64_t numBytesRead) {
   if (numBytesRead < 0 && (errno == EOPNOTSUPP || errno == ENOSYS) &&
-      pageCacheFastPathSupported.exchange(false)) {
+      detail::pageCacheFastPathSupported().exchange(false)) {
     AD_LOG_WARN << "preadv2 with RWF_NOWAIT is not supported (EOPNOTSUPP or "
                    "ENOSYS); reading without the page-cache fast path "
                    "from now on"
