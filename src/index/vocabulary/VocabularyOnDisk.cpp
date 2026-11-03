@@ -433,12 +433,7 @@ void VocabularyOnDisk::open(const std::string& filename) {
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
   bool preferIoUring = true;
-  auto makeManager = [&preferIoUring]() {
-    return ad_utility::makeBatchManager(preferIoUring);
-  };
-  for (auto& manager :
-       ::ranges::views::generate_n(makeManager, NUM_VOCAB_BATCH_IO_MANAGERS) |
-           ::ranges::to_vector) {
-    ioManagers_->push(std::move(manager));
+  for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
+    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
   }
 }
