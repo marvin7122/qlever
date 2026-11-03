@@ -4,7 +4,6 @@
 
 #include "index/vocabulary/VocabularyOnDisk.h"
 
-#include <absl/cleanup/cleanup.h>
 #include <absl/functional/bind_front.h>
 
 #include <algorithm>
@@ -328,22 +327,22 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
 VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  AD_CONTRACT_CHECK(ioManagers_ != nullptr,
+  AD_CONTRACT_CHECK(batchManagers_ != nullptr,
                     "`open()` must be called before `lookupBatch()`");
 
-  auto manager = ioManagers_->pop().value();
-  // Return the `manager` to the pool on every exit path (including exceptions,
-  // e.g. an out-of-range index in phase 1), so we never leak an `IoManager`
-  // (and its io_uring buffers) out of the pool.
-  absl::Cleanup returnManager{[this, &manager]() {
-    ad_utility::terminateIfThrows(
-        [this, &manager]() { ioManagers_->push(std::move(manager)); },
-        "returning the `IoManager` to the pool in "
-        "`VocabularyOnDisk::lookupBatch`");
-  }};
+  // Take an idle manager, or create one (with io_uring if it is compiled in
+  // and its setup succeeds). The returned owner gives the manager back to the
+  // pool when it is destroyed, on every exit path.
+  auto makeManager = []() {
+    bool preferIoUring = true;
+    return ad_utility::makeBatchManager(preferIoUring);
+  };
+  auto managerOwner = BatchManagerPool::makeRecyclingOwner(
+      batchManagers_, batchManagers_->take(makeManager));
+  auto& manager = **managerOwner;
 
-  auto offsetPairs = readOffsetPairs(*manager, indices);
-  return readStrings(*manager, offsetPairs);
+  auto offsetPairs = readOffsetPairs(manager, indices);
+  return readStrings(manager, offsetPairs);
 }
 
 // _____________________________________________________________________________
@@ -438,12 +437,6 @@ void VocabularyOnDisk::open(const std::string& filename) {
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
 
-  // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
-  ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
-      std::unique_ptr<ad_utility::BatchManagerBase>>>(
-      NUM_VOCAB_BATCH_IO_MANAGERS);
-  bool preferIoUring = true;
-  for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
-  }
+  // The managers of `lookupBatch` are created by the lookups that need them.
+  batchManagers_ = std::make_shared<BatchManagerPool>();
 }
