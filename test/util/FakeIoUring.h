@@ -15,11 +15,13 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <iterator>
 #include <random>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "backports/algorithm.h"
 #include "util/Exception.h"
 #include "util/IoUringManager.h"
 
@@ -64,7 +66,8 @@ class FakeIoUring final : public IoUringInterface {
         random_{seed} {
     // `submit` draws the length of an `EAGAIN` burst from
     // [1, `maxEagainBurst`].
-    AD_CONTRACT_CHECK(faults_.maxEagainBurst >= 1);
+    AD_CONTRACT_CHECK(faults_.maxEagainBurst >= 1,
+                      "An EAGAIN burst fails at least one submit.");
   }
 
   // Whether, since the last `resetObservations`, a read was made short or
@@ -137,12 +140,16 @@ class FakeIoUring final : public IoUringInterface {
       numTaken = uniform(0, numTaken - 1);
       ++faultCounts_.partialSubmits;
     }
-    for (size_t i = 0; i < numTaken; ++i) {
-      kernel_.push_back(queue_.front());
-      queue_.pop_front();
-    }
-    AD_CORRECTNESS_CHECK(kernel_.size() + completions_.size() <=
-                         2 * sqCapacity_);
+    // The kernel takes the queued SQEs in queue order.
+    ql::ranges::copy(queue_ | ql::views::take(numTaken),
+                     std::back_inserter(kernel_));
+    queue_.erase(queue_.begin(),
+                 queue_.begin() + static_cast<ptrdiff_t>(numTaken));
+    AD_CORRECTNESS_CHECK(
+        kernel_.size() + completions_.size() <= 2 * sqCapacity_,
+        "The requests in the kernel and the unreaped "
+        "completions must fit into the completion queue, "
+        "or a real ring would drop completions.");
     // The kernel may already have completed some of the requests.
     if (faults_.completeOnSubmit) {
       completeRandomRequests(uniform(0, kernel_.size()));
@@ -161,7 +168,8 @@ class FakeIoUring final : public IoUringInterface {
     // Like `io_uring_wait_cqes`, the wait counts the completions that are
     // already ready. A real wait for more completions than those plus the
     // requests in the kernel would block forever.
-    AD_CORRECTNESS_CHECK(minComplete <= kernel_.size() + completions_.size());
+    AD_CORRECTNESS_CHECK(minComplete <= kernel_.size() + completions_.size(),
+                         "A real ring would block forever on this wait.");
     while (completions_.size() < minComplete) {
       completeRandomRequests(1);
     }
@@ -170,10 +178,11 @@ class FakeIoUring final : public IoUringInterface {
 
   size_t popCompletions(ql::span<Completion> completions) override {
     const size_t numPopped = std::min(completions.size(), completions_.size());
-    for (size_t i = 0; i < numPopped; ++i) {
-      completions[i] = completions_.front().completion;
-      completions_.pop_front();
-    }
+    ql::ranges::transform(completions_ | ql::views::take(numPopped),
+                          completions.begin(), &PendingCompletion::completion);
+    completions_.erase(
+        completions_.begin(),
+        completions_.begin() + static_cast<ptrdiff_t>(numPopped));
     return numPopped;
   }
 
@@ -216,7 +225,9 @@ class FakeIoUring final : public IoUringInterface {
   // Complete `numToComplete` random requests of the kernel: write a read's
   // bytes into its buffer and post its completion.
   void completeRandomRequests(size_t numToComplete) {
-    for (size_t k = 0; k < numToComplete && !kernel_.empty(); ++k) {
+    const size_t numCompleted = std::min(numToComplete, kernel_.size());
+    for ([[maybe_unused]] size_t completed :
+         ql::views::iota(size_t{0}, numCompleted)) {
       const size_t i = uniform(0, kernel_.size() - 1);
       const Request request = kernel_[i];
       kernel_.erase(kernel_.begin() + static_cast<ptrdiff_t>(i));

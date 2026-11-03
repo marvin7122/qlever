@@ -181,6 +181,8 @@ class IoUringInterface {
     int result;
   };
 
+  // Virtual, because `IoUringPolicy` owns its ring as
+  // `std::unique_ptr<IoUringInterface>`.
   virtual ~IoUringInterface() = default;
 
   // Fill a free SQE with a read of `numberOfBytesToRead` bytes at `offset` of
@@ -223,7 +225,8 @@ class IoUringInterface {
 // up, for example because `io_uring_setup` is blocked by seccomp.
 std::unique_ptr<IoUringInterface> makeLiburingRing(unsigned ringSize);
 
-// Reads batches with io_uring, one batch at a time: `addBatch` returns (or
+// A `ReadPolicy` that reads batches with io_uring, one batch at a time:
+// `addBatch` returns (or
 // throws) only once the kernel no longer holds any read of the batch, so the
 // caller may free the target buffers right away. `wait()` has nothing left to
 // do. Single-threaded use only. See https://github.com/axboe/liburing.
