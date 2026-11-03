@@ -38,11 +38,18 @@ class BatchManagerBase {
   // `std::unique_ptr<BatchManagerBase>`.
   virtual ~BatchManagerBase() = default;
 
+  // Read a batch: read `i` reads `numBytes[i]` bytes from `fd`, starting at
+  // byte `offsets[i]` of the file, into `buffers[i]`. Return the handle of the
+  // batch, which `wait` takes. The buffers must stay valid until `wait` has
+  // returned for that handle. Throw if the three spans differ in length or a
+  // read fails or is short.
   [[nodiscard]] virtual BatchHandle addBatch(int fd,
                                              ql::span<const size_t> numBytes,
                                              ql::span<const uint64_t> offsets,
                                              ql::span<char*> buffers) = 0;
 
+  // Block until every read of the batch `handle` has completed. Throw if one
+  // of them failed and `addBatch` did not throw already.
   virtual void wait(BatchHandle handle) = 0;
 
   // Switch the page-cache fast path of this manager on or off (see

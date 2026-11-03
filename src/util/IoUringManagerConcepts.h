@@ -18,8 +18,8 @@
 #include "util/BatchHandle.h"
 #include "util/RingSize.h"
 
-// The concepts that the templates of the batch-read module
-// (`IoUringManager.h`) put on their template arguments:
+// The concepts that the templates of the batch-read module (`BatchManager` in
+// `BatchManager.h`, `PageCacheFirstPolicy`) put on their template arguments:
 // - `ReadPolicyConcept`: what a `ReadPolicy`, the pluggable I/O backend of
 //   `BatchManager` and `PageCacheFirstPolicy`, must provide.
 // - `HasPageCacheFastPathSwitch`: whether a policy has a page-cache fast path
