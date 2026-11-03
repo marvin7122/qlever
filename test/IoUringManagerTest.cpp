@@ -485,13 +485,21 @@ TEST(IoUringManagerDrop, dropSyncManagerHasNothingOutstanding) {
 }
 
 #ifdef QLEVER_HAS_IO_URING
+// Fixture of the tests that need `IoUringPolicy` itself; skips them if
+// io_uring is not available at runtime.
+class IoUringPolicyTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    if (!ioUringAvailableAtRuntime()) {
+      GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                      "(e.g. blocked by seccomp inside Docker)";
+    }
+  }
+};
+
 // A failed read is thrown by the `wait()` of its own batch, also when the
 // `wait()` of another batch reaped its CQE, and only once.
-TEST(IoUringPolicyErrors, failureIsThrownByItsOwnBatch) {
-  if (!ioUringAvailableAtRuntime()) {
-    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
-                    "(e.g. blocked by seccomp inside Docker)";
-  }
+TEST_F(IoUringPolicyTest, failureIsThrownByItsOwnBatch) {
   using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
   ReadBatchForTesting bad;
@@ -518,11 +526,7 @@ TEST(IoUringPolicyErrors, failureIsThrownByItsOwnBatch) {
 // A failure that `addBatch` reaps while it waits for a free slot in the full
 // ring is also kept for the failed batch: neither `addBatch` nor the `wait()`
 // of the other batch throws it.
-TEST(IoUringPolicyErrors, failureReapedByAddBatchIsThrownByItsOwnBatch) {
-  if (!ioUringAvailableAtRuntime()) {
-    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
-                    "(e.g. blocked by seccomp inside Docker)";
-  }
+TEST_F(IoUringPolicyTest, failureReapedByAddBatchIsThrownByItsOwnBatch) {
   using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
   ReadBatchForTesting bad;
@@ -549,11 +553,7 @@ TEST(IoUringPolicyErrors, failureReapedByAddBatchIsThrownByItsOwnBatch) {
 // submission, because its bytes are already in the pipe; the second one waits
 // for bytes that a helper thread writes only after it has sent a signal to the
 // thread that is blocked in `wait()`.
-TEST(IoUringPolicyWave, signalDuringWaveWait) {
-  if (!ioUringAvailableAtRuntime()) {
-    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
-                    "(e.g. blocked by seccomp inside Docker)";
-  }
+TEST_F(IoUringPolicyTest, signalDuringWaveWait) {
   // A no-op handler, so that the signal interrupts the wait instead of
   // terminating the process.
   struct sigaction noOp {};
