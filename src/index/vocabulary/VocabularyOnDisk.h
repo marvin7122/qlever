@@ -113,7 +113,7 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // this file via a `WordWriter`. `lookupBatch` reads the page cache with
   // `pageCacheRead`, which only tests replace.
   void open(const std::string& filename,
-            const ad_utility::PageCacheRead& pageCacheRead =
+            ad_utility::PageCacheRead pageCacheRead =
                 &ad_utility::systemPageCacheRead);
 
   // Return the word that is stored at the index. Throw an exception if `idx >=

@@ -14,6 +14,7 @@
 #include <gtest/gtest_prod.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <type_traits>
 #include <unordered_map>
@@ -67,11 +68,6 @@ class BatchManagerBase {
                                              ql::span<char*> buffers) = 0;
 
   virtual void wait(BatchHandle handle) = 0;
-
-  // Switch the page-cache fast path of this manager on or off (see
-  // `PageCacheFirstPolicy`). Takes effect for the batches added afterwards.
-  // Managers without a page-cache fast path ignore it.
-  virtual void setPageCacheFastPath([[maybe_unused]] bool enabled) noexcept {}
 };
 
 // `BatchManager` owns the batch bookkeeping (minting a `BatchHandle` per batch,
@@ -117,17 +113,6 @@ class BatchManager final : public BatchManagerBase, public NoCopyNoMove {
   void wait(BatchHandle handle) override {
     if (handle.hasReadsInFlight_) {
       policy_.wait(handle.id_);
-    }
-  }
-
-  // Forward the switch to the policy if it has one.
-  void setPageCacheFastPath([[maybe_unused]] bool enabled) noexcept override {
-    if constexpr (CPP_requires_ref(detail::HasPageCacheFastPathSwitch_,
-                                   ReadPolicy)) {
-      static_assert(noexcept(policy_.setPageCacheFastPath(enabled)),
-                    "A policy's `setPageCacheFastPath` must be `noexcept`, "
-                    "because `BatchManagerBase::setPageCacheFastPath` is.");
-      policy_.setPageCacheFastPath(enabled);
     }
   }
 
@@ -262,18 +247,19 @@ using BatchIoManager = BatchManager<SyncIoPolicy>;
 inline constexpr unsigned defaultBatchManagerRingSize = 256;
 
 namespace detail {
-// Build a `BatchManager` for `Policy`, decorated with `PageCacheFirstPolicy`
-// that reads the page cache with `pageCacheRead`. Where `preadv2(RWF_NOWAIT)`
-// is not compiled in or not supported, the decorator passes every batch on
-// unchanged.
+// Build a `BatchManager` for `Policy`, decorated with a `PageCacheFirstPolicy`
+// that is constructed with `pageCacheRead` and `isFastPathEnabled`. Where
+// `preadv2(RWF_NOWAIT)` is not compiled in or not supported, the decorator
+// passes every batch on unchanged.
 template <typename Policy>
 std::unique_ptr<BatchManagerBase> makeBatchManagerFor(
-    unsigned ringSize, PageCacheRead pageCacheRead) {
+    unsigned ringSize, PageCacheRead pageCacheRead,
+    std::function<bool()> isFastPathEnabled) {
   static_assert(ReadPolicyConcept<Policy>,
                 "makeBatchManagerFor's Policy must satisfy the "
                 "ReadPolicyConcept.");
   return std::make_unique<BatchManager<PageCacheFirstPolicy<Policy>>>(
-      ringSize, std::move(pageCacheRead));
+      ringSize, std::move(pageCacheRead), std::move(isFastPathEnabled));
 }
 }  // namespace detail
 
@@ -283,17 +269,17 @@ std::unique_ptr<BatchManagerBase> makeBatchManagerFor(
 // `SyncIoPolicy`. Passing the flag by reference makes this probe-once: after
 // the first failure, every subsequent call goes straight to the sync manager,
 // so we don't repeat a failing syscall. The manager serves page-cache hits
-// first (`PageCacheFirstPolicy`, switched with
-// `BatchManagerBase::setPageCacheFastPath`) with `pageCacheRead`, which only
-// tests replace.
+// first (`PageCacheFirstPolicy`) for every batch for which `isFastPathEnabled`
+// returns `true`, with `pageCacheRead`, which only tests replace.
 inline std::unique_ptr<BatchManagerBase> makeBatchManager(
     bool& preferIoUring, unsigned ringSize = defaultBatchManagerRingSize,
-    const PageCacheRead& pageCacheRead = &systemPageCacheRead) {
+    PageCacheRead pageCacheRead = &systemPageCacheRead,
+    std::function<bool()> isFastPathEnabled = [] { return true; }) {
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
     try {
-      return detail::makeBatchManagerFor<IoUringPolicy>(ringSize,
-                                                        pageCacheRead);
+      return detail::makeBatchManagerFor<IoUringPolicy>(ringSize, pageCacheRead,
+                                                        isFastPathEnabled);
     } catch (const std::exception& e) {
       preferIoUring = false;
       AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
@@ -306,7 +292,8 @@ inline std::unique_ptr<BatchManagerBase> makeBatchManager(
 #else
   preferIoUring = false;
 #endif
-  return detail::makeBatchManagerFor<SyncIoPolicy>(ringSize, pageCacheRead);
+  return detail::makeBatchManagerFor<SyncIoPolicy>(
+      ringSize, std::move(pageCacheRead), std::move(isFastPathEnabled));
 }
 
 }  // namespace ad_utility

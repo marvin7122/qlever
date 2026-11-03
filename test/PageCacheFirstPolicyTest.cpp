@@ -444,16 +444,17 @@ TEST(PageCacheFirstPolicy, aBatchThatIsNotServedIsPassedOnUnchanged) {
 }
 
 // _____________________________________________________________________________
-// With the fast path switched off through the manager, the page-cache read is
-// not called and all reads are passed on; switching it on again restores it.
+// The fast path is asked for every batch: while it is switched off, the
+// page-cache read is not called and all reads are passed on; switching it on
+// again restores it, on the same manager.
 TEST(PageCacheFirstPolicy, theFastPathCanBeSwitchedOffAndOn) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   RecordingPolicy::reset();
   size_t numberOfReads = 0;
-  RecordedManager manager(64, counted(numberOfReads, &fullyCached));
-  ad_utility::BatchManagerBase& base = manager;
-  base.setPageCacheFastPath(false);
+  bool isEnabled = false;
+  RecordedManager manager(64, counted(numberOfReads, &fullyCached),
+                          [&isEnabled] { return isEnabled; });
   {
     ReadBatchForTesting batch;
     batch.add({{0, 4}, {8, 4}});
@@ -462,7 +463,7 @@ TEST(PageCacheFirstPolicy, theFastPathCanBeSwitchedOffAndOn) {
     EXPECT_EQ(numberOfReads, size_t{0});
     EXPECT_THAT(RecordingPolicy::batchSizes_, ElementsAre(size_t{2}));
   }
-  base.setPageCacheFastPath(true);
+  isEnabled = true;
   {
     ReadBatchForTesting batch;
     batch.add({{0, 4}, {8, 4}});

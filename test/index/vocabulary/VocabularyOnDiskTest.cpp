@@ -78,7 +78,7 @@ class VocabularyCreator {
   // words.size()). Its `lookupBatch` reads the page cache with
   // `pageCacheRead`.
   auto createVocabulary(const std::vector<std::string>& words,
-                        const ad_utility::PageCacheRead& pageCacheRead =
+                        ad_utility::PageCacheRead pageCacheRead =
                             &ad_utility::systemPageCacheRead) {
     createVocabularyImpl(words);
     VocabularyOnDisk vocabulary;
@@ -94,7 +94,7 @@ class VocabularyOnDiskHandle {
  public:
   VocabularyOnDiskHandle(std::string filename,
                          const std::vector<std::string>& words,
-                         const ad_utility::PageCacheRead& pageCacheRead =
+                         ad_utility::PageCacheRead pageCacheRead =
                              &ad_utility::systemPageCacheRead)
       : creator_{std::move(filename)},
         vocabulary_{creator_.createVocabulary(words, pageCacheRead)} {}
@@ -122,7 +122,7 @@ class VocabularyOnDiskHandle {
 
 VocabularyOnDiskHandle createVocabularyFromWords(
     const std::vector<std::string>& words,
-    const ad_utility::PageCacheRead& pageCacheRead =
+    ad_utility::PageCacheRead pageCacheRead =
         &ad_utility::systemPageCacheRead) {
   return VocabularyOnDiskHandle{absl::StrCat(gtestCurrentTestName(), ".dat"),
                                 words, pageCacheRead};
@@ -166,7 +166,7 @@ auto createVocabulary() {
 }
 
 VocabularyOnDiskHandle createExampleVocabulary(
-    const ad_utility::PageCacheRead& pageCacheRead =
+    ad_utility::PageCacheRead pageCacheRead =
         &ad_utility::systemPageCacheRead) {
   return createVocabularyFromWords({"alpha", "delta", "beta", "42", "gamma"},
                                    pageCacheRead);
