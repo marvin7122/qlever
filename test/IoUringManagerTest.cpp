@@ -37,11 +37,9 @@
 #include "util/IoUringManager.h"
 #include "util/IoUringManagerTestHelpers.h"
 #include "util/Log.h"
-#include "util/PageCacheFirstPolicy.h"
 #include "util/PageCacheReadTestHelpers.h"
 #include "util/Views.h"
 #include "util/io_uring/BatchOfReads.h"
-#include "util/io_uring/IoUringPolicy.h"
 
 namespace {
 
@@ -134,7 +132,7 @@ TYPED_TEST(IoUringManagerTest, SingleBatch) {
   ReadBatchForTesting batch;
   batch.add({{8, 4}, {0, 4}, {12, 4}});
 
-  TypeParam manager{64};
+  TypeParam manager(64);
   batch.readWith(manager, fd);
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
@@ -146,7 +144,7 @@ TYPED_TEST(IoUringManagerTest, SingleBatch) {
 TYPED_TEST(IoUringManagerTest, mismatchedSpanLengthsThrow) {
   auto [tmp, fd] = makeTempFile("DOESNT_MATTER");
 
-  TypeParam manager{64};
+  TypeParam manager(64);
 
   std::string buffer(4, '\0');
   std::vector<size_t> numBytes{4};            // length 1
@@ -156,6 +154,25 @@ TYPED_TEST(IoUringManagerTest, mismatchedSpanLengthsThrow) {
   AD_EXPECT_THROW_WITH_MESSAGE(
       manager.readBatch(fd, numBytes, fileOffsets, buffers),
       HasSubstr("must have the same length"));
+}
+
+// MultipleBatchesSequential: 3 batches read one after the other.
+TYPED_TEST(IoUringManagerTest, MultipleBatchesSequential) {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDDEEEEFFFFGGGG");
+
+  TypeParam manager(64);
+
+  auto readAndCheck = [&](uint64_t offset, size_t numBytes,
+                          std::string_view expected) {
+    ReadBatchForTesting batch;
+    batch.add(offset, numBytes);
+    batch.readWith(manager, fd);
+    EXPECT_THAT(batch.result(), ::testing::ElementsAre(expected));
+  };
+
+  readAndCheck(0, 4, "AAAA");
+  readAndCheck(4, 4, "BBBB");
+  readAndCheck(8, 4, "CCCC");
 }
 
 // A single `readBatch` call requesting more reads (400) than the submission
@@ -178,7 +195,7 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
   }
 
   auto [tmp, fd] = makeTempFile(scenario.content());
-  TypeParam manager{64};
+  TypeParam manager(64);
   scenario.readWith(manager, fd);
 
   EXPECT_THAT(scenario.results(),
@@ -186,22 +203,25 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
 }
 
 // A batch much larger than the ring completes with every read in its own
-// buffer. Ring 4 is smaller than a `REAP_WAVE`, so the ring-full wait is
-// clamped to the outstanding reads; ring 8 is exactly one wave; with ring 256,
-// more than 64 CQEs can be ready at once, so a wave is reaped in several
-// chunks.
+// buffer. For `IoUringPolicy`: ring 4 is smaller than a `REAP_WAVE`, so the
+// ring-full wait is clamped to the outstanding reads; ring 8 is exactly one
+// wave; with ring 256, more than `IoUringInterface::MAX_COMPLETIONS_PER_POP`
+// (64) CQEs can be ready at once, so a wave is reaped in several chunks. The
+// other policies have no ring and read synchronously.
 TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanRing) {
-  const std::pair<unsigned, size_t> ringSizeAndNumReads[] = {
-      {4, 80}, {8, 80}, {256, 600}};
-  for (auto [ringSize, numReads] : ringSizeAndNumReads) {
+  constexpr std::array<std::pair<unsigned, size_t>, 3> ringSizeAndNumberOfReads{
+      {{4, 80}, {8, 80}, {256, 600}}};
+  for (const auto& [ringSize, numberOfReads] : ringSizeAndNumberOfReads) {
     SequentialReadScenarioForTesting scenario;
-    for (size_t i = 0; i < numReads; ++i) {
+    for (size_t i : ql::views::iota(size_t{0}, numberOfReads)) {
       // Distinct chunks, so that a completion in the wrong buffer is detected.
-      scenario.addRead(absl::StrFormat("%04zu", i));
+      scenario.addRead(absl::StrFormat("%04d", i));
     }
     auto [tmp, fd] = makeTempFile(scenario.content());
-    TypeParam manager{ringSize};
-    // All reads are page-cache hits; send them through the decorated policy.
+    TypeParam manager(ringSize);
+    // The reads would be page-cache hits. Switch the fast path off (a no-op for
+    // the policies without it) so that they go through the wrapped policy, the
+    // ring for `IoUringPolicy`.
     manager.setPageCacheFastPath(false);
     scenario.readWith(manager, fd);
     EXPECT_THAT(scenario.results(),
@@ -211,34 +231,41 @@ TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanRing) {
 }
 
 // Many small batches (1, 3 or 5 reads each), read one after the other on the
-// same manager, all see the correct bytes. Batch sizes that are not multiples
-// of the reap wave (1, 3, 5, ...) cover partial waves within a batch.
+// same manager, all see the correct bytes. The batch sizes 1, 3 and 5 are not
+// multiples of the reap wave (8), so they end in partial waves.
 TYPED_TEST(IoUringManagerTest, ManySmallBatches) {
   constexpr size_t M = 12;
   std::string fileContent;
   std::vector<std::vector<std::string>> expected(M);
   std::vector<ReadBatchForTesting> batches(M);
-  size_t numChunks = 0;
-  for (size_t i = 0; i < M; ++i) {
-    const size_t numReads = 2 * (i % 3) + 1;
-    for (size_t j = 0; j < numReads; ++j) {
+  size_t numberOfChunks = 0;
+  for (auto&& [i, batchAndExpected] :
+       ::ranges::views::enumerate(::ranges::views::zip(batches, expected))) {
+    auto& [batch, expectedOfBatch] = batchAndExpected;
+    const size_t numberOfReads = 2 * (static_cast<size_t>(i) % 3) + 1;
+    for ([[maybe_unused]] size_t j :
+         ql::views::iota(size_t{0}, numberOfReads)) {
       // Distinct chunks, so that a completion in the wrong buffer is detected.
-      std::string chunk = absl::StrFormat("%03zu", numChunks++);
-      batches[i].add(fileContent.size(), chunk.size());
+      std::string chunk = absl::StrFormat("%03d", numberOfChunks++);
+      batch.add(fileContent.size(), chunk.size());
       fileContent.append(chunk);
-      expected[i].push_back(std::move(chunk));
+      expectedOfBatch.push_back(std::move(chunk));
     }
   }
   auto [tmp, fd] = makeTempFile(fileContent);
 
-  TypeParam manager{64};
-  // All reads are page-cache hits; send them through the decorated policy.
+  TypeParam manager(64);
+  // The reads would be page-cache hits. Switch the fast path off (a no-op for
+  // the policies without it) so that they go through the wrapped policy, the
+  // ring for `IoUringPolicy`.
   manager.setPageCacheFastPath(false);
   for (auto& batch : batches) {
     batch.readWith(manager, fd);
   }
-  for (size_t i = 0; i < M; ++i) {
-    EXPECT_THAT(batches[i].result(), ::testing::ElementsAreArray(expected[i]))
+  for (const auto& [i, batchAndExpected] :
+       ::ranges::views::enumerate(::ranges::views::zip(batches, expected))) {
+    const auto& [batch, expectedOfBatch] = batchAndExpected;
+    EXPECT_THAT(batch.result(), ::testing::ElementsAreArray(expectedOfBatch))
         << "mismatch at batch " << i;
   }
 }
@@ -247,16 +274,17 @@ TYPED_TEST(IoUringManagerTest, ManySmallBatches) {
 // before and after it.
 TYPED_TEST(IoUringManagerTest, ErrorInOneBatchKeepsOtherBatchesConsistent) {
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");  // 12 bytes
-
-  TypeParam manager{64};
-  // The reads are page-cache hits; send them through the decorated policy.
-  manager.setPageCacheFastPath(false);
   ReadBatchForTesting before;
   before.add({{0, 4}, {4, 4}, {8, 4}});
   ReadBatchForTesting bad;
-  bad.add(8, 16);  // past EOF: short read
+  bad.add({{0, 4}, {8, 16}});  // the second read is past EOF: short read
   ReadBatchForTesting after;
   after.add({{8, 4}, {0, 4}});
+  TypeParam manager(64);
+  // The reads would be page-cache hits. Switch the fast path off (a no-op for
+  // the policies without it) so that they go through the wrapped policy, the
+  // ring for `IoUringPolicy`.
+  manager.setPageCacheFastPath(false);
 
   before.readWith(manager, fd);
   AD_EXPECT_THROW_WITH_MESSAGE(bad.readWith(manager, fd),
@@ -272,7 +300,7 @@ TYPED_TEST(IoUringManagerTest, ErrorInOneBatchKeepsOtherBatchesConsistent) {
 TYPED_TEST(IoUringManagerTest, ReadPastEofThrows) {
   auto [tmp, fd] = makeTempFile("AAAABBBB");  // 8 bytes
 
-  TypeParam manager{64};
+  TypeParam manager(64);
   ReadBatchForTesting batch;
   batch.add(0, 16);  // request more than the 8 available
 
@@ -300,7 +328,7 @@ TYPED_TEST(IoUringManagerTest, LargeReads) {
   scenario.addRead(second);  // read at offset 32 KiB
   auto [tmp, fd] = makeTempFile(scenario.content());
 
-  TypeParam manager{64};
+  TypeParam manager(64);
   scenario.readWith(manager, fd);
 
   EXPECT_THAT(scenario.results(),
@@ -314,7 +342,7 @@ TYPED_TEST(IoUringManagerTest, differingReadSizes) {
   ReadBatchForTesting batch;
   batch.add({{8, 1}, {0, 2}, {12, 3}});
 
-  TypeParam manager{64};
+  TypeParam manager(64);
   batch.readWith(manager, fd);
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("C", "AA", "DDD"));
@@ -327,7 +355,7 @@ TYPED_TEST(IoUringManagerTest, zeroLengthReadsWithNonZeroLengthReads) {
   ReadBatchForTesting batch;
   batch.add({{8, 1}, {0, 0}, {12, 3}});
 
-  TypeParam manager{64};
+  TypeParam manager(64);
   batch.readWith(manager, fd);
 
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("C", "", "DDD"));

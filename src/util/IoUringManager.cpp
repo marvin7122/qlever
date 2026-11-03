@@ -12,10 +12,7 @@
 
 #include <unistd.h>
 
-#include <stdexcept>
-
 #include "util/Exception.h"
-#include "util/Log.h"
 
 namespace ad_utility {
 

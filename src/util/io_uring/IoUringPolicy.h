@@ -18,7 +18,6 @@
 #include <string>
 #include <vector>
 
-#include "backports/span.h"
 #include "util/NoCopyNoMove.h"
 #include "util/io_uring/BatchOfReads.h"
 #include "util/io_uring/IoUringInterface.h"

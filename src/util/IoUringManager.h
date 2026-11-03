@@ -17,7 +17,6 @@
 #include "backports/algorithm.h"
 #include "backports/concepts.h"
 #include "backports/span.h"
-#include "util/Exception.h"
 #include "util/IoUringManagerConcepts.h"
 #include "util/Log.h"
 #include "util/PageCacheFirstPolicy.h"

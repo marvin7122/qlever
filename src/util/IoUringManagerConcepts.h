@@ -14,7 +14,6 @@
 #include <cstdint>
 
 #include "backports/concepts.h"
-#include "backports/span.h"
 #include "util/io_uring/BatchOfReads.h"
 
 namespace ad_utility {

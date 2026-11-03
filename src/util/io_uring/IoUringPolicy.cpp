@@ -332,7 +332,11 @@ void IoUringPolicy::submit(Batch& batch) {
   // `-errno`. The SQEs it did not take stay queued. Of the errors listed in
   // io_uring_enter(2), only `EINTR` and `EAGAIN` are expected for this ring (no
   // setup flags, and never more requests than CQ slots); the others mean that
-  // the ring is broken, which is handled below. See
+  // the ring is broken, which is handled below. In particular `EBUSY` reports
+  // completions that did not fit into the CQ, which the slot bound rules out.
+  // `ENOMEM` is not among the documented errors; should it occur before the
+  // kernel took a read of the batch, the ring is retired and the batch is read
+  // with `pread`, so the caller still gets its bytes. See
   // https://man7.org/linux/man-pages/man2/io_uring_enter.2.html
   unsigned numberOfRetries = 0;
   while (ring_->numberOfQueued() > 0) {
