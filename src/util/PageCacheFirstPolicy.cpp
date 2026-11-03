@@ -13,6 +13,7 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <climits>
@@ -119,11 +120,13 @@ void switchOffFastPathIfUnsupported(int64_t numBytesRead) {
 //______________________________________________________________________________
 // Read a `run` of adjacent reads with one `preadv2(RWF_NOWAIT)` call and return
 // how many of its reads, from the front, were read completely. `EAGAIN`, a
-// short read and any other error leave the remaining reads unserved.
+// short read and any other error leave the remaining reads unserved. `iovecs`
+// is scratch space for the call that the caller keeps across the runs of a
+// batch, so that a batch of many short runs does not allocate once per run.
 template <typename Run>
-size_t serveRun(int fd, Run run) {
-  const auto iovecs = ::ranges::to<std::vector<::iovec>>(
-      run | ::ranges::views::transform(toIovec));
+size_t serveRun(int fd, Run run, std::vector<::iovec>& iovecs) {
+  iovecs.clear();
+  ::ranges::push_back(iovecs, run | ::ranges::views::transform(toIovec));
   const int64_t numBytesRead = detail::pageCacheRead()(
       fd, iovecs.data(), static_cast<int>(iovecs.size()),
       static_cast<int64_t>(fileOffsetOf(*::ranges::begin(run))));
@@ -158,6 +161,9 @@ std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
   auto reads = ::ranges::views::zip(positions, numBytes, offsets, buffers);
   std::vector<size_t> notServed;
   notServed.reserve(numBytes.size());
+  // The `iovec`s of the run that is currently served; at most `IOV_MAX`.
+  std::vector<::iovec> iovecs;
+  iovecs.reserve(std::min(numBytes.size(), static_cast<size_t>(IOV_MAX)));
   // One `preadv2` call reads one contiguous range, so reads are grouped
   // into maximal runs of adjacent file ranges and served run by run.
   for (auto adjacentReads : reads | ::ranges::views::chunk_by(areAdjacent)) {
@@ -165,7 +171,7 @@ std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
     for (auto run :
          adjacentReads | ::ranges::views::chunk(static_cast<size_t>(IOV_MAX))) {
       const size_t numServed =
-          pageCacheFastPathIsSupported() ? serveRun(fd, run) : 0;
+          pageCacheFastPathIsSupported() ? serveRun(fd, run, iovecs) : 0;
       ::ranges::push_back(notServed,
                           run | ::ranges::views::drop(numServed) |
                               ::ranges::views::transform(positionOf));
