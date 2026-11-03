@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <thread>
 
 #include "global/Constants.h"
 #include "util/ExceptionHandling.h"
@@ -287,12 +288,16 @@ void VocabularyOnDisk::open(const std::string& filename) {
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
 
-  // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
+  // Initialize the pool of persistent `BatchIoManager`s for `lookupBatch`.
+  // A manager serves one batch lookup at a time, so the pool holds one manager
+  // per hardware thread: then every thread of the machine can run a batch
+  // lookup at the same time without waiting for a manager.
+  const size_t numManagers =
+      std::max<size_t>(1, std::thread::hardware_concurrency());
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
-      std::unique_ptr<ad_utility::BatchManagerBase>>>(
-      NUM_VOCAB_BATCH_IO_MANAGERS);
+      std::unique_ptr<ad_utility::BatchManagerBase>>>(numManagers);
   bool preferIoUring = true;
-  for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
+  for (size_t i = 0; i < numManagers; ++i) {
     ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
   }
 }
