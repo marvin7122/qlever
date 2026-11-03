@@ -108,11 +108,15 @@ STREAMABLE_GENERATOR_TYPE computeResultForAsk(
 
 // _____________________________________________________________________________
 // The maximal number of rows that are serialized together in one chunk of a
-// CSV or TSV export (see `csvOrTsvRows` below). A chunk is the unit of work of
-// the parallel export, so it has to be large enough that scheduling a task
-// costs little compared to its serialization, and small enough that the
-// chunks in flight (two per thread) take only a few megabytes.
-constexpr uint64_t NUM_ROWS_PER_CSV_OR_TSV_CHUNK = 8192;
+// parallel CSV or TSV export (see `csvOrTsvRows` below). A chunk is the unit of
+// work of the parallel export, so it has to be large enough that scheduling a
+// task costs little compared to its serialization. The chunks in flight (at
+// most `2 * max-num-threads-per-query`, plus the one that is being yielded)
+// are held in memory that the memory limit of the query does not track; their
+// size grows with the width of the rows (for example, 8192 rows of 10 literals
+// of 200 bytes each take 16 MB). Neither the value nor this trade-off has been
+// measured yet.
+constexpr uint64_t NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK = 8192;
 
 // Return the CSV or TSV lines (each terminated by a newline) of the `rows` of
 // `table`, with one field per entry of `columns` (an empty field for a column
@@ -588,41 +592,63 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   STREAMABLE_YIELD(absl::StrJoin(variables, std::string_view{&separator, 1}));
   STREAMABLE_YIELD('\n');
 
-  // Serialize the rows of each block in chunks. If the runtime parameter
-  // `parallel-csv-tsv-export` is set, the chunks of a block are serialized
-  // concurrently on the executor of the query, otherwise one after the other
-  // on this thread. The chunks are yielded in their original order in both
-  // cases, so the output is the same. All chunks of a block are serialized
-  // before the next block is requested, because `getRowIndices` only keeps the
-  // current block alive.
+  constexpr auto& escapeFunction =
+      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
+  // If the runtime parameter `parallel-csv-tsv-export` is set, the rows of a
+  // block with more than one chunk of rows are serialized in parallel (see
+  // below). Otherwise (the default, and for every block with at most one
+  // chunk), each cell is converted and yielded on this thread.
   const bool inParallel =
       getRuntimeParameter<&RuntimeParameters::parallelCsvTsvExport_>();
-  const auto& qec = *qet.getQec();
   uint64_t resultSize = 0;
-  for (const TableWithRange& block :
+  for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
-    const TableConstRefWithVocab& table = block.tableWithVocab_;
-    auto serializeChunk = [&qec, &selectedColumnIndices, &table,
-                           &cancellationHandle](const auto& rows) {
-      return csvOrTsvRows<format>(qec.getIndex(), selectedColumnIndices, table,
-                                  rows, *cancellationHandle);
-    };
-    auto chunks =
-        ::ranges::views::chunk(block.view_, NUM_ROWS_PER_CSV_OR_TSV_CHUNK);
-    if (inParallel) {
-      // The view waits for all its tasks when it is destroyed at the end of
-      // this iteration, so no task outlives the `table` that it refers to.
+    if (inParallel && range.size() > NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK) {
+      // The chunks of the block are serialized concurrently on the executor of
+      // the query and yielded in their original order. At most
+      // `2 * max-num-threads-per-query` chunks are in flight, so that a thread
+      // can serialize the next chunk while its previous one waits to be
+      // yielded. How many of them run at the same time is bounded by the
+      // executor (in the server, a `ConcurrencyLimitedExecutor` with
+      // `max-num-threads-per-query`). The view waits for all its tasks when it
+      // is destroyed at the end of this iteration, so no task outlives the
+      // block that it refers to; this is also why all chunks of a block are
+      // serialized before `getRowIndices` is asked for the next block.
+      const auto& qec = *qet.getQec();
+      auto serializeChunk = [&qec, &selectedColumnIndices, &table = pair,
+                             &cancellationHandle](const auto& rows) {
+        return csvOrTsvRows<format>(qec.getIndex(), selectedColumnIndices,
+                                    table, rows, *cancellationHandle);
+      };
+      const size_t numberOfChunksInFlight =
+          2 * getRuntimeParameter<&RuntimeParameters::maxNumThreadsPerQuery_>();
       ad_utility::AsyncTransformView serializedChunks{
-          std::move(chunks), serializeChunk,
-          2 * getRuntimeParameter<&RuntimeParameters::maxNumThreadsPerQuery_>(),
-          qec.executor()};
+          ::ranges::views::chunk(range, NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK),
+          serializeChunk, numberOfChunksInFlight, qec.executor()};
       for (std::string& serializedChunk : serializedChunks) {
         STREAMABLE_YIELD(serializedChunk);
       }
-    } else {
-      for (const auto& rows : chunks) {
-        STREAMABLE_YIELD(serializeChunk(rows));
+      continue;
+    }
+    for (uint64_t i : range) {
+      for (size_t j = 0; j < selectedColumnIndices.size(); ++j) {
+        if (selectedColumnIndices[j].has_value()) {
+          const auto& val = selectedColumnIndices[j].value();
+          Id id = pair.idTable()(i, val.columnIndex_);
+          auto optionalStringAndType =
+              ql::exportIds::idToStringAndType<format == csv>(
+                  qet.getQec()->getIndex(), id, pair.localVocab(),
+                  escapeFunction);
+          if (optionalStringAndType.has_value()) [[likely]] {
+            STREAMABLE_YIELD(optionalStringAndType.value().first);
+          }
+        }
+        if (j + 1 < selectedColumnIndices.size()) {
+          STREAMABLE_YIELD(separator);
+        }
       }
+      STREAMABLE_YIELD('\n');
+      cancellationHandle->throwIfCancelled();
     }
   }
   AD_LOG_DEBUG << "Done creating readable result.\n";
