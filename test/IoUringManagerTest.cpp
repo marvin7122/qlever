@@ -25,6 +25,7 @@
 #include "util/GTestHelpers.h"
 #include "util/IoUringManagerTestHelpers.h"
 #include "util/Log.h"
+#include "util/PageCacheReadTestHelpers.h"
 #include "util/io_uring/IoUringManager.h"
 #include "util/io_uring/PageCacheFirstPolicy.h"
 
@@ -505,4 +506,50 @@ TEST(MakeBatchManager, backendMatchesFlagWhenIoUringPreferred) {
   expectManagerWorks(*manager);
 }
 
+// Several batches of which the page cache serves some reads, and one that it
+// serves completely, are interleaved on a `PageCacheFirstPolicy<Policy>` whose
+// ring holds only two reads, so the forwarded remainder of the first batch
+// already fills the ring. Every batch must end up with the right bytes,
+// whichever order the batches are waited for in.
+template <typename Policy>
+void expectInterleavedPartialBatchesWork() {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDDEEEEFFFF");
+  // No two neighbouring reads of a batch are adjacent in the file, so each read
+  // is a run of its own, and the runs at the offsets 0 and 12 are cached.
+  ad_utility::BatchManager<ad_utility::PageCacheFirstPolicy<Policy>> manager(
+      2, pageCacheReadTestHelpers::cachedAt({0, 12}));
+  ReadBatchForTesting first;
+  first.add({{16, 4}, {0, 4}, {12, 4}, {4, 4}, {20, 4}});
+  ReadBatchForTesting second;
+  second.add({{8, 4}, {20, 4}, {0, 4}});
+  ReadBatchForTesting servedCompletely;
+  servedCompletely.add({{12, 4}, {0, 4}});
+  const auto firstHandle = first.submitTo(manager, fd);
+  const auto secondHandle = second.submitTo(manager, fd);
+  const auto servedCompletelyHandle = servedCompletely.submitTo(manager, fd);
+  manager.wait(secondHandle);
+  manager.wait(servedCompletelyHandle);
+  manager.wait(firstHandle);
+  EXPECT_THAT(first.result(),
+              ElementsAre("EEEE", "AAAA", "DDDD", "BBBB", "FFFF"));
+  EXPECT_THAT(second.result(), ElementsAre("CCCC", "FFFF", "AAAA"));
+  EXPECT_THAT(servedCompletely.result(), ElementsAre("DDDD", "AAAA"));
+}
+
+// _____________________________________________________________________________
+TEST(PageCacheFirstPolicy, interleavedPartialBatchesWithSyncIo) {
+  SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
+  expectInterleavedPartialBatchesWork<ad_utility::SyncIoPolicy>();
+}
+
+#ifdef QLEVER_HAS_IO_URING
+// _____________________________________________________________________________
+TEST(PageCacheFirstPolicy, interleavedPartialBatchesWithIoUring) {
+  SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime";
+  }
+  expectInterleavedPartialBatchesWork<ad_utility::IoUringPolicy>();
+}
+#endif
 }  // namespace
