@@ -231,21 +231,22 @@ class IoUringPolicy {
   // CQ-head update over the wave.
   static constexpr unsigned REAP_WAVE = 8;
 
-  // The number of CQEs that `drainAtLeastCqes` takes out of the completion
-  // queue per `io_uring_peek_batch_cqe` and releases with one
-  // `io_uring_cq_advance`; a wave with more ready CQEs is reaped in several
-  // chunks.
+  // The number of CQEs that `reapWave` takes out of the completion queue per
+  // `io_uring_peek_batch_cqe` and releases with one `io_uring_cq_advance`; a
+  // wave with more ready CQEs is reaped in several chunks.
   static constexpr size_t REAP_CHUNK = 64;
 
-  // Block until at least `minComplete` CQEs are ready, then reap every ready
-  // CQE. `minComplete` must be > 0 and at most the number of submitted reads
-  // that are not yet reaped: a read that is only prepared (SQE filled in, not
-  // yet submitted) never completes, so both callers submit before they drain.
-  // The function can only check the weaker bound `numOutstandingReadRequests_`,
-  // which also counts prepared reads. Throws if `io_uring_wait_cqes` fails. If
-  // `processCqe` throws for a CQE, the remaining CQEs of the chunk are still
-  // applied to the bookkeeping and the first exception is rethrown afterwards.
-  void drainAtLeastCqes(unsigned minComplete);
+  // Block until `waveSize` CQEs are ready, then reap every ready CQE. Reaps at
+  // least one CQE, but may reap fewer than `waveSize` if a signal interrupts
+  // the wait, so the callers loop until their condition holds. `waveSize` must
+  // be > 0 and at most the number of submitted reads that are not yet reaped:
+  // a read that is only prepared (SQE filled in, not yet submitted) never
+  // completes, so both callers submit before they reap. The function can only
+  // check the weaker bound `numOutstandingReadRequests_`, which also counts
+  // prepared reads. Throws if `io_uring_wait_cqes` fails. If `processCqe`
+  // throws for a CQE, every other ready CQE is still applied to the
+  // bookkeeping, and the first exception is rethrown afterwards.
+  void reapWave(unsigned waveSize);
 
   // Apply one completion to the bookkeeping of the outstanding reads. Always
   // updates the counts, also for a failed read, and records a failed or short
@@ -278,8 +279,8 @@ class IoUringPolicy {
   // of its reads are reaped; the failure is reported only once, so a later
   // `wait()` for the same handle returns normally. Also throws, possibly
   // before all reads of the batch are reaped, if waiting for completions fails
-  // (see `drainAtLeastCqes`). A `wait()` for a handle without outstanding reads
-  // (a batch that is already reaped, was empty, or is unknown) returns at once.
+  // (see `reapWave`). A `wait()` for a handle without outstanding reads (a
+  // batch that is already reaped, was empty, or is unknown) returns at once.
   void wait(BatchHandle handle);
 };
 
