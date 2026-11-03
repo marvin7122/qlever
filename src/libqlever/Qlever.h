@@ -300,7 +300,8 @@ struct EngineConfig : CommonConfig {
   // this is the number of threads that can perform such reads at the same
   // time; the server sets it to its number of query threads. The pool is
   // process-wide and is created once, by the first engine that is constructed
-  // in the process; a later engine with another value keeps the existing pool
+  // in the process (or by an earlier batched read, with the default
+  // configuration); a later engine with another value keeps the existing pool
   // and only logs a warning. Defaults to the number of hardware threads of the
   // machine, but at least one.
   size_t numBatchIoManagers_ =
