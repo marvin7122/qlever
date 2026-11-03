@@ -278,15 +278,15 @@ void IoUringPolicy::addBatch(int fd,
 
 //______________________________________________________________________________
 void IoUringPolicy::recordAndPrepareRead(int fd, char* targetBuffer,
-                                         size_t numBytesToRead,
+                                         size_t numberOfBytesToRead,
                                          uint64_t fileOffset,
                                          BatchHandle handle) {
   // Record the read (its batch and how many bytes it should read) under a
   // fresh request id first, so that an SQE is only prepared for a read that is
   // fully recorded: a prepared SQE is submitted with the next submit.
   const uint64_t requestId = nextRequestIdToAssign_;
-  outstandingReadsByRequestId_.emplace(requestId,
-                                       OutstandingRead{handle, numBytesToRead});
+  outstandingReadsByRequestId_.emplace(
+      requestId, OutstandingRead{handle, numberOfBytesToRead});
   // Undo the recording; `BatchState` exists then, and has no failure, because
   // `addBatch` checked that the handle is new.
   auto forgetRead = [this, requestId, handle]() noexcept {
@@ -305,7 +305,7 @@ void IoUringPolicy::recordAndPrepareRead(int fd, char* targetBuffer,
   }
   // `addBatch` keeps fewer than `ringSize_` requests in the ring here, so a
   // free SQE is available.
-  if (!ring_->prepareRead(fd, targetBuffer, numBytesToRead, fileOffset,
+  if (!ring_->prepareRead(fd, targetBuffer, numberOfBytesToRead, fileOffset,
                           requestId)) {
     forgetRead();
     AD_THROW("no free SQE although the ring is not full");
