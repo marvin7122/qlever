@@ -328,6 +328,34 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
       *vocab, withFastPath, indices);
 }
 
+// `VocabularyOnDisk::open` builds its batch managers with the
+// `vocabulary-prefer-io-uring` runtime parameter: with the parameter off they
+// use the synchronous backend, with it on the io_uring backend where io_uring
+// is available. This test checks only that the lookups are correct with both
+// settings; which backend `makeBatchManager` builds for a given flag is checked
+// by the `MakeBatchManager` tests in `IoUringManagerTest.cpp`. The page-cache
+// fast path is switched off, because it would serve every read of the small
+// test file, so that no read would reach either backend.
+TEST(VocabularyOnDisk, LookupBatchIsCorrectWithEitherPreferIoUringSetting) {
+  std::array<size_t, 8> indices{2, 0, 3, 1, 1, 4, 0, 3};
+  auto resetFastPath = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyPageCacheFastPath_>(false);
+  auto resetParameter =
+      setRuntimeParameterForTest<&RuntimeParameters::vocabularyPreferIoUring_>(
+          false);
+  {
+    auto vocab = createExampleVocabulary();
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+  }
+  setRuntimeParameter<&RuntimeParameters::vocabularyPreferIoUring_>(true);
+  {
+    auto vocab = createExampleVocabulary();
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+  }
+}
+
 namespace {
 // Count the page-cache reads; none of them finds anything cached.
 size_t numCountedPageCacheReads = 0;
