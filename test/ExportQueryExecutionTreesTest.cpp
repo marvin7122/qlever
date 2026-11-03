@@ -4,6 +4,7 @@
 //          Robin Textor-Falconi <robintf@cs.uni-freiburg.de>
 //          Hannah Bast <bast@cs.uni-freiburg.de>
 
+#include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
 
 #include "./WordsAndDocsFileLineCreator.h"
@@ -153,12 +154,22 @@ void runSelectQueryTestCase(
       &RuntimeParameters::sparqlResultsJsonWithTime_>(false);
   auto trace = generateLocationTrace(l, "runSelectQueryTestCase");
   using enum ad_utility::MediaType;
-  EXPECT_EQ(
-      runQueryStreamableResult(testCase.kg, testCase.query, tsv, useTextIndex),
-      testCase.resultTsv);
-  EXPECT_EQ(
-      runQueryStreamableResult(testCase.kg, testCase.query, csv, useTextIndex),
-      testCase.resultCsv);
+  // The CSV and TSV export must be the same with and without
+  // `parallel-csv-tsv-export`.
+  for (bool inParallel : {false, true}) {
+    auto parallelCleanup =
+        setRuntimeParameterForTest<&RuntimeParameters::parallelCsvTsvExport_>(
+            inParallel);
+    auto parallelTrace = generateLocationTrace(
+        AD_CURRENT_SOURCE_LOC(),
+        inParallel ? "parallel CSV/TSV export" : "sequential CSV/TSV export");
+    EXPECT_EQ(runQueryStreamableResult(testCase.kg, testCase.query, tsv,
+                                       useTextIndex),
+              testCase.resultTsv);
+    EXPECT_EQ(runQueryStreamableResult(testCase.kg, testCase.query, csv,
+                                       useTextIndex),
+              testCase.resultCsv);
+  }
 
   auto resultJSON = nlohmann::json::parse(runQueryStreamableResult(
       testCase.kg, testCase.query, qleverJson, useTextIndex));
@@ -359,6 +370,48 @@ std::chrono::milliseconds toChrono(std::string_view string) {
 }  // namespace
 
 // ____________________________________________________________________________
+// _____________________________________________________________________________
+// A CSV or TSV export with more rows than fit into one chunk of the
+// serialization (8192 rows) is the same with and without
+// `parallel-csv-tsv-export`, also when OFFSET, LIMIT, and the export limit cut
+// the result in the middle of a chunk, and with the minimal number of chunks
+// in flight (2 for `max-num-threads-per-query` = 1).
+TEST(ExportQueryExecutionTrees, ParallelCsvTsvExportOfManyRows) {
+  constexpr size_t numTriples = 20'000;
+  std::string kg;
+  for (size_t i = 0; i < numTriples; ++i) {
+    absl::StrAppend(&kg, "<s", i, "> <p> \"o", i, "\" .\n");
+  }
+  auto run = [&kg](const std::string& query, ad_utility::MediaType mediaType,
+                   bool inParallel,
+                   std::optional<size_t> exportLimit = std::nullopt) {
+    auto cleanup =
+        setRuntimeParameterForTest<&RuntimeParameters::parallelCsvTsvExport_>(
+            inParallel);
+    return runQueryStreamableResult(kg, query, mediaType, false, exportLimit);
+  };
+  using enum ad_utility::MediaType;
+  for (const std::string query :
+       {"SELECT ?s ?o WHERE { ?s <p> ?o } ORDER BY ?o",
+        "SELECT ?s ?o WHERE { ?s <p> ?o } ORDER BY ?o OFFSET 5000 LIMIT 10000",
+        "SELECT ?o WHERE { ?s <p> ?o } OFFSET 8191"}) {
+    for (auto mediaType : {csv, tsv}) {
+      auto trace = generateLocationTrace(AD_CURRENT_SOURCE_LOC(), query);
+      auto sequential = run(query, mediaType, false);
+      EXPECT_EQ(run(query, mediaType, true), sequential);
+      EXPECT_EQ(run(query, mediaType, true, 9000),
+                run(query, mediaType, false, 9000));
+      auto oneThread = setRuntimeParameterForTest<
+          &RuntimeParameters::maxNumThreadsPerQuery_>(1);
+      EXPECT_EQ(run(query, mediaType, true), sequential);
+    }
+  }
+  // The header line plus one line per triple.
+  EXPECT_EQ(ql::ranges::count(
+                run("SELECT ?s ?o WHERE { ?s <p> ?o }", csv, true), '\n'),
+            numTriples + 1);
+}
+
 TEST(ExportQueryExecutionTrees, Integers) {
   std::string kg =
       "<s> <p> 42 . <s> <p> -42019234865781 . <s> <p> 4012934858173560";
