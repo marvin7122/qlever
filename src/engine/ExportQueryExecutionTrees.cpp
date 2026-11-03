@@ -131,11 +131,11 @@ ExportQueryExecutionTrees::csvOrTsvRows(
     ql::ranges::iota_view<uint64_t, uint64_t> rows,
     const ad_utility::AllocatorWithLimit<char>& allocator,
     ad_utility::CancellationHandle<>& cancellationHandle,
-    const std::atomic<bool>& stop) {
+    ad_utility::AsyncTransformStopFlag stop) {
   static constexpr char separator = format == tsv ? '\t' : ',';
   CsvOrTsvChunk lines{allocator};
   for (uint64_t row : rows) {
-    if (stop.load(std::memory_order_relaxed)) {
+    if (stop.isRequested()) {
       return lines;
     }
     for (const auto& [j, column] : ::ranges::views::enumerate(columns)) {
@@ -164,14 +164,14 @@ ExportQueryExecutionTrees::csvOrTsvRows<ad_utility::MediaType::csv>(
     ql::span<const std::optional<QueryExecutionTree::VariableAndColumnIndex>>,
     const TableConstRefWithVocab&, ql::ranges::iota_view<uint64_t, uint64_t>,
     const ad_utility::AllocatorWithLimit<char>&,
-    ad_utility::CancellationHandle<>&, const std::atomic<bool>&);
+    ad_utility::CancellationHandle<>&, ad_utility::AsyncTransformStopFlag);
 template ExportQueryExecutionTrees::CsvOrTsvChunk
 ExportQueryExecutionTrees::csvOrTsvRows<ad_utility::MediaType::tsv>(
     const Index&,
     ql::span<const std::optional<QueryExecutionTree::VariableAndColumnIndex>>,
     const TableConstRefWithVocab&, ql::ranges::iota_view<uint64_t, uint64_t>,
     const ad_utility::AllocatorWithLimit<char>&,
-    ad_utility::CancellationHandle<>&, const std::atomic<bool>&);
+    ad_utility::CancellationHandle<>&, ad_utility::AsyncTransformStopFlag);
 
 // __________________________________________________________________________
 InputRangeTypeErased<TableConstRefWithVocab>
@@ -616,63 +616,69 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   uint64_t resultSize = 0;
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
-    if (inParallel && range.size() > MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK) {
-      // The rows of the block are cut into chunks of (almost) equal size,
-      // which are serialized concurrently on the executor of the query and
-      // yielded in their original order. At most
-      // `2 * max-num-threads-per-query` chunks are in flight, so that a thread
-      // can serialize the next chunk while its previous one waits to be
-      // yielded. How many of them run at the same time is bounded by the
-      // executor (in the server, a `ConcurrencyLimitedExecutor` with
-      // `max-num-threads-per-query`). The view waits for all its tasks when it
-      // is destroyed at the end of this iteration, so no task outlives the
-      // block that it refers to; this is also why all chunks of a block are
-      // serialized before `getRowIndices` is asked for the next block.
-      const auto& qec = *qet.getQec();
-      const auto numberOfRows = static_cast<uint64_t>(range.size());
-      const uint64_t firstRow = *range.begin();
-      const uint64_t endRow = firstRow + numberOfRows;
-      // Both divisions round up.
-      const uint64_t numberOfChunks =
-          (numberOfRows + MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK - 1) /
-          MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK;
-      const uint64_t numberOfRowsPerChunk =
-          (numberOfRows + numberOfChunks - 1) / numberOfChunks;
-      // The chunks are stored, so that the view moves them into its tasks
-      // (the elements of a `transform_view` are temporaries).
-      std::vector<ql::ranges::iota_view<uint64_t, uint64_t>> chunks;
-      chunks.reserve(numberOfChunks);
-      for (uint64_t begin = firstRow; begin < endRow;
-           begin += numberOfRowsPerChunk) {
-        chunks.emplace_back(begin,
-                            std::min(begin + numberOfRowsPerChunk, endRow));
+    // The binary formats have returned above, but the code below is still
+    // instantiated for them; the parallel path is only needed for CSV and TSV.
+    if constexpr (format == csv || format == tsv) {
+      if (inParallel &&
+          range.size() > MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK) {
+        // The rows of the block are cut into chunks of (almost) equal size,
+        // which are serialized concurrently on the executor of the query and
+        // yielded in their original order. At most
+        // `2 * max-num-threads-per-query` chunks are in flight, so that a
+        // thread can serialize the next chunk while its previous one waits to
+        // be yielded. How many of them run at the same time is bounded by the
+        // executor (in the server, a `ConcurrencyLimitedExecutor` with
+        // `max-num-threads-per-query`). The view waits for all its tasks when
+        // it is destroyed at the end of this iteration, so no task outlives the
+        // block that it refers to; this is also why all chunks of a block are
+        // serialized before `getRowIndices` is asked for the next block.
+        const auto& qec = *qet.getQec();
+        const auto numberOfRows = static_cast<uint64_t>(range.size());
+        const uint64_t firstRow = *range.begin();
+        const uint64_t endRow = firstRow + numberOfRows;
+        // Both divisions round up.
+        const uint64_t numberOfChunks =
+            (numberOfRows + MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK - 1) /
+            MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK;
+        const uint64_t numberOfRowsPerChunk =
+            (numberOfRows + numberOfChunks - 1) / numberOfChunks;
+        // The chunks are stored, so that the view moves them into its tasks
+        // (the elements of a `transform_view` are temporaries).
+        std::vector<ql::ranges::iota_view<uint64_t, uint64_t>> chunks;
+        chunks.reserve(numberOfChunks);
+        for (uint64_t begin = firstRow; begin < endRow;
+             begin += numberOfRowsPerChunk) {
+          chunks.emplace_back(begin,
+                              std::min(begin + numberOfRowsPerChunk, endRow));
+        }
+        // When the consumer leaves this block early (for example, after a
+        // client disconnect), the view requests the `stop` of the chunks that
+        // are still in flight, so that they stop instead of serializing rows
+        // that nobody reads. The destructor of the view waits for them.
+        auto serializeChunk =
+            [&qec, &selectedColumnIndices, &table = pair, &cancellationHandle,
+             allocator =
+                 ad_utility::AllocatorWithLimit<char>{qec.getAllocator()}](
+                ql::ranges::iota_view<uint64_t, uint64_t> rows,
+                ad_utility::AsyncTransformStopFlag stop) {
+              return csvOrTsvRows<format>(qec.getIndex(), selectedColumnIndices,
+                                          table, rows, allocator,
+                                          *cancellationHandle, stop);
+            };
+        const size_t maxNumberOfChunksInFlight =
+            2 *
+            getRuntimeParameter<&RuntimeParameters::maxNumThreadsPerQuery_>();
+        ad_utility::AsyncTransformView serializedChunks{
+            std::move(chunks), serializeChunk, maxNumberOfChunksInFlight,
+            qec.executor()};
+        for (const CsvOrTsvChunk& serializedChunk : serializedChunks) {
+          // The chunks in flight may have been serialized before a
+          // cancellation, so check it here too.
+          cancellationHandle->throwIfCancelled();
+          STREAMABLE_YIELD(std::string_view{serializedChunk});
+        }
+        continue;
       }
-      // When the consumer leaves this block early (for example, after a client
-      // disconnect), the view sets the `stop` flag of the chunks that are
-      // still in flight, so that they stop instead of serializing rows that
-      // nobody reads. The destructor of the view waits for them.
-      auto serializeChunk =
-          [&qec, &selectedColumnIndices, &table = pair, &cancellationHandle,
-           allocator =
-               ad_utility::AllocatorWithLimit<char>{qec.getAllocator()}](
-              ql::ranges::iota_view<uint64_t, uint64_t> rows,
-              const std::atomic<bool>& stop) {
-            return csvOrTsvRows<format>(qec.getIndex(), selectedColumnIndices,
-                                        table, rows, allocator,
-                                        *cancellationHandle, stop);
-          };
-      const size_t maxNumberOfChunksInFlight =
-          2 * getRuntimeParameter<&RuntimeParameters::maxNumThreadsPerQuery_>();
-      ad_utility::AsyncTransformView serializedChunks{
-          std::move(chunks), serializeChunk, maxNumberOfChunksInFlight,
-          qec.executor()};
-      for (const CsvOrTsvChunk& serializedChunk : serializedChunks) {
-        // The chunks in flight may have been serialized before a
-        // cancellation, so check it here too.
-        cancellationHandle->throwIfCancelled();
-        STREAMABLE_YIELD(std::string_view{serializedChunk});
-      }
-      continue;
     }
     for (uint64_t i : range) {
       for (size_t j = 0; j < selectedColumnIndices.size(); ++j) {
