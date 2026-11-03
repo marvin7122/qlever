@@ -47,14 +47,17 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   uint64_t id_ = 0;
 
   // The batch I/O managers (an io_uring ring each, or the synchronous
-  // fallback) of `lookupBatch`. A lookup takes a manager, or creates one if all
-  // are in use, and gives it back afterwards. So a lookup never waits for a
-  // manager, and the pool holds as many managers as lookups of this vocabulary
-  // ran at the same time at some point. Shared, because the lease of a manager
-  // gives it back to this pool (see `RecyclingPool::makeRecyclingOwner`).
-  using BatchManagerPool =
-      ad_utility::RecyclingPool<std::unique_ptr<ad_utility::BatchManagerBase>>;
-  std::shared_ptr<BatchManagerPool> batchManagers_;
+  // fallback) of `lookupBatch`. A lookup takes an idle manager, or creates one
+  // if there is none, and gives it back after a successful lookup. So a lookup
+  // never waits for a manager, and the pool holds at most as many managers as
+  // lookups of this vocabulary ran at the same time. It never shrinks.
+  struct BatchManagers {
+    ad_utility::RecyclingPool<std::unique_ptr<ad_utility::BatchManagerBase>>
+        pool_;
+  };
+  // Behind a pointer, because `BatchManagers` is not movable, but
+  // `VocabularyOnDisk` is.
+  std::unique_ptr<BatchManagers> batchManagers_;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
@@ -138,6 +141,11 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
   // Get the number of words in the vocabulary.
   size_t size() const { return size_; }
+
+  // Return the number of idle managers of `lookupBatch`. Only for testing.
+  size_t numberOfIdleBatchManagersForTesting() const {
+    return batchManagers_->pool_.numStoredObjects();
+  }
 
   // Default constructor for an empty vocabulary.
   VocabularyOnDisk() = default;

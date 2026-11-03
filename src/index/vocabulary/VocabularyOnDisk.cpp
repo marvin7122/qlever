@@ -331,18 +331,22 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
                     "`open()` must be called before `lookupBatch()`");
 
   // Take an idle manager, or create one (with io_uring if it is compiled in
-  // and its setup succeeds). The returned owner gives the manager back to the
-  // pool when it is destroyed, on every exit path.
+  // and its setup succeeds).
+  auto& managers = *batchManagers_;
   auto makeManager = []() {
     bool preferIoUring = true;
     return ad_utility::makeBatchManager(preferIoUring);
   };
-  auto managerOwner = BatchManagerPool::makeRecyclingOwner(
-      batchManagers_, batchManagers_->take(makeManager));
-  auto& manager = **managerOwner;
+  auto manager = managers.pool_.take(makeManager);
 
-  auto offsetPairs = readOffsetPairs(manager, indices);
-  return readStrings(manager, offsetPairs);
+  // Give the manager back only after a successful lookup. If the lookup
+  // throws, other reads of a failed batch may still be in the kernel, so the
+  // manager is destroyed instead of being reused by a later lookup. (The pool
+  // then counts it as taken for good, which is harmless: only managers of this
+  // pool are ever given back.)
+  auto result = readStrings(*manager, readOffsetPairs(*manager, indices));
+  managers.pool_.giveBack(std::move(manager));
+  return result;
 }
 
 // _____________________________________________________________________________
@@ -438,5 +442,5 @@ void VocabularyOnDisk::open(const std::string& filename) {
   size_ = numOffsets - 1;
 
   // The managers of `lookupBatch` are created by the lookups that need them.
-  batchManagers_ = std::make_shared<BatchManagerPool>();
+  batchManagers_ = std::make_unique<BatchManagers>();
 }
