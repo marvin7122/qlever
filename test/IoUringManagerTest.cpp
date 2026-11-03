@@ -12,10 +12,14 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <initializer_list>
 #include <memory>
+#include <optional>
+#include <random>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -25,6 +29,7 @@
 
 #include "index/vocabulary/VocabularyTypes.h"
 #include "util/Exception.h"
+#include "util/FakeIoUring.h"
 #include "util/File.h"
 #include "util/GTestHelpers.h"
 #include "util/IoUringManager.h"
@@ -107,15 +112,16 @@ class ReadBatchForTesting {
   // handle.
   template <typename Manager>
   typename Manager::BatchHandle submitTo(Manager& manager, int fd) {
-    // Build the buffer pointers here, after all buffers have been added, so the
-    // addresses are stable (no further `add` will reallocate `targetBuffers_`).
-    // `addBatch` copies each address into its read request, so this temporary
-    // vector need not outlive the call.
-    std::vector<char*> pointers = ::ranges::to_vector(
-        targetBuffers_ | ql::views::transform([](std::string& buffer) {
-          return buffer.data();
-        }));
+    std::vector<char*> pointers = targetBufferPointers();
     return manager.addBatch(fd, numBytes_, offsets_, pointers);
+  }
+
+  // Add all accumulated reads to the read policy `policy` (not a manager) for
+  // file `fd`, under the batch handle `handle`.
+  template <typename Policy>
+  void addTo(Policy& policy, int fd, typename Policy::BatchHandle handle) {
+    std::vector<char*> pointers = targetBufferPointers();
+    policy.addBatch(fd, numBytes_, offsets_, pointers, handle);
   }
 
   // The bytes read by each read, in request order (valid once the batch has
@@ -123,6 +129,17 @@ class ReadBatchForTesting {
   const std::vector<std::string>& result() const { return targetBuffers_; }
 
  private:
+  // Build the buffer pointers only after all buffers have been added, so the
+  // addresses are stable (no further `add` will reallocate `targetBuffers_`).
+  // `addBatch` copies each address into its read request, so the returned
+  // vector need not outlive the call.
+  std::vector<char*> targetBufferPointers() {
+    return ::ranges::to_vector(targetBuffers_ |
+                               ql::views::transform([](std::string& buffer) {
+                                 return buffer.data();
+                               }));
+  }
+
   std::vector<size_t> numBytes_;
   std::vector<uint64_t> offsets_;
   std::vector<std::string> targetBuffers_;
@@ -153,6 +170,12 @@ class SequentialReadScenarioForTesting {
   template <typename Manager>
   typename Manager::BatchHandle submitTo(Manager& manager, int fd) {
     return batch_.submitTo(manager, fd);
+  }
+
+  // Add all reads to the read policy `policy` under the handle `handle`.
+  template <typename Policy>
+  void addTo(Policy& policy, int fd, typename Policy::BatchHandle handle) {
+    batch_.addTo(policy, fd, handle);
   }
 
   // The bytes actually read (valid once the batch has completed).
@@ -610,4 +633,413 @@ TEST(MakeBatchManager, backendMatchesFlagWhenIoUringPreferred) {
 #endif
   expectManagerWorks(*manager);
 }
+#ifdef QLEVER_HAS_IO_URING
+// The script of a `ScriptedRing`, and what it observed. Owned by the test, so
+// that it can be read also after the policy has destroyed the ring.
+struct RingScript {
+  // The results of the next submits, consumed from the front: `std::nullopt`
+  // submits for real; a value <= 0 is returned without submitting (a negative
+  // value fails the submit with that `-errno`, 0 means that the kernel took no
+  // SQE). Once it is empty, every submit is real.
+  std::deque<std::optional<int>> submitResults;
+  // The number of the next waits that fail with `-EINTR` without waiting.
+  size_t numberOfWaitsToInterrupt = 0;
+  // If nonzero, every wait fails with this `errno`.
+  int brokenWaitErrno = 0;
+
+  // The requests (reads and no-ops) that the kernel took, and the completions
+  // that the policy reaped. Every request that reached the kernel is reaped
+  // iff they are equal.
+  size_t numberOfTakenRequests = 0;
+  size_t numberOfReapedCompletions = 0;
+  // The calls of `backOff`.
+  size_t numberOfBackOffs = 0;
+};
+
+// A liburing ring whose submits and waits follow a `RingScript`. Tests run
+// `IoUringPolicy` on it to inject the failures that a real kernel produces only
+// rarely, while the reads still go to the real kernel.
+class ScriptedRing final : public ad_utility::IoUringInterface {
+ public:
+  ScriptedRing(unsigned ringSize, RingScript& script)
+      : ring_{ad_utility::makeLiburingRing(ringSize)}, script_{script} {}
+
+  bool prepareRead(int fd, char* buffer, size_t numberOfBytes, uint64_t offset,
+                   uint64_t requestId) override {
+    return ring_->prepareRead(fd, buffer, numberOfBytes, offset, requestId);
+  }
+  size_t numberOfQueued() const override { return ring_->numberOfQueued(); }
+  size_t sqCapacity() const override { return ring_->sqCapacity(); }
+  size_t cqCapacity() const override { return ring_->cqCapacity(); }
+
+  int submit() override {
+    if (!script_.submitResults.empty()) {
+      const std::optional<int> result = script_.submitResults.front();
+      script_.submitResults.pop_front();
+      if (result.has_value()) {
+        return result.value();
+      }
+    }
+    const int result = ring_->submit();
+    if (result > 0) {
+      script_.numberOfTakenRequests += static_cast<size_t>(result);
+    }
+    return result;
+  }
+
+  int waitForCompletions(unsigned minComplete) override {
+    if (script_.brokenWaitErrno != 0) {
+      return -script_.brokenWaitErrno;
+    }
+    if (script_.numberOfWaitsToInterrupt > 0) {
+      --script_.numberOfWaitsToInterrupt;
+      return -EINTR;
+    }
+    // Fail instead of blocking the test forever.
+    if (script_.numberOfReapedCompletions + minComplete >
+        script_.numberOfTakenRequests) {
+      return -ETIME;
+    }
+    return ring_->waitForCompletions(minComplete);
+  }
+
+  size_t popCompletions(ql::span<Completion> completions) override {
+    const size_t numberOfPopped = ring_->popCompletions(completions);
+    script_.numberOfReapedCompletions += numberOfPopped;
+    return numberOfPopped;
+  }
+
+  std::vector<uint64_t> cancelQueued(uint64_t noOpRequestId) override {
+    return ring_->cancelQueued(noOpRequestId);
+  }
+
+  void backOff() override { ++script_.numberOfBackOffs; }
+
+ private:
+  std::unique_ptr<ad_utility::IoUringInterface> ring_;
+  RingScript& script_;
+};
+
+// Tests of `IoUringPolicy` for failed reads and failing io_uring calls. The
+// policy must not throw while the kernel may still write into the target
+// buffers of a batch, since the callers free them when they unwind.
+class IoUringPolicyFailureTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    if (!ioUringAvailableAtRuntime()) {
+      GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                      "(e.g. blocked by seccomp inside Docker)";
+    }
+  }
+
+  // A policy on a `ScriptedRing` with (at least) `ringSize` SQEs.
+  static ad_utility::IoUringPolicy makePolicy(unsigned ringSize,
+                                              RingScript& script) {
+    return ad_utility::IoUringPolicy{
+        std::make_unique<ScriptedRing>(ringSize, script)};
+  }
+};
+
+// A file of `numberOfChunks` chunks of 4 bytes, chunk `i` filled with a
+// character that depends on `i`, and a batch that reads each chunk.
+std::pair<std::string, ReadBatchForTesting> chunkedFileAndBatch(
+    size_t numberOfChunks) {
+  std::string content;
+  ReadBatchForTesting batch;
+  for (size_t i = 0; i < numberOfChunks; ++i) {
+    batch.add(content.size(), 4);
+    content.append(4, static_cast<char>('A' + i % 26));
+  }
+  return {std::move(content), std::move(batch)};
+}
+
+// A read past the end of the file is short. `wait()` throws its error only
+// once the other reads of the batch have completed too.
+TEST_F(IoUringPolicyFailureTest, failedReadIsThrownAfterAllReadsOfItsBatch) {
+  auto [tmp, fd] = makeTempFile("AAAABBBB");
+  auto [restoreLog, logStream] = setGlobalLoggingStreamToStringStream();
+  RingScript script;
+  ReadBatchForTesting batch;
+  batch.add({{0, 16}, {0, 4}, {4, 4}});
+  {
+    auto policy = makePolicy(64, script);
+    batch.addTo(policy, fd, 0);
+    AD_EXPECT_THROW_WITH_MESSAGE(policy.wait(0),
+                                 HasSubstr("read fewer bytes than requested in "
+                                           "IoUringPolicy (8 of 16 bytes)"));
+    EXPECT_EQ(script.numberOfTakenRequests, 3U);
+    EXPECT_EQ(script.numberOfReapedCompletions, 3U);
+  }
+  EXPECT_THAT(batch.result()[1], Eq("AAAA"));
+  EXPECT_THAT(batch.result()[2], Eq("BBBB"));
+  EXPECT_THAT(logStream.str(), Not(HasSubstr("still in flight")));
+}
+
+// A submit keeps failing with `EAGAIN` in the middle of a batch that is larger
+// than the ring, while earlier reads of the batch are in the kernel.
+// `addBatch` reaps them before it throws, and the queued read is rewritten
+// into a no-op: the next batch hands it to the kernel, and it does not touch
+// its buffer.
+TEST_F(IoUringPolicyFailureTest, failedSubmitCancelsQueuedReadsIntoNoOps) {
+  constexpr size_t numberOfReads = 100;
+  constexpr size_t ringSize = 64;
+  auto [content, failing] = chunkedFileAndBatch(numberOfReads);
+  auto [tmp, fd] = makeTempFile(content);
+  RingScript script;
+  auto [content2, next] = chunkedFileAndBatch(3);
+  {
+    auto policy = makePolicy(ringSize, script);
+    // The first submit takes a full ring of reads. When the ring is full
+    // again, the submit fails, also on every retry.
+    script.submitResults.push_back(std::nullopt);
+    for (size_t i = 0; i <= 16; ++i) {
+      script.submitResults.push_back(-EAGAIN);
+    }
+    AD_EXPECT_THROW_WITH_MESSAGE(
+        failing.addTo(policy, fd, 0),
+        HasSubstr("io_uring_submit failed in IoUringPolicy"));
+    EXPECT_TRUE(script.submitResults.empty());
+    EXPECT_EQ(script.numberOfTakenRequests, ringSize);
+    EXPECT_EQ(script.numberOfReapedCompletions, ringSize);
+    // The reads that the kernel took are complete, the others never started.
+    for (size_t i = 0; i < numberOfReads; ++i) {
+      EXPECT_EQ(failing.result()[i],
+                i < ringSize ? content.substr(4 * i, 4) : std::string(4, '\0'))
+          << i;
+    }
+
+    // The next batch hands the no-op of the cancelled read to the kernel.
+    next.addTo(policy, fd, 1);
+    policy.wait(1);
+    EXPECT_THAT(next.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
+    EXPECT_EQ(script.numberOfTakenRequests, ringSize + 1 + 3);
+  }
+  // The no-op completed (in `wait()` or in the destructor) without touching
+  // the buffer of the cancelled read.
+  EXPECT_EQ(script.numberOfReapedCompletions, ringSize + 1 + 3);
+  EXPECT_EQ(failing.result()[ringSize], std::string(4, '\0'));
+}
+
+// A submit that fails with `EAGAIN`, or takes no SQE, is retried. If the
+// kernel holds requests, the policy reaps one before each retry (completed
+// requests free kernel memory), otherwise it backs off.
+TEST_F(IoUringPolicyFailureTest, transientSubmitFailuresAreRetried) {
+  auto [content, small] = chunkedFileAndBatch(3);
+  auto [tmp, fd] = makeTempFile(content);
+  RingScript script;
+  auto policy = makePolicy(64, script);
+  script.submitResults = {-EAGAIN, 0, -EINTR, -EAGAIN};
+  small.addTo(policy, fd, 0);
+  policy.wait(0);
+  EXPECT_THAT(small.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
+  EXPECT_EQ(script.numberOfBackOffs, 3U);
+
+  auto [content2, large] = chunkedFileAndBatch(100);
+  auto [tmp2, fd2] = makeTempFile(content2);
+  script.submitResults = {std::nullopt, -EAGAIN, -EAGAIN, 0};
+  large.addTo(policy, fd2, 1);
+  policy.wait(1);
+  EXPECT_EQ(::ranges::to_vector(large.result() | ql::views::join),
+            ::ranges::to_vector(content2));
+  EXPECT_EQ(script.numberOfBackOffs, 3U);
+  EXPECT_EQ(script.numberOfReapedCompletions, script.numberOfTakenRequests);
+}
+
+// After a whole ring of reads was cancelled, the ring holds only queued no-ops.
+// The next batch hands them to the kernel first, also if a submit takes only
+// some of them.
+TEST_F(IoUringPolicyFailureTest, ringFullOfNoOpsIsSubmittedPartially) {
+  using ad_utility::testing::FakeIoUring;
+  const std::string file = "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJ";
+  FakeIoUring::Faults faults;
+  // All 17 submits of the first batch fail. Then the kernel takes 3, and then
+  // 2 of the 8 no-ops.
+  faults.scriptedSubmits.assign(17, -EAGAIN);
+  faults.scriptedSubmits.push_back(3);
+  faults.scriptedSubmits.push_back(2);
+  auto fakeOwner = std::make_unique<FakeIoUring>(file, 8, faults, 0);
+  FakeIoUring& fake = *fakeOwner;
+  ad_utility::IoUringPolicy policy{std::move(fakeOwner)};
+
+  ReadBatchForTesting cancelled;
+  for (size_t i = 0; i < 10; ++i) {
+    cancelled.add(4 * i, 4);
+  }
+  AD_EXPECT_THROW_WITH_MESSAGE(cancelled.addTo(policy, -1, 0),
+                               HasSubstr("(after 16 retries)"));
+  EXPECT_EQ(fake.faultCounts().cancelledReads, 8U);
+  EXPECT_EQ(fake.numberOfQueued(), 8U);
+  EXPECT_EQ(fake.numberOfReadsInRing(), 0U);
+  EXPECT_THAT(cancelled.result(), Each(Eq(std::string(4, '\0'))));
+
+  for (uint64_t handle = 1; handle <= 2; ++handle) {
+    ReadBatchForTesting next;
+    next.add({{0, 4}, {36, 4}, {8, 4}});
+    next.addTo(policy, -1, handle);
+    policy.wait(handle);
+    EXPECT_THAT(next.result(), ElementsAre("AAAA", "JJJJ", "CCCC"));
+    EXPECT_EQ(fake.numberOfReadsInRing(), 0U);
+  }
+  EXPECT_EQ(fake.numberOfQueued(), 0U);
+}
+
+// A submit error other than `EINTR` and `EAGAIN` makes the ring unusable. If
+// the kernel holds no read, the queued reads are cancelled and `addBatch`
+// throws. If it holds reads, the process terminates: their buffers must not be
+// freed, and they cannot be reaped safely.
+TEST_F(IoUringPolicyFailureTest, brokenSubmitTerminatesOnlyWithReadsInKernel) {
+  auto [content, batch] = chunkedFileAndBatch(3);
+  auto [tmp, fd] = makeTempFile(content);
+  RingScript script;
+  auto policy = makePolicy(64, script);
+  script.submitResults.push_back(-EBADF);
+  AD_EXPECT_THROW_WITH_MESSAGE(batch.addTo(policy, fd, 0),
+                               HasSubstr("io_uring_submit failed"));
+  EXPECT_THAT(batch.result(), Each(Eq(std::string(4, '\0'))));
+  EXPECT_EQ(script.numberOfTakenRequests, 0U);
+
+  // The death test runs in a child process that shares the memory of a ring
+  // with this process, so it gets a ring of its own.
+  auto [content2, large] = chunkedFileAndBatch(100);
+  RingScript script2;
+  script2.submitResults = {std::nullopt, -EBADF};
+  EXPECT_DEATH(
+      {
+        auto policy2 = makePolicy(64, script2);
+        large.addTo(policy2, fd, 0);
+      },
+      "io_uring_submit failed");
+}
+
+// A wait that fails with an error other than `EINTR` terminates the process:
+// the kernel may still write into the buffers of the reads it holds.
+TEST_F(IoUringPolicyFailureTest, brokenWaitTerminates) {
+  auto [content, batch] = chunkedFileAndBatch(3);
+  auto [tmp, fd] = makeTempFile(content);
+  RingScript script;
+  auto policy = makePolicy(64, script);
+  batch.addTo(policy, fd, 0);
+  script.brokenWaitErrno = EIO;
+  EXPECT_DEATH(policy.wait(0), "io_uring_wait_cqe failed");
+  script.brokenWaitErrno = 0;
+  policy.wait(0);
+  EXPECT_THAT(batch.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
+}
+
+// A wait that a signal interrupts is retried, both in `wait()` and in the
+// destructor.
+TEST_F(IoUringPolicyFailureTest, interruptedWaitsAreRetried) {
+  auto [content, waited] = chunkedFileAndBatch(2);
+  auto [tmp, fd] = makeTempFile(content);
+  RingScript script;
+  ReadBatchForTesting unwaited;
+  unwaited.add(4, 4);
+  {
+    auto policy = makePolicy(64, script);
+    waited.addTo(policy, fd, 0);
+    script.numberOfWaitsToInterrupt = 2;
+    policy.wait(0);
+    EXPECT_THAT(waited.result(), ElementsAre("AAAA", "BBBB"));
+
+    unwaited.addTo(policy, fd, 1);
+    script.numberOfWaitsToInterrupt = 1;
+  }
+  EXPECT_EQ(script.numberOfWaitsToInterrupt, 0U);
+  EXPECT_EQ(script.numberOfTakenRequests, 3U);
+  EXPECT_EQ(script.numberOfReapedCompletions, 3U);
+  EXPECT_THAT(unwaited.result(), ElementsAre("BBBB"));
+}
+
+// The failure of a read is thrown by the `wait()` of its own batch, whichever
+// call reaps its completion, and is never dropped.
+TEST_F(IoUringPolicyFailureTest, failedReadIsThrownByTheWaitOfItsOwnBatch) {
+  using ad_utility::testing::FakeIoUring;
+  const std::string file = "AAAABBBB";
+  for (uint32_t seed = 0; seed < 20; ++seed) {
+    ad_utility::IoUringPolicy policy{
+        std::make_unique<FakeIoUring>(file, 4, FakeIoUring::Faults{}, seed)};
+    ReadBatchForTesting failing;
+    failing.add({{0, 4}, {4, 16}, {0, 4}});
+    ReadBatchForTesting succeeding;
+    succeeding.add({{4, 4}, {0, 4}, {4, 4}});
+    failing.addTo(policy, -1, 0);
+    succeeding.addTo(policy, -1, 1);
+    policy.wait(1);
+    EXPECT_THAT(succeeding.result(), ElementsAre("BBBB", "AAAA", "BBBB"));
+    AD_EXPECT_THROW_WITH_MESSAGE(policy.wait(0),
+                                 HasSubstr("read fewer bytes than requested"));
+  }
+}
+
+// On a simulated ring with random faults (partial and interrupted submits,
+// bursts of `EAGAIN` longer than the retries, interrupted waits, short and
+// failed reads, completions in any order), no read is left in the ring after a
+// batch, and a batch fails iff one of its reads failed or its submit failed.
+TEST_F(IoUringPolicyFailureTest, randomFaults) {
+  using ad_utility::testing::FakeIoUring;
+  std::string file;
+  for (size_t i = 0; i < 1000; ++i) {
+    file.push_back(static_cast<char>('a' + (i * 7) % 26));
+  }
+  FakeIoUring::Faults faults;
+  faults.partialSubmit = 0.3;
+  faults.submitInterrupted = 0.1;
+  faults.waitInterrupted = 0.2;
+  faults.shortRead = 0.01;
+  faults.readError = 0.01;
+  FakeIoUring::FaultCounts totals;
+  for (uint32_t seed = 0; seed < 300; ++seed) {
+    // Short bursts of `EAGAIN` that the retries ride out, and a few longer
+    // than the retries; for every third seed also bursts that span several
+    // batches, so that a batch starts with a ring full of no-ops.
+    faults.submitOutOfMemory = seed % 3 == 0 ? 0.01 : 0.05;
+    faults.maxEagainBurst = seed % 3 == 0 ? 100 : 20;
+    auto fakeOwner = std::make_unique<FakeIoUring>(file, 8, faults, seed);
+    FakeIoUring& fake = *fakeOwner;
+    ad_utility::IoUringPolicy policy{std::move(fakeOwner)};
+    std::mt19937 random{seed};
+    for (uint64_t handle = 0; handle < 5; ++handle) {
+      ReadBatchForTesting batch;
+      std::vector<std::string> expected;
+      const size_t numberOfReads = random() % 30 + 1;
+      for (size_t i = 0; i < numberOfReads; ++i) {
+        const size_t offset = random() % 990;
+        const size_t numberOfBytes = random() % 10 + 1;
+        batch.add(offset, numberOfBytes);
+        expected.push_back(file.substr(offset, numberOfBytes));
+      }
+      fake.resetObservations();
+      std::optional<std::string> error;
+      try {
+        batch.addTo(policy, -1, handle);
+        policy.wait(handle);
+      } catch (const std::exception& e) {
+        error = e.what();
+      }
+      ASSERT_EQ(fake.numberOfReadsInRing(), 0U) << seed;
+      const bool submitFailed =
+          error.has_value() &&
+          error.value().find("io_uring_submit failed") != std::string::npos;
+      if (fake.injectedReadFault()) {
+        EXPECT_TRUE(error.has_value()) << seed;
+      } else if (!submitFailed) {
+        EXPECT_FALSE(error.has_value()) << seed << ": " << error.value();
+        EXPECT_EQ(batch.result(), expected) << seed;
+      }
+    }
+    const auto& counts = fake.faultCounts();
+    totals.partialSubmits += counts.partialSubmits;
+    totals.interruptedSubmits += counts.interruptedSubmits;
+    totals.interruptedWaits += counts.interruptedWaits;
+    totals.faultyReads += counts.faultyReads;
+    totals.cancelledReads += counts.cancelledReads;
+  }
+  // Every fault actually occurred.
+  EXPECT_GT(totals.partialSubmits, 0U);
+  EXPECT_GT(totals.interruptedSubmits, 0U);
+  EXPECT_GT(totals.interruptedWaits, 0U);
+  EXPECT_GT(totals.faultyReads, 0U);
+  EXPECT_GT(totals.cancelledReads, 0U);
+}
+#endif
 }  // namespace

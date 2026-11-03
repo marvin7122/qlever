@@ -10,16 +10,26 @@
 
 #include "util/IoUringManager.h"
 
+#include <absl/strings/str_cat.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
+#include <exception>
+#include <iostream>
 #include <stdexcept>
+#include <string>
+#include <string_view>
+#include <system_error>
 #include <thread>
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 #include "util/Exception.h"
+#include "util/ExceptionHandling.h"
 #include "util/Log.h"
 
 namespace ad_utility {
@@ -59,6 +69,28 @@ void SyncIoPolicy::addBatch(int fd,
 }
 
 #ifdef QLEVER_HAS_IO_URING
+
+namespace detail {
+//______________________________________________________________________________
+std::string errorText(int errorNumber) {
+  // Unlike `std::strerror`, thread-safe.
+  return std::generic_category().message(errorNumber);
+}
+
+//______________________________________________________________________________
+void terminateBecauseRingIsUnusable(std::string_view operation,
+                                    int errorNumber) noexcept {
+  const std::string message = absl::StrCat(
+      operation, " failed in IoUringPolicy: ", errorText(errorNumber),
+      ". The kernel may still write into the buffers of submitted reads, so "
+      "the process cannot continue safely. Terminating");
+  // `std::endl` on purpose: `std::terminate` does not flush the streams, so
+  // without the flush the reason for the termination could be lost.
+  AD_LOG_ERROR << message << std::endl;
+  std::cerr << message << std::endl;
+  std::terminate();
+}
+}  // namespace detail
 
 namespace {
 // `IoUringInterface` via liburing. Neither copyable nor movable: it owns a
@@ -204,17 +236,31 @@ IoUringPolicy::~IoUringPolicy() {
   }
   // Reap the outstanding completions before tearing down the ring (in the
   // destructor of `ring_`), so the kernel is no longer writing into any target
-  // buffer once we return. We deliberately do not call `drainOneCqe` here: it
-  // throws on I/O errors, and a destructor must not throw. We also stop if
-  // waiting fails, to avoid spinning forever (it would not decrement the
-  // in-flight count).
-  while (numInFlightReadRequests_ > 0) {
-    if (ring_->waitForCompletions(1) < 0) {
-      break;
-    }
-    IoUringInterface::Completion completion{};
-    numInFlightReadRequests_ -= ring_->popCompletions({&completion, 1});
-  }
+  // buffer once we return. Between two batches no read is queued (`addBatch`
+  // submits or cancels all of them), so every in-flight read is in the kernel.
+  // Queued no-ops are never handed to the kernel; they refer to no buffer.
+  // The failures of batches that were never waited for are dropped.
+  ad_utility::terminateIfThrows(
+      [this]() {
+        while (numberOfRequestsInKernel() > 0) {
+          drainOneCqe();
+        }
+      },
+      "The destructor of IoUringPolicy must not throw while the kernel may "
+      "hold reads");
+}
+
+//______________________________________________________________________________
+size_t IoUringPolicy::numberOfReadsInKernel() const {
+  // The queued SQEs are the queued no-ops and the queued reads; every other
+  // in-flight read is in the kernel.
+  return numInFlightReadRequests_ -
+         (ring_->numberOfQueued() - numberOfNoOpsQueued_);
+}
+
+//______________________________________________________________________________
+size_t IoUringPolicy::numberOfRequestsInKernel() const {
+  return numberOfReadsInKernel() + numberOfNoOpsInKernel_;
 }
 
 //______________________________________________________________________________
@@ -228,64 +274,230 @@ void IoUringPolicy::addBatch(int fd,
   if (numReadRequestsToPerform == 0) {
     return;
   }
-  numInFlightReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
+  batches_[handle] = Batch{numReadRequestsToPerform};
 
-  for (const auto& [numBytesToRead, fileOffset, targetBuf] :
-       ::ranges::views::zip(numBytesToReadPerRequest, fileOffsetPerRequest,
-                            targetBufferPerRequest)) {
-    // The ring has no free slot, so make room: submit what we have prepared so
-    // far and block until enough completions have been drained.
-    if (numInFlightReadRequests_ >= ringSize_) {
-      // Flush the SQEs prepared so far to the kernel so the kernel can start
-      // servicing them. Their completions will free up submission slots.
-      ring_->submit();
-      while (numInFlightReadRequests_ >= ringSize_) {
-        drainOneCqe();
-      }
-    }
+  std::optional<std::string> submitFailure;
+  // Nothing below throws, except if a correctness check fails or memory runs
+  // out. The bookkeeping can then no longer tell which reads the kernel still
+  // holds, so the exception must not reach the caller, who would free the
+  // buffers.
+  ad_utility::terminateIfThrows(
+      [&]() {
+        size_t numberOfPreparedReads = 0;
+        for (const auto& [numBytesToRead, fileOffset, targetBuf] :
+             ::ranges::views::zip(numBytesToReadPerRequest,
+                                  fileOffsetPerRequest,
+                                  targetBufferPerRequest)) {
+          // The ring has no free slot, so make room: submit what we have
+          // prepared so far and block until enough completions have been
+          // drained.
+          if (numInFlightReadRequests_ + numberOfNoOpsQueued_ +
+                  numberOfNoOpsInKernel_ >=
+              ringSize_) {
+            submitFailure = submitQueued();
+            if (submitFailure.has_value()) {
+              break;
+            }
+            while (numInFlightReadRequests_ + numberOfNoOpsInKernel_ >=
+                   ringSize_) {
+              drainOneCqe();
+            }
+          }
 
-    // Tag the read with a unique request id and record its metadata (the batch
-    // it belongs to and how many bytes it should read). io_uring copies the
-    // request id verbatim into the matching completion, so `drainOneCqe` can
-    // recover it.
-    const uint64_t requestId = nextRequestIdToAssign_++;
-    inFlightReadsByRequestId_[requestId] = InFlightRead{handle, numBytesToRead};
+          // Tag the read with a unique request id and record its metadata
+          // (the batch it belongs to and how many bytes it should read).
+          // io_uring copies the request id verbatim into the matching
+          // completion, so `drainOneCqe` can recover it.
+          const uint64_t requestId = nextRequestIdToAssign_++;
+          inFlightReadsByRequestId_[requestId] =
+              InFlightRead{handle, numBytesToRead};
 
-    // Prepare the read in the next free SQE (the request is not handed to the
-    // kernel until a later submit). The check above guarantees a free SQE.
-    AD_CORRECTNESS_CHECK(ring_->prepareRead(fd, targetBuf, numBytesToRead,
-                                            fileOffset, requestId));
-    numInFlightReadRequests_++;
+          // Prepare the read in the next free SQE (the request is not handed
+          // to the kernel until a later submit). The check above guarantees
+          // a free SQE.
+          AD_CORRECTNESS_CHECK(ring_->prepareRead(fd, targetBuf, numBytesToRead,
+                                                  fileOffset, requestId));
+          numInFlightReadRequests_++;
+          ++numberOfPreparedReads;
+        }
+        // Flush the remaining prepared SQEs to the kernel (the loop above only
+        // submits when the submission queue is full, so the last group of
+        // SQEs has not yet been submitted).
+        if (!submitFailure.has_value()) {
+          submitFailure = submitQueued();
+        }
+        if (submitFailure.has_value()) {
+          // The reads that were not prepared will never complete. Then reap the
+          // reads of the batch that the kernel holds (the cancelled ones were
+          // already forgotten).
+          batches_.at(handle).numberOfInFlightReads -=
+              numReadRequestsToPerform - numberOfPreparedReads;
+          drainBatch(handle);
+        }
+      },
+      "IoUringPolicy::addBatch must not throw while the kernel may hold "
+      "reads");
+  if (submitFailure.has_value()) {
+    // The caller never gets the handle, so the batch's read failures (if any)
+    // are dropped.
+    batches_.erase(handle);
+    AD_THROW(std::move(submitFailure).value());
   }
-  // Flush the remaining prepared SQEs to the kernel (the loop above only
-  // submits when the submission queue is full, so the last group of SQEs has
-  // not yet been submitted).
-  ring_->submit();
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::wait(BatchHandle handle) {
-  // Drain completions until this batch is gone. `drainOneCqe` erases a batch as
-  // soon as its last read completes, so a present entry always still has
-  // outstanding reads.
-  while (numInFlightReadRequestsPerBatch_.find(handle) !=
-         numInFlightReadRequestsPerBatch_.end()) {
+std::optional<std::string> IoUringPolicy::submitQueued() {
+  // `submit` returns the number of SQEs that the kernel took, or `-errno`. The
+  // SQEs it did not take stay queued. Of the errors listed in
+  // io_uring_enter(2), only `EINTR` and `EAGAIN` are expected for this ring (no
+  // setup flags, and never more requests than CQ slots); the others mean that
+  // the ring is broken. See
+  // https://man7.org/linux/man-pages/man2/io_uring_enter.2.html
+  unsigned numberOfRetries = 0;
+  while (ring_->numberOfQueued() > 0) {
+    const int result = ring_->submit();
+    if (result > 0) {
+      // The kernel takes the queued no-ops first, they precede the reads.
+      const size_t numberOfTakenNoOps =
+          std::min(static_cast<size_t>(result), numberOfNoOpsQueued_);
+      numberOfNoOpsQueued_ -= numberOfTakenNoOps;
+      numberOfNoOpsInKernel_ += numberOfTakenNoOps;
+      AD_CORRECTNESS_CHECK(
+          numberOfNoOpsQueued_ <= ring_->numberOfQueued(),
+          "The queued SQEs must include every queued no-op; the kernel takes "
+          "them before any queued read.");
+      // Only an `EAGAIN` that persists cancels the reads.
+      numberOfRetries = 0;
+      continue;
+    }
+    if (result == -EINTR) {
+      continue;
+    }
+    // A submit that takes nothing although SQEs are queued did not make
+    // progress either, so it is retried like `EAGAIN`.
+    if (result != 0 && result != -EAGAIN) {
+      // The ring is unusable. That forces termination only while the kernel
+      // holds reads (it may still write into their buffers, and they cannot be
+      // reaped safely). Otherwise, the queued reads were never handed to the
+      // kernel and are cancelled.
+      if (numberOfReadsInKernel() > 0) {
+        detail::terminateBecauseRingIsUnusable("io_uring_submit", -result);
+      }
+      cancelQueuedReads();
+      return absl::StrCat("io_uring_submit failed in IoUringPolicy: ",
+                          detail::errorText(-result));
+    }
+    if (numberOfRetries == MAX_SUBMIT_RETRIES) {
+      cancelQueuedReads();
+      return absl::StrCat(
+          "io_uring_submit failed in IoUringPolicy: ",
+          result == 0 ? "no SQE was taken" : detail::errorText(-result),
+          " (after ", MAX_SUBMIT_RETRIES, " retries)");
+    }
+    ++numberOfRetries;
+    // With `EAGAIN` the kernel could not allocate memory for the requests.
+    // Completed requests free some, so wait for one if there is any.
+    if (numberOfRequestsInKernel() > 0) {
+      drainOneCqe();
+    } else {
+      ring_->backOff();
+    }
+  }
+  return std::nullopt;
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::cancelQueuedReads() {
+  // The no-ops stay queued and are handed to the kernel by the next submit;
+  // their completions are reaped and ignored.
+  const std::vector<uint64_t> cancelled = ring_->cancelQueued(NO_OP_REQUEST_ID);
+  for (const uint64_t requestId : cancelled) {
+    auto it = inFlightReadsByRequestId_.find(requestId);
+    AD_CORRECTNESS_CHECK(it != inFlightReadsByRequestId_.end(),
+                         "Only a read that is in flight can be cancelled.");
+    auto batchIt = batches_.find(it->second.batchHandle);
+    AD_CORRECTNESS_CHECK(batchIt != batches_.end());
+    --batchIt->second.numberOfInFlightReads;
+    inFlightReadsByRequestId_.erase(it);
+  }
+  numInFlightReadRequests_ -= cancelled.size();
+  numberOfNoOpsQueued_ += cancelled.size();
+}
+
+//______________________________________________________________________________
+void IoUringPolicy::drainBatch(BatchHandle handle) {
+  // `drainOneCqe` may erase the batch, so look it up anew after each CQE.
+  while (true) {
+    auto it = batches_.find(handle);
+    if (it == batches_.end() || it->second.numberOfInFlightReads == 0) {
+      return;
+    }
     drainOneCqe();
   }
 }
 
 //______________________________________________________________________________
+void IoUringPolicy::wait(BatchHandle handle) {
+  // Drain completions until no read of this batch is in flight, also if one of
+  // them failed: the caller frees the target buffers when it unwinds from the
+  // exception below, so the kernel must be done with all of them first.
+  std::optional<ReadFailure> failure;
+  ad_utility::terminateIfThrows(
+      [&]() {
+        drainBatch(handle);
+        // An entry that is left belongs to a batch with a failed read.
+        auto it = batches_.find(handle);
+        if (it != batches_.end()) {
+          AD_CORRECTNESS_CHECK(it->second.firstFailure.has_value());
+          failure = it->second.firstFailure;
+          batches_.erase(it);
+        }
+      },
+      "IoUringPolicy::wait must not throw while the kernel may hold reads");
+  if (!failure.has_value()) {
+    return;
+  }
+  std::visit(
+      [](const auto& readFailure) {
+        using T = std::decay_t<decltype(readFailure)>;
+        if constexpr (std::is_same_v<T, ReadError>) {
+          AD_THROW(absl::StrCat("I/O error in IoUringPolicy read operation: ",
+                                detail::errorText(readFailure.errorNumber)));
+        } else {
+          AD_THROW(
+              absl::StrCat("read fewer bytes than requested in IoUringPolicy (",
+                           readFailure.numberOfBytesRead, " of ",
+                           readFailure.numberOfRequestedBytes, " bytes)"));
+        }
+      },
+      failure.value());
+}
+
+//______________________________________________________________________________
 void ad_utility::IoUringPolicy::drainOneCqe() {
-  // Block until at least one completion queue entry (CQE) is available.
-  int ret = ring_->waitForCompletions(1);
+  // A wait for a completion when the kernel holds no request would block
+  // forever.
+  AD_CORRECTNESS_CHECK(numberOfRequestsInKernel() > 0);
+  // Block until at least one completion queue entry (CQE) is available. A wait
+  // that a signal interrupts is retried. If waiting fails otherwise, the
+  // kernel may still write into the buffers of the reads that it holds, and
+  // there is no way to learn when it is done.
+  int ret = 0;
+  do {
+    ret = ring_->waitForCompletions(1);
+  } while (ret == -EINTR);
   if (ret < 0) {
-    AD_THROW("io_uring_wait_cqe failed in IoUringPolicy");
+    detail::terminateBecauseRingIsUnusable("io_uring_wait_cqe", -ret);
   }
 
   // Recover the read's result and the request id we stored in the SQE, and
-  // consume the CQE so its slot is freed. Do this before any throw.
+  // consume the CQE so its slot is freed.
   IoUringInterface::Completion completion{};
   AD_CORRECTNESS_CHECK(ring_->popCompletions({&completion, 1}) == 1);
+  if (completion.requestId == NO_OP_REQUEST_ID) {
+    --numberOfNoOpsInKernel_;
+    return;
+  }
   const int numBytesRead = completion.result;
   const uint64_t requestId = completion.requestId;
   numInFlightReadRequests_--;
@@ -297,25 +509,28 @@ void ad_utility::IoUringPolicy::drainOneCqe() {
   const InFlightRead inFlightRead = reqIt->second;
   inFlightReadsByRequestId_.erase(reqIt);
 
-  // `cqe->res` < 0 is `-errno`.
-  if (numBytesRead < 0) {
-    AD_THROW("I/O error in IoUringPolicy read operation");
-  }
-  // A result smaller than requested (a partial read, or 0 at end of file) means
-  // we read fewer bytes than expected, which we treat as an error.
-  if (static_cast<size_t>(numBytesRead) != inFlightRead.expectedNumBytes) {
-    AD_THROW("read fewer bytes than requested in IoUringPolicy");
-  }
-
   // Attribute the completion to its batch and decrement that batch's in-flight
-  // count, erasing the batch once its last read completes. The entry must still
-  // be present here: the read we are processing belongs to this batch and was
-  // outstanding, so the batch's count was at least one and it had not yet been
-  // erased.
-  auto it = numInFlightReadRequestsPerBatch_.find(inFlightRead.batchHandle);
-  AD_CORRECTNESS_CHECK(it != numInFlightReadRequestsPerBatch_.end());
-  if (--it->second == 0) {
-    numInFlightReadRequestsPerBatch_.erase(it);
+  // count. The entry must still be present here: the read we are processing
+  // belongs to this batch and was outstanding, so the batch's count was at
+  // least one and it had not yet been erased.
+  auto it = batches_.find(inFlightRead.batchHandle);
+  AD_CORRECTNESS_CHECK(it != batches_.end());
+  Batch& batch = it->second;
+  // `cqe->res` < 0 is `-errno`. A result smaller than requested (a partial
+  // read, or 0 at end of file) means we read fewer bytes than expected, which
+  // we treat as an error. Only the first failure of a batch is kept, and the
+  // `wait()` of the batch throws it once all of the batch's reads completed.
+  if (!batch.firstFailure.has_value()) {
+    if (numBytesRead < 0) {
+      batch.firstFailure = ReadError{-numBytesRead};
+    } else if (static_cast<size_t>(numBytesRead) !=
+               inFlightRead.expectedNumBytes) {
+      batch.firstFailure = ShortRead{static_cast<size_t>(numBytesRead),
+                                     inFlightRead.expectedNumBytes};
+    }
+  }
+  if (--batch.numberOfInFlightReads == 0 && !batch.firstFailure.has_value()) {
+    batches_.erase(it);
   }
 }
 
