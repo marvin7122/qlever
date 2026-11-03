@@ -7,6 +7,7 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
+#include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
@@ -23,8 +24,10 @@ using ql::exportIds::idToStringAndType;
 using ql::exportIds::IdToStringAndTypeCache;
 using Config = ql::exportIds::IdToStringAndTypeCacheConfig;
 
+using ad_utility::MemorySize;
+
 // A cache that is large enough for every test and never switches itself off.
-constexpr Config largeCache{1 << 16, 0, 0.0};
+const Config largeCache{1 << 16, MemorySize::megabytes(64), 0, 0.0};
 
 // _____________________________________________________________________________
 // The cache returns the same values as direct lookups and serves repeats from
@@ -139,7 +142,8 @@ TEST(IdToStringAndTypeCache, CapacityZeroBypasses) {
   auto qec = ad_utility::testing::getQec("<s> <p> <o>");
   const Index& index = qec->getIndex();
   LocalVocab localVocab{};
-  IdToStringAndTypeCache<> cache{index, Config{0, 0, 0.0}};
+  IdToStringAndTypeCache<> cache{index,
+                                 Config{0, MemorySize::megabytes(64), 0, 0.0}};
   EXPECT_FALSE(cache.isEnabled());
   for (int i = 0; i < 3; ++i) {
     Id id = Id::makeFromInt(7);
@@ -157,7 +161,8 @@ TEST(IdToStringAndTypeCache, SwitchesOffOnLowHitRate) {
   auto qec = ad_utility::testing::getQec("<s> <p> <o>");
   const Index& index = qec->getIndex();
   LocalVocab localVocab{};
-  IdToStringAndTypeCache<> cache{index, Config{100, 4, 0.5}};
+  IdToStringAndTypeCache<> cache{
+      index, Config{100, MemorySize::megabytes(64), 4, 0.5}};
   // All distinct: the first window of 4 lookups has no hits.
   for (int i = 0; i < 10; ++i) {
     Id id = Id::makeFromInt(i);
@@ -176,7 +181,8 @@ TEST(IdToStringAndTypeCache, ChecksEveryWindow) {
   auto qec = ad_utility::testing::getQec("<s> <p> <o>");
   const Index& index = qec->getIndex();
   LocalVocab localVocab{};
-  IdToStringAndTypeCache<> cache{index, Config{100, 4, 0.5}};
+  IdToStringAndTypeCache<> cache{
+      index, Config{100, MemorySize::megabytes(64), 4, 0.5}};
   // Two distinct ids in 12 lookups: 2 misses in the first window, then hits.
   for (int i = 0; i < 12; ++i) {
     Id id = Id::makeFromInt(i % 2);
@@ -196,6 +202,58 @@ TEST(IdToStringAndTypeCache, ChecksEveryWindow) {
   EXPECT_FALSE(cache.isEnabled());
   EXPECT_EQ(cache.statistics().numberOfHits_, 11u);
   EXPECT_EQ(cache.statistics().numberOfMisses_, 5u);
+}
+
+// _____________________________________________________________________________
+// A term whose string is larger than its share of the maximal size (here
+// 1000 bytes / 10 entries = 100 bytes) is returned, but not cached.
+TEST(IdToStringAndTypeCache, DoesNotCacheTermsLargerThanTheirShare) {
+  std::string longLiteral(200, 'x');
+  auto qec = ad_utility::testing::getQec(
+      absl::StrCat("<s> <p> \"short\" . <s> <p> \"", longLiteral, "\" ."));
+  const Index& index = qec->getIndex();
+  LocalVocab localVocab{};
+  auto getId = ad_utility::testing::makeGetId(index);
+  Id shortId = getId("\"short\"");
+  Id longId = getId(absl::StrCat("\"", longLiteral, "\""));
+  IdToStringAndTypeCache<> cache{index,
+                                 Config{10, MemorySize::bytes(1000), 0, 0.0}};
+  for (int pass = 0; pass < 2; ++pass) {
+    for (Id id : {shortId, longId}) {
+      EXPECT_EQ(cache.get(id, localVocab),
+                idToStringAndType(index, id, localVocab));
+    }
+  }
+  EXPECT_EQ(cache.statistics().numberOfHits_, 1u);
+  EXPECT_EQ(cache.statistics().numberOfMisses_, 3u);
+  EXPECT_EQ(cache.statistics().numberOfTermsTooLargeToCache_, 2u);
+
+  // With a maximal size of 0, no term is cached.
+  IdToStringAndTypeCache<> nothingFits{
+      index, Config{10, MemorySize::bytes(0), 0, 0.0}};
+  for (int pass = 0; pass < 2; ++pass) {
+    EXPECT_EQ(nothingFits.get(shortId, localVocab),
+              idToStringAndType(index, shortId, localVocab));
+  }
+  EXPECT_EQ(nothingFits.statistics().numberOfHits_, 0u);
+  EXPECT_EQ(nothingFits.statistics().numberOfTermsTooLargeToCache_, 2u);
+}
+
+// _____________________________________________________________________________
+// A switch-off on a lookup whose term was too large to cache returns that
+// term correctly (it is already in the slot for uncached lookups).
+TEST(IdToStringAndTypeCache, SwitchOffOnTermTooLargeToCache) {
+  auto qec = ad_utility::testing::getQec("<s> <p> \"short\" .");
+  const Index& index = qec->getIndex();
+  LocalVocab localVocab{};
+  Id id = ad_utility::testing::makeGetId(index)("\"short\"");
+  IdToStringAndTypeCache<> cache{index,
+                                 Config{10, MemorySize::bytes(0), 1, 1.0}};
+  EXPECT_EQ(cache.get(id, localVocab),
+            idToStringAndType(index, id, localVocab));
+  EXPECT_FALSE(cache.isEnabled());
+  EXPECT_EQ(cache.get(id, localVocab),
+            idToStringAndType(index, id, localVocab));
 }
 
 }  // namespace

@@ -74,6 +74,7 @@ RuntimeParameters::RuntimeParameters() {
   add(logLevel_);
   add(constructDeduplication_);
   add(selectExportTermCacheCapacity_);
+  add(selectExportTermCacheMaxSize_);
   add(selectExportTermCacheWindow_);
   add(selectExportTermCacheMinHitRate_);
 

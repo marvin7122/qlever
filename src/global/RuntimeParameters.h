@@ -291,6 +291,12 @@ struct RuntimeParameters {
   // (a window of 0 or a minimum of 0 keeps it on).
   SizeT selectExportTermCacheCapacity_{1 << 16,
                                        "select-export-term-cache-capacity"};
+  // The maximal total size of the strings in that cache. Each entry gets an
+  // equal share (by default 64 MB / 65,536 = 976 bytes); longer terms are not
+  // cached.
+  MemorySizeParameter selectExportTermCacheMaxSize_{
+      ad_utility::MemorySize::megabytes(64),
+      "select-export-term-cache-max-size"};
   SizeT selectExportTermCacheWindow_{1 << 13,
                                      "select-export-term-cache-window"};
   Double selectExportTermCacheMinHitRate_{

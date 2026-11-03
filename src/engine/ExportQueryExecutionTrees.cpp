@@ -324,6 +324,7 @@ static ql::exportIds::IdToStringAndTypeCacheConfig
 selectExportTermCacheConfig() {
   return {
       getRuntimeParameter<&RuntimeParameters::selectExportTermCacheCapacity_>(),
+      getRuntimeParameter<&RuntimeParameters::selectExportTermCacheMaxSize_>(),
       getRuntimeParameter<&RuntimeParameters::selectExportTermCacheWindow_>(),
       getRuntimeParameter<
           &RuntimeParameters::selectExportTermCacheMinHitRate_>()};
