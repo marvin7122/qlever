@@ -30,6 +30,7 @@
 #include "util/IoUringInterface.h"
 #include "util/IoUringManagerConcepts.h"
 #include "util/Log.h"
+#include "util/NoCopyNoMove.h"
 #include "util/PageCacheFirstPolicy.h"
 
 namespace ad_utility {
@@ -162,7 +163,9 @@ struct SyncIoPolicy {
 // for more details.
 #ifdef QLEVER_HAS_IO_URING
 
-class IoUringPolicy {
+// Neither copyable nor movable: the kernel writes into the target buffers of
+// the reads that this object tracks, and it must reap them before it is gone.
+class IoUringPolicy : public ad_utility::NoCopyNoMove {
  public:
   using BatchHandle = uint64_t;
 
@@ -289,9 +292,6 @@ class IoUringPolicy {
   void retireRead(BatchHandle handle);
 
  public:
-  IoUringPolicy(const IoUringPolicy&) = delete;
-  IoUringPolicy& operator=(const IoUringPolicy&) = delete;
-
   // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
   explicit IoUringPolicy(unsigned ringSize);
   // Run on `ring` instead of a liburing ring (for tests). `ring` must have
