@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <functional>
 #include <list>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
@@ -48,6 +49,9 @@ class LRUCache {
   }
 
   size_t capacity() const { return capacity_; }
+
+  // The number of entries in the cache.
+  size_t size() const { return cache_.size(); }
 
   // Check if `key` is in the cache. If found, move it to the front (most
   // recently used) and return a reference to the cached value wrapped in
@@ -104,6 +108,33 @@ class LRUCache {
       insertNewEntry(AD_FWD(key), [&newValue] { return AD_FWD(newValue); });
       return true;
     }
+  }
+
+  // Insert `key` with `value` as the most recently used entry and return a
+  // reference to the stored value. If the cache is full, the least recently
+  // used entry is evicted first. Unlike `insert` and `getOrCompute`, this does
+  // not look up `key` first, which saves one lookup after a failed `tryGet`.
+  // Precondition: `key` is not in the cache.
+  template <typename Key, typename Value>
+  const V& insertAbsent(Key&& key, Value&& value) {
+    return insertNewEntry(AD_FWD(key),
+                          [&value]() -> V { return AD_FWD(value); });
+  }
+
+  // Remove the least recently used entry and return its value, or
+  // `std::nullopt` if the cache is empty. Together with `size()`, this lets a
+  // caller evict by its own criterion (for example the total size of the
+  // values) before an insertion would evict an entry silently.
+  std::optional<V> popLeastRecentlyUsed() {
+    if (keys_.empty()) {
+      return std::nullopt;
+    }
+    auto entry = cache_.find(keys_.back());
+    AD_CORRECTNESS_CHECK(entry != cache_.end());
+    std::optional<V> value{std::move(entry->second.first)};
+    cache_.erase(entry);
+    keys_.pop_back();
+    return value;
   }
 
   // Set-like insertion for empty value types. This stores a default-constructed

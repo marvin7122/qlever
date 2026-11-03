@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 
 #include <list>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -238,6 +239,43 @@ TEST(LRUCache, insertNewEntrySeatsKeyBeforeComputingValue) {
   // The returned reference aliases the stored value.
   EXPECT_EQ(&stored, &cache.cache_.find(7)->second.first);
   EXPECT_EQ((std::vector<int>{7}), GetKeysInOrder(cache.keys_));
+}
+
+// _____________________________________________________________________________
+TEST(LRUCache, insertAbsentInsertsAndEvictsWhenFull) {
+  LRUCache<int, std::string> cache(2);
+  EXPECT_EQ(cache.size(), 0u);
+  EXPECT_EQ(cache.insertAbsent(1, "one"), "one");
+  EXPECT_EQ(cache.insertAbsent(2, std::string{"two"}), "two");
+  EXPECT_EQ(cache.size(), 2u);
+  // `1` is the least recently used entry and is evicted.
+  const std::string& three = cache.insertAbsent(3, "three");
+  EXPECT_EQ(three, "three");
+  EXPECT_EQ(cache.size(), 2u);
+  EXPECT_FALSE(cache.tryGet(1));
+  EXPECT_EQ(cache.tryGet(2).value(), "two");
+  EXPECT_EQ(&cache.tryGet(3).value(), &three);
+}
+
+// _____________________________________________________________________________
+TEST(LRUCache, popLeastRecentlyUsedFollowsRecency) {
+  LRUCache<int, std::string> cache(3);
+  EXPECT_EQ(cache.popLeastRecentlyUsed(), std::nullopt);
+  cache.insertAbsent(1, "one");
+  cache.insertAbsent(2, "two");
+  cache.insertAbsent(3, "three");
+  // Make `1` the most recently used entry.
+  EXPECT_TRUE(cache.tryGet(1));
+  EXPECT_EQ(cache.popLeastRecentlyUsed(), "two");
+  EXPECT_EQ(cache.popLeastRecentlyUsed(), "three");
+  EXPECT_EQ(cache.size(), 1u);
+  EXPECT_FALSE(cache.tryGet(2));
+  // The cache is still consistent: new entries can be inserted.
+  cache.insertAbsent(2, "two again");
+  EXPECT_EQ(cache.popLeastRecentlyUsed(), "one");
+  EXPECT_EQ(cache.popLeastRecentlyUsed(), "two again");
+  EXPECT_EQ(cache.popLeastRecentlyUsed(), std::nullopt);
+  EXPECT_EQ(cache.size(), 0u);
 }
 
 }  // namespace ad_utility::util
