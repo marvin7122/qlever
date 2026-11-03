@@ -131,7 +131,9 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
                unserved.reads_);
   }
 
-  // Block until every read of the batch `handle` has completed.
+  // Block until every read of the batch `handle` has completed. The reads that
+  // `addBatch` served from the page cache are complete already, so this only
+  // waits for the reads that were passed on (none if all were served).
   void wait(BatchHandle handle) { policy_.wait(handle); }
 
  private:
