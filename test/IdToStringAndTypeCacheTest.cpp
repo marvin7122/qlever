@@ -325,6 +325,20 @@ TEST(IdToStringAndTypeCache, ReservesMemoryFromTheBudget) {
   }
   EXPECT_EQ(allocator.amountMemoryLeft(), budget);
 
+  // A budget that holds the first entry, but not the hash table that it
+  // needs: the term is not cached, the cache stays enabled, and nothing stays
+  // reserved.
+  {
+    auto smallAllocator = makeAllocator(MemorySize::bytes(60));
+    Cache cache{index, largeCache, smallAllocator};
+    EXPECT_EQ(cache.get(getId(0), localVocab),
+              idToStringAndType(index, getId(0), localVocab));
+    EXPECT_TRUE(cache.isEnabled());
+    EXPECT_EQ(cache.statistics().numberOfTermsNotCachedForLackOfMemory_, 1u);
+    EXPECT_EQ(cache.memoryUsed(), MemorySize::bytes(0));
+    EXPECT_EQ(smallAllocator.amountMemoryLeft(), MemorySize::bytes(60));
+  }
+
   // A budget that is used up: nothing is cached, and nothing is reserved.
   auto emptyAllocator = makeAllocator(MemorySize::bytes(0));
   Cache cache{index, largeCache, emptyAllocator};

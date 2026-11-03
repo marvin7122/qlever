@@ -34,10 +34,11 @@ namespace ql::exportIds {
 // `select-export-term-cache-*` for the values used by the SELECT export.
 struct IdToStringAndTypeCacheConfig {
   // The maximal memory of the cache: its entries (strings and list nodes) and
-  // its hash table. A single entry may take at most 1/16 of it, so that one
-  // term cannot evict most of the others. A size that is too small for 16
-  // small entries with their share of the hash table (about 3 KB) disables the
-  // cache: every lookup is then computed directly.
+  // its hash table, including the old table while the table grows. A single
+  // entry may take at most 1/16 of it, so that one term cannot evict most of
+  // the others. A size that is too small for 16 small entries with their share
+  // of the hash table (about 3 KB) disables the cache: every lookup is then
+  // computed directly.
   ad_utility::MemorySize maxSize_;
   // The hit rate is checked after every `numberOfLookupsPerWindow_` lookups
   // that are hits or misses (see `IdToStringAndTypeCache::Statistics`). If the
@@ -65,9 +66,12 @@ struct IdToStringAndTypeCacheConfig {
 // The memory of the cache is reserved from the memory budget of the queries
 // (the `allocator` passed to the constructor) and returned when entries are
 // evicted, when the hash table shrinks, and when the cache is switched off or
-// destroyed. A lookup never fails for lack of memory: a term that does not fit
-// into the budget is returned, but not cached. While the memory is reserved,
-// it is not available to other allocations from the same budget.
+// destroyed. While the hash table grows, its old and new table coexist; this
+// peak is reserved and within the maximal size. While it shrinks, the new,
+// smaller table briefly coexists with the old one without being reserved. A
+// lookup never fails for lack of memory: a term that does not fit into the
+// budget is returned, but not cached. While the memory is reserved, it is not
+// available to other allocations from the same budget.
 template <bool removeQuotesAndAngleBrackets = false,
           bool returnOnlyLiterals = false,
           typename EscapeFunction = ql::identity>
@@ -181,7 +185,7 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
                    << s.numberOfLocalVocabLookups_ << " local vocab lookups, "
                    << s.numberOfBitEncodedLookups_ << " bit-encoded values, "
                    << s.numberOfLookupsWhileDisabled_
-                   << " lookups while disabled" << '\n';
+                   << " lookups while disabled" << std::endl;
     }
   }
 
@@ -191,12 +195,12 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
   // share one slot, and an insertion can evict or move a cached value. Every
   // caller in the SELECT export uses the value before the next call.
   const Value& get(Id id, const LocalVocab& localVocab) {
-    if (!canBeCachedForWholeExport(id)) {
-      ++statistics_.numberOfLocalVocabLookups_;
-      return computeUncached(id, localVocab);
-    }
     if (!isWorthCaching(id)) {
-      ++statistics_.numberOfBitEncodedLookups_;
+      if (canBeCachedForWholeExport(id)) {
+        ++statistics_.numberOfBitEncodedLookups_;
+      } else {
+        ++statistics_.numberOfLocalVocabLookups_;
+      }
       return computeUncached(id, localVocab);
     }
     if (!isEnabled()) {
@@ -210,20 +214,20 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
       return endOfWindowLookup(cached.value());
     }
     Value value = compute(id, localVocab);
-    size_t numberOfBytes = numberOfBytesOfEntry(value);
-    if (numberOfBytes > maxNumberOfBytesOfOneEntry_ ||
-        !allocator_.tryReserveWithoutAllocating(
-            ad_utility::MemorySize::bytes(numberOfBytes))) {
+    if (!reserveAndMakeRoomForEntry(numberOfBytesOfEntry(value))) {
       ++statistics_.numberOfTermsNotCachedForLackOfMemory_;
       uncached_ = std::move(value);
       return uncached_;
     }
     ++statistics_.numberOfMisses_;
-    numberOfBytesOfEntries_ += numberOfBytes;
-    makeRoomForOneMoreEntry();
     const Value& result = cache_->insertAbsent(key, std::move(value));
-    if (!chargeHashTable()) {
-      // The budget has no memory left for the grown hash table.
+    // Return the reservation of the old table, if the table has grown, and
+    // of the growth that did not happen otherwise.
+    if (!setHashTableCharge(
+            Cache::numberOfBytesOfHashTable(cache_->hashTableCapacity()))) {
+      // Only if the table has grown more than
+      // `hashTableCapacityAfterOneMoreInsertion` says, and the budget has no
+      // memory left for the difference.
       uncached_ = result;
       switchOff();
       return uncached_;
@@ -295,25 +299,41 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
     return numberOfBytes;
   }
 
-  // An upper bound of the capacity of the hash table after one more insertion.
-  // `absl::flat_hash_map` grows from capacity `c` to `2c + 1` when it has no
-  // free slot left (deleted slots are not free). For `c > 16`, it grows only if
-  // more than 25/32 of the slots hold entries, and otherwise reuses the
-  // deleted slots in place. If the table grows differently, `chargeHashTable`
-  // still charges its actual size after the insertion.
-  size_t capacityAfterOneMoreInsertion() const {
+  // The memory of the hash table at the peak of one more insertion: if the
+  // table may grow (see `LRUCache::hashTableCapacityAfterOneMoreInsertion`),
+  // its old and its new table coexist while the entries are moved.
+  size_t numberOfBytesOfHashTableForOneMoreInsertion() const {
     size_t capacity = cache_->hashTableCapacity();
-    bool mayGrow = capacity <= 16 || (cache_->size() + 1) * 32 > capacity * 25;
-    return mayGrow ? 2 * capacity + 1 : capacity;
+    size_t capacityAfter = cache_->hashTableCapacityAfterOneMoreInsertion();
+    return Cache::numberOfBytesOfHashTable(capacityAfter) +
+           (capacityAfter != capacity
+                ? Cache::numberOfBytesOfHashTable(capacity)
+                : 0);
   }
 
-  // Evict least recently used entries until the entries (including the one
-  // that is about to be inserted, which `numberOfBytesOfEntries_` already
-  // contains) and the hash table after the insertion fit into the maximal
-  // size. Shrink the hash table when it is less than 1/4 full.
-  void makeRoomForOneMoreEntry() {
+  // Prepare the insertion of an entry of `numberOfBytes`: reserve its memory
+  // and the growth of the hash table (including the old table while it is
+  // moved) together, then evict least recently used entries until the
+  // entries and the hash table at the peak of the insertion fit into the
+  // maximal size. Shrink the hash table when it is less than 1/4 full. Return
+  // false, with nothing reserved or evicted, if the entry is larger than 1/16
+  // of the maximal size or the budget has not enough memory left.
+  bool reserveAndMakeRoomForEntry(size_t numberOfBytes) {
+    if (numberOfBytes > maxNumberOfBytesOfOneEntry_) {
+      return false;
+    }
+    size_t hashTablePeak = numberOfBytesOfHashTableForOneMoreInsertion();
+    size_t hashTableGrowth = hashTablePeak > numberOfBytesOfHashTable_
+                                 ? hashTablePeak - numberOfBytesOfHashTable_
+                                 : 0;
+    if (!allocator_.tryReserveWithoutAllocating(
+            ad_utility::MemorySize::bytes(numberOfBytes + hashTableGrowth))) {
+      return false;
+    }
+    numberOfBytesOfEntries_ += numberOfBytes;
+    numberOfBytesOfHashTable_ += hashTableGrowth;
     while (numberOfBytesOfEntries_ +
-                   Cache::memoryOfHashTable(capacityAfterOneMoreInsertion()) >
+                   numberOfBytesOfHashTableForOneMoreInsertion() >
                maxNumberOfBytes_ &&
            cache_->size() > 0) {
       auto evicted = cache_->popLeastRecentlyUsed();
@@ -321,28 +341,33 @@ class IdToStringAndTypeCache : public ad_utility::NoCopyNoMove {
       releaseEntry(numberOfBytesOfEntry(evicted.value()));
       if (cache_->size() * 4 < cache_->hashTableCapacity()) {
         cache_->shrinkHashTableToFit();
-        // Shrinking never needs more memory, so this cannot fail.
-        bool isCharged = chargeHashTable();
-        AD_CORRECTNESS_CHECK(isCharged);
+        // The smaller table can grow again with the insertion, so its peak can
+        // be larger than the current reservation.
+        if (!setHashTableCharge(
+                numberOfBytesOfHashTableForOneMoreInsertion())) {
+          releaseEntry(numberOfBytes);
+          return false;
+        }
       }
     }
     AD_CORRECTNESS_CHECK(cache_->size() < cache_->capacity());
+    return true;
   }
 
-  // Make the reservation for the hash table match its actual capacity. Return
-  // false if the table has grown and the budget has not enough memory left.
-  bool chargeHashTable() {
-    size_t actual = Cache::memoryOfHashTable(cache_->hashTableCapacity());
-    if (actual > numberOfBytesOfHashTable_) {
+  // Reserve or return memory so that the reservation for the hash table is
+  // `numberOfBytes`. Return false and change nothing if the budget has not
+  // enough memory left.
+  bool setHashTableCharge(size_t numberOfBytes) {
+    if (numberOfBytes > numberOfBytesOfHashTable_) {
       if (!allocator_.tryReserveWithoutAllocating(ad_utility::MemorySize::bytes(
-              actual - numberOfBytesOfHashTable_))) {
+              numberOfBytes - numberOfBytesOfHashTable_))) {
         return false;
       }
-    } else if (actual < numberOfBytesOfHashTable_) {
-      allocator_.releaseReservation(
-          ad_utility::MemorySize::bytes(numberOfBytesOfHashTable_ - actual));
+    } else if (numberOfBytes < numberOfBytesOfHashTable_) {
+      allocator_.releaseReservation(ad_utility::MemorySize::bytes(
+          numberOfBytesOfHashTable_ - numberOfBytes));
     }
-    numberOfBytesOfHashTable_ = actual;
+    numberOfBytesOfHashTable_ = numberOfBytes;
     return true;
   }
 
