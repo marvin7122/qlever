@@ -90,16 +90,16 @@ class BitVectorWithRank : public ad_utility::NoCopy {
     AD_CORRECTNESS_CHECK(rank == sortedValues.size());
   }
 
-  // If `value` is contained, return its rank, that is the number of contained
-  // values that are smaller than `value` (which is the position of `value` in
-  // the `sortedValues` that the set was built from). Otherwise (also if
-  // `value >= universeSize()`), return `std::nullopt`.
-  std::optional<uint64_t> rankIfContained(uint64_t value) const {
-    if (value >= universeSize_) {
+  // If `element` is contained, return its rank, that is the number of contained
+  // values that are smaller than `element` (which is the position of `element`
+  // in the `sortedValues` that the set was built from). Otherwise (also if
+  // `element >= universeSize()`), return `std::nullopt`.
+  std::optional<uint64_t> rankIfContained(uint64_t element) const {
+    if (element >= universeSize_) {
       return std::nullopt;
     }
-    const Block& block = blocks_[value / numBitsPerBlock];
-    const uint64_t offset = value % numBitsPerBlock;
+    const Block& block = blocks_[element / numBitsPerBlock];
+    const uint64_t offset = element % numBitsPerBlock;
     if ((block.bits_[offset / 64] & (uint64_t{1} << (offset % 64))) == 0) {
       return std::nullopt;
     }
