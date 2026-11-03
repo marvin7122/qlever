@@ -196,6 +196,13 @@ class MemoryLimitTracker {
     }
   }
 
+  // Reserve `n` bytes and return true, or return false and change nothing if
+  // fewer than `n` bytes are left. Unlike `reserveOrThrow`, this does not run
+  // the clearOnAllocation hook.
+  [[nodiscard]] bool tryReserve(MemorySize n) noexcept {
+    return sharedMemoryLeft_->decreaseIfEnoughLeftOrReturnFalse(n);
+  }
+
   // Releases `n` bytes back to the shared memory counter.
   void release(MemorySize n) { sharedMemoryLeft_->increase(n); }
 
