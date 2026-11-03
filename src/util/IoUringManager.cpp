@@ -310,9 +310,9 @@ void IoUringPolicy::run(int fd, ql::span<const uint64_t> offsets,
 void IoUringPolicy::submit(Batch& batch) {
   // `io_uring_submit` returns the number of SQEs that the kernel took, or
   // `-errno`. The SQEs it did not take stay queued. Of the errors listed in
-  // io_uring_enter(2), only `EINTR` and `EAGAIN` can occur for this ring (no
+  // io_uring_enter(2), only `EINTR` and `EAGAIN` are expected for this ring (no
   // setup flags, and never more requests than CQ slots); the others mean that
-  // the ring is broken. See
+  // the ring is broken, which is handled below. See
   // https://man7.org/linux/man-pages/man2/io_uring_enter.2.html
   unsigned numRetries = 0;
   while (ring_->numQueued() > 0) {

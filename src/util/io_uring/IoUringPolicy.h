@@ -102,12 +102,16 @@ std::unique_ptr<IoUringInterface> makeLiburingRing(RingSize ringSize);
 //
 // Between two `readBatch` calls the ring holds no read, only no-ops of reads
 // that were cancelled (they refer to no buffer). Errors are reported only
-// after the batch has left the ring: a failed or short read throws at the end
-// of `readBatch`, and so does an `io_uring_submit` that keeps failing with
-// `EAGAIN` (the kernel is out of memory for requests). A failure that leaves
-// the kernel holding reads, so that throwing would let the caller free buffers
-// the kernel still writes into, terminates the process instead: any other
-// submit error, and a failed wait for completions.
+// after the batch has left the ring:
+// - A failed or short read throws at the end of `readBatch`.
+// - An `io_uring_submit` that keeps failing with `EAGAIN` (the kernel is out of
+//   memory for requests), or that keeps taking no SQE, cancels the queued
+//   reads of the batch and throws.
+// - Any other submit error means that the ring is unusable. It cancels the
+//   queued reads and throws as well if the kernel holds no read of the batch.
+//   If the kernel does hold reads of the batch, throwing would let the caller
+//   free buffers that the kernel still writes into, so the process terminates.
+// - A failed wait for completions terminates the process.
 //
 // Neither copyable nor movable: the policy owns the ring, whose kernel-side
 // state cannot be duplicated, and it lives inside its `BatchManager`.
@@ -124,7 +128,8 @@ class IoUringPolicy : NoCopyNoMove {
   // offset `offsets[i]` into `buffers[i]`; the three spans must have the same
   // length. Returns once every read has completed. Throws if a read failed or
   // was short, or if its reads could not be submitted, but only once the
-  // kernel holds none of its reads.
+  // kernel holds none of its reads. A read longer than the per-request limit
+  // of Linux (`MAX_RW_COUNT`, about 2 GiB) is reported as short.
   void readBatch(int fd, ql::span<const size_t> numBytesToRead,
                  ql::span<const uint64_t> offsets, ql::span<char*> buffers);
 
@@ -181,9 +186,10 @@ class IoUringPolicy : NoCopyNoMove {
   void run(int fd, ql::span<const uint64_t> offsets, ql::span<char*> buffers,
            Batch& batch);
 
-  // Submit the queued SQEs, retrying `EINTR`, and `EAGAIN` up to
-  // `MAX_SUBMIT_RETRIES` times. If `EAGAIN` persists, cancel the queued reads.
-  // Terminates on any other error.
+  // Submit the queued SQEs. Retry `EINTR`; retry `EAGAIN`, and a submit that
+  // takes no SQE, up to `MAX_SUBMIT_RETRIES` times in a row, then cancel the
+  // queued reads. On any other error, cancel the queued reads if the kernel
+  // holds no read of the batch, and terminate otherwise.
   void submit(Batch& batch);
 
   // The kernel took `numTaken` SQEs: first the queued no-ops, then reads.
@@ -194,7 +200,10 @@ class IoUringPolicy : NoCopyNoMove {
   void cancelQueuedReads(Batch& batch, std::string errorMessage);
 
   // Block until at least `minComplete` requests have completed, then reap all
-  // ready completions. Terminates if waiting fails.
+  // ready completions. Terminates if waiting fails, even if the kernel holds
+  // only no-ops: the policy could then fail the batch, but the no-ops would
+  // stay counted as in the kernel, and the next batch would wait for them on
+  // the same broken ring.
   void reap(Batch& batch, unsigned minComplete);
 
   // Check that the ring's queue holds exactly what `batch` and the no-op
