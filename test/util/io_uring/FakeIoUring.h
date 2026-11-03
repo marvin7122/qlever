@@ -43,6 +43,9 @@ struct FakeIoUringObservations {
   size_t numberOfInterruptedWaits = 0;
   size_t numberOfEarlyWaits = 0;
   size_t numberOfCancelledSqes = 0;
+  // Calls of `backOff` while requests were in the simulated kernel, so that
+  // the policy could have reaped one instead.
+  size_t numberOfBackOffsWithRequestsInKernel = 0;
   // The target buffers of the reads that failed or were short.
   std::unordered_set<const char*> faultyBuffers;
   // The reads that were still in the simulated kernel or completed but not
@@ -115,6 +118,11 @@ class FakeIoUring final : public IoUringInterface,
 
   // The SQEs that are prepared but not taken by the kernel.
   size_t numberOfQueued() const { return queue_.size(); }
+  // The prepared reads (not no-ops) that the kernel has not taken.
+  size_t numberOfQueuedReads() const {
+    return static_cast<size_t>(ql::ranges::count_if(
+        queue_, [](const Request& request) { return !request.isNoOp; }));
+  }
   // The reads (not no-ops) in the kernel or completed but not reaped.
   size_t numberOfReadsInKernel() const {
     auto isRead = [](const auto& requestOrCompletion) {
@@ -142,9 +150,10 @@ class FakeIoUring final : public IoUringInterface,
       }
       --faults_.numberOfSubmitsBeforeBreak;
     }
+    // Alternate between the two `errno`s of a kernel that is out of memory.
     if (happens(faults_.submitOutOfMemory)) {
       ++observations_.numberOfFailedSubmits;
-      return -EAGAIN;
+      return observations_.numberOfFailedSubmits % 2 == 0 ? -ENOMEM : -EAGAIN;
     }
     if (happens(faults_.submitInterrupted)) {
       ++observations_.numberOfFailedSubmits;
@@ -222,7 +231,11 @@ class FakeIoUring final : public IoUringInterface,
     return queue_.size();
   }
 
-  void backOff() override {}
+  void backOff() override {
+    if (!kernel_.empty() || !completions_.empty()) {
+      ++observations_.numberOfBackOffsWithRequestsInKernel;
+    }
+  }
 
  private:
   struct Request {

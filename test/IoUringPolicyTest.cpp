@@ -85,6 +85,8 @@ class TestBatch {
   bool isReadComplete(size_t i, const std::string& file) const {
     return buffers_[i] == file.substr(offsets_[i], 4);
   }
+  // The number of reads of the batch.
+  size_t numberOfReads() const { return buffers_.size(); }
   // Whether the buffer of read `i` was never written.
   bool isReadUntouched(size_t i) const {
     return buffers_[i] == std::string(4, '\0');
@@ -369,6 +371,58 @@ TEST(IoUringPolicyOnFakeRing, submitRetriesRunOut) {
   EXPECT_TRUE(later.isComplete(file));
 }
 
+// While a submit takes no SQE (`EAGAIN` or `ENOMEM`), the policy reaps a
+// completion if a request is in the kernel, which frees kernel memory, and
+// backs off only if none is.
+TEST(IoUringPolicyOnFakeRing, submitRetriesReapInsteadOfBackingOff) {
+  const std::string file = makeFile();
+  TestBatch batch(64);
+  FakeIoUringObservations observations;
+  Faults faults = noCompletionOnSubmit();
+  faults.submitOutOfMemory = 0.5;
+  // A ring of 2 waves, so that a wave leaves reads in the kernel while the
+  // next reads are submitted.
+  static_assert(64 % (2 * REAP_WAVE) == 0);
+  PolicyOnFakeRing ring(2 * REAP_WAVE, faults, observations);
+  batch.addTo(ring.policy, 0);
+  ring.policy.wait(0);
+  EXPECT_TRUE(batch.isComplete(file));
+  // Both `errno`s occurred (the fake alternates between them).
+  EXPECT_GE(observations.numberOfFailedSubmits, size_t{2});
+  EXPECT_EQ(observations.numberOfBackOffsWithRequestsInKernel, size_t{0});
+}
+
+// The no-ops into which a failed batch was cancelled stay queued in the ring
+// and are submitted with the next batch, also by partial submits that take
+// no-ops and reads together, and also when they alone fill the ring (ring
+// size 4 after a failed batch of 4).
+TEST(IoUringPolicyOnFakeRing, queuedNoOpsAreSubmittedWithTheNextBatch) {
+  const std::string file = makeFile();
+  for (const unsigned ringSize : {4u, 8u}) {
+    for (uint32_t seed = 0; seed < 50; ++seed) {
+      TestBatch failed(4);
+      TestBatch next(4, 4);
+      FakeIoUringObservations observations;
+      Faults faults = noCompletionOnSubmit();
+      faults.brokenSubmitErrno = EIO;
+      PolicyOnFakeRing ring(ringSize, faults, observations, seed);
+      AD_EXPECT_THROW_WITH_MESSAGE(failed.addTo(ring.policy, 0),
+                                   HasSubstr("io_uring_submit failed"));
+      ASSERT_EQ(ring.fake->numberOfQueued(), size_t{4});
+      faults = noCompletionOnSubmit();
+      faults.partialSubmit = 0.5;
+      faults.submitOutOfMemory = 0.3;
+      ring.fake->setFaults(faults);
+      next.addTo(ring.policy, 1);
+      EXPECT_EQ(ring.fake->numberOfQueued(), size_t{0})
+          << "ring " << ringSize << ", seed " << seed;
+      ring.policy.wait(1);
+      EXPECT_TRUE(next.isComplete(file))
+          << "ring " << ringSize << ", seed " << seed;
+    }
+  }
+}
+
 // If no SQE is free although the policy expects one (a ring smaller than its
 // size), `addBatch` forgets the read and throws.
 TEST(IoUringPolicyOnFakeRing, missingSqeIsRolledBack) {
@@ -416,13 +470,14 @@ TEST(IoUringPolicyOnFakeRing, outstandingHandleCannotBeReused) {
   EXPECT_TRUE(batch.isComplete(file));
 }
 
-// Random batches, rings and faults. After every call nothing is queued; a
+// Random batches, rings and faults. After every call no read is queued; a
 // `wait()` throws if and only if a read of its own batch failed or was short,
 // and otherwise every read of the batch is complete; once every batch is
 // waited for, no read is in the ring.
 TEST(IoUringPolicyOnFakeRing, randomFaults) {
   const std::string file = makeFile();
   size_t numberOfFailedWaits = 0;
+  size_t numberOfFailedAddBatches = 0;
   for (uint32_t seed = 0; seed < 200; ++seed) {
     std::vector<std::unique_ptr<TestBatch>> batches;
     FakeIoUringObservations observations;
@@ -465,15 +520,42 @@ TEST(IoUringPolicyOnFakeRing, randomFaults) {
           const IoUringPolicy::BatchHandle handle = batches.size();
           batches.push_back(
               std::make_unique<TestBatch>(1 + random() % 40, random() % 64));
-          batches.back()->addTo(ring.policy, handle);
-          outstanding.push_back(handle);
+          // Sometimes the submits of this batch fail for good after a few
+          // successful ones, so that `addBatch` throws and its queued reads
+          // become no-ops, which the later batches submit.
+          const bool breakSubmits = random() % 10 == 0;
+          if (breakSubmits) {
+            Faults broken = faults;
+            broken.brokenSubmitErrno = EIO;
+            broken.numberOfSubmitsBeforeBreak = random() % 3;
+            ring.fake->setFaults(broken);
+          }
+          try {
+            batches.back()->addTo(ring.policy, handle);
+            outstanding.push_back(handle);
+          } catch (const std::exception& e) {
+            EXPECT_TRUE(breakSubmits) << "seed " << seed << ": " << e.what();
+            ++numberOfFailedAddBatches;
+            EXPECT_EQ(ring.fake->numberOfReadsInKernel(), size_t{0})
+                << "seed " << seed;
+            const TestBatch& batch = *batches.back();
+            for (size_t i = 0; i < batch.numberOfReads(); ++i) {
+              EXPECT_TRUE(batch.isReadComplete(i, file) ||
+                          batch.isReadUntouched(i) ||
+                          batch.hasBufferIn(observations.faultyBuffers))
+                  << "seed " << seed << ", read " << i;
+            }
+          }
+          ring.fake->setFaults(faults);
         } else if (!outstanding.empty()) {
           const size_t i = random() % outstanding.size();
           const auto handle = outstanding[i];
           outstanding.erase(outstanding.begin() + static_cast<ptrdiff_t>(i));
           waitAndCheck(handle);
         }
-        EXPECT_EQ(ring.fake->numberOfQueued(), size_t{0}) << "seed " << seed;
+        // Queued no-ops of a failed batch may wait for the next submit.
+        EXPECT_EQ(ring.fake->numberOfQueuedReads(), size_t{0})
+            << "seed " << seed;
       }
       for (const auto handle : outstanding) {
         waitAndCheck(handle);
@@ -485,6 +567,7 @@ TEST(IoUringPolicyOnFakeRing, randomFaults) {
   }
   // The faults actually occurred.
   EXPECT_GT(numberOfFailedWaits, size_t{0});
+  EXPECT_GT(numberOfFailedAddBatches, size_t{0});
 }
 
 // Fixture of the tests that need `IoUringPolicy` on a real ring; skips them if
