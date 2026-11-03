@@ -15,6 +15,10 @@
 #include <array>
 #include <optional>
 #include <random>
+#include <range/v3/range/conversion.hpp>
+#include <range/v3/view/iota.hpp>
+#include <range/v3/view/stride.hpp>
+#include <range/v3/view/transform.hpp>
 #include <vector>
 
 #include "../../util/GTestHelpers.h"
@@ -26,6 +30,7 @@
 #include "util/File.h"
 #include "util/Forward.h"
 #include "util/MmapVector.h"
+#include "util/Views.h"
 #include "util/jthread.h"
 
 namespace {
@@ -330,21 +335,22 @@ TEST(VocabularyOnDisk, LookupBatchWorksAfterAFailedLookup) {
       *vocab, vocab->lookupBatch(indices), indices);
 }
 
-// More threads than the eight managers that the vocabulary used to have look
-// up words at the same time. A lookup creates a manager when all managers are
-// in use, so no lookup waits, and every result is correct.
+// Many threads look up words of the same vocabulary at the same time, so the
+// lookups need more than one manager, and every result is correct.
 TEST(VocabularyOnDisk, LookupBatchFromManyThreadsAtOnce) {
   constexpr size_t numberOfThreads = 32;
   constexpr size_t numberOfRoundsPerThread = 20;
   auto vocab = createVocabularyFromWords(makeWords(200));
-  std::vector<size_t> indices;
-  for (size_t i = 0; i < 200; i += 7) {
-    indices.push_back(199 - i);
-  }
+  // Every seventh word, in descending order.
+  auto indices = ::ranges::to_vector(
+      ::ranges::views::iota(size_t{0}, size_t{200}) |
+      ::ranges::views::stride(7) |
+      ::ranges::views::transform([](size_t i) { return 199 - i; }));
   std::vector<ad_utility::JThread> threads;
-  for (size_t t = 0; t < numberOfThreads; ++t) {
+  for ([[maybe_unused]] size_t t : ad_utility::integerRange(numberOfThreads)) {
     threads.emplace_back([&vocab, &indices]() {
-      for (size_t round = 0; round < numberOfRoundsPerThread; ++round) {
+      for ([[maybe_unused]] size_t round :
+           ad_utility::integerRange(numberOfRoundsPerThread)) {
         vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
             *vocab, vocab->lookupBatch(indices), indices);
       }
