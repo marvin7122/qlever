@@ -10,6 +10,7 @@
 
 #include "./util/IdTableHelpers.h"
 #include "./util/IndexTestHelpers.h"
+#include "./util/RuntimeParametersTestHelpers.h"
 #include "engine/ConstructBatchEvaluator.h"
 
 namespace {
@@ -198,6 +199,27 @@ TEST_F(ConstructBatchEvaluatorTest,
   // in both batches must resolve to the same shared_ptr (pointer equality).
   EXPECT_EQ(getColumn(result1, 0).at(0), getColumn(result2, 0).at(0));  // idS_
   EXPECT_EQ(getColumn(result1, 0).at(1), getColumn(result2, 0).at(1));  // idO_
+}
+
+// With `construct-id-cache` set to false, the results are the same, but the
+// `IdCache` is neither read nor filled: each batch evaluates its own terms,
+// and equal `Id`s within a batch still share one term.
+TEST_F(ConstructBatchEvaluatorTest, idCacheIsNotUsedWhenTurnedOff) {
+  auto cleanup =
+      setRuntimeParameterForTest<&RuntimeParameters::constructIdCache_>(false);
+  auto idTable = makeIdTableFromVector({{idS_}, {idS_}, {idS_}, {idO_}});
+  IdCache idCache{1024};
+
+  auto result1 = evaluateRowRange({0}, idTable, 0, 2, idCache);
+  auto result2 = evaluateRowRange({0}, idTable, 2, 4, idCache);
+  EXPECT_THAT(getColumn(result1, 0),
+              ElementsAre(evalTerm("<s>"), evalTerm("<s>")));
+  EXPECT_THAT(getColumn(result2, 0),
+              ElementsAre(evalTerm("<s>"), evalTerm("<o>")));
+
+  EXPECT_EQ(getColumn(result1, 0).at(0), getColumn(result1, 0).at(1));
+  EXPECT_NE(getColumn(result1, 0).at(0), getColumn(result2, 0).at(0));
+  EXPECT_EQ(idCache.stats().totalLookups(), 0u);
 }
 
 // When [firstRow_, endRow_) is a strict subset of the `IdTable`, only those

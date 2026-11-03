@@ -78,7 +78,8 @@ struct BatchEvaluationContext {
 // next variable.
 //
 // An `IdCache` (LRU cache keyed by `Id`) avoids redundant evaluation of the
-// same `Id` across rows and batches.
+// same `Id` across rows and batches, unless the runtime parameter
+// `construct-id-cache` is false.
 class ConstructBatchEvaluator {
  public:
   // Evaluates the variables identified by `variableColumnIndices` for all rows
