@@ -18,6 +18,7 @@
 #include <cerrno>
 #include <climits>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "backports/algorithm.h"
@@ -147,15 +148,15 @@ size_t serveRun(int fd, Run run, std::vector<::iovec>& iovecs) {
 #endif
 
 //______________________________________________________________________________
-std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
-                                      ql::span<const uint64_t> offsets,
-                                      ql::span<char*> buffers) {
+UnservedReads readPageCacheHits(int fd, ql::span<const size_t> numBytes,
+                                ql::span<const uint64_t> offsets,
+                                ql::span<char*> buffers) {
   AD_CONTRACT_CHECK(
       offsets.size() == numBytes.size() && buffers.size() == numBytes.size(),
       "The three spans describe the same reads, so they "
       "must have the same length.");
-  const auto positions = ::ranges::views::iota(size_t{0}, numBytes.size());
 #ifdef QL_PAGE_CACHE_FAST_PATH
+  const auto positions = ::ranges::views::iota(size_t{0}, numBytes.size());
   // View over the three spans and `positions`; it is only used inside
   // this call, while all four are alive.
   auto reads = ::ranges::views::zip(positions, numBytes, offsets, buffers);
@@ -177,10 +178,13 @@ std::vector<size_t> readPageCacheHits(int fd, ql::span<const size_t> numBytes,
                               ::ranges::views::transform(positionOf));
     }
   }
-  return notServed;
+  if (notServed.size() == numBytes.size()) {
+    return {UnservedReads::NothingRead{}};
+  }
+  return {UnservedReads::RemainingPositions{std::move(notServed)}};
 #else
   (void)fd;
-  return ::ranges::to<std::vector<size_t>>(positions);
+  return {UnservedReads::NothingRead{}};
 #endif  // QL_PAGE_CACHE_FAST_PATH
 }
 

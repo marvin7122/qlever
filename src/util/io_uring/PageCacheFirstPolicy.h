@@ -13,25 +13,44 @@
 
 #include <cstdint>
 #include <type_traits>
+#include <variant>
 #include <vector>
 
 #include "backports/algorithm.h"
 #include "backports/span.h"
+#include "util/NoCopyNoMove.h"
+#include "util/OverloadCallOperator.h"
 #include "util/io_uring/IoUringManagerConcepts.h"
 
 namespace ad_utility {
 
+// The reads of a batch that `readPageCacheHits` did not serve, and that the
+// caller therefore still has to issue through its regular path.
+struct UnservedReads {
+  // No read was served (none was in the page cache, the fast path is not
+  // supported, or the batch is empty): the caller issues the batch unchanged.
+  struct NothingRead {};
+  // At least one read was served. `positions_` are the positions in the batch
+  // of the reads that were not served, in ascending order; empty if every read
+  // was served.
+  struct RemainingPositions {
+    std::vector<size_t> positions_;
+  };
+  std::variant<NothingRead, RemainingPositions> reads_;
+};
+
 // Serve the reads of a batch that are completely in the page cache with
 // non-blocking `preadv2(RWF_NOWAIT)` calls, one call per run of adjacent file
-// ranges (split into chunks of at most `IOV_MAX` reads), and return the
-// positions of the other reads in ascending order. The caller issues those
-// through its regular path, which also reports errors. A call that fails with
-// `EOPNOTSUPP` or `ENOSYS` switches the fast path off for the whole process
-// (see `pageCacheFastPathIsSupported`).
-// Precondition: the three spans have the same length.
-[[nodiscard]] std::vector<size_t> readPageCacheHits(
-    int fd, ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
-    ql::span<char*> buffers);
+// ranges (split into chunks of at most `IOV_MAX` reads), and return the reads
+// that were not served. The caller issues those through its regular path,
+// which also reports errors. A call that fails with `EOPNOTSUPP` or `ENOSYS`
+// switches the fast path off for the whole process (see
+// `pageCacheFastPathIsSupported`). The three spans describe the same reads, so
+// they must have the same length.
+[[nodiscard]] UnservedReads readPageCacheHits(int fd,
+                                              ql::span<const size_t> numBytes,
+                                              ql::span<const uint64_t> offsets,
+                                              ql::span<char*> buffers);
 
 // Return whether `readPageCacheHits` may use `preadv2(RWF_NOWAIT)`: false if it
 // is not compiled in, or once a call has failed with `EOPNOTSUPP` or `ENOSYS`.
@@ -39,9 +58,10 @@ namespace ad_utility {
 bool pageCacheFastPathIsSupported() noexcept;
 
 namespace detail {
-// Owning copies of the reads of a batch at the indices `positions` into the
-// three equally long spans, in the order of `positions`, as the `numBytes`,
-// `offsets` and `buffers` arguments of `Policy::addBatch`.
+// The reads of a batch at the indices `positions` into the three equally long
+// spans, in the order of `positions`, as the `numBytes`, `offsets` and
+// `buffers` arguments of `Policy::addBatch`. The vectors are copies, but the
+// pointers in `buffers_` still point to the caller's target buffers.
 struct SelectedReads {
   std::vector<size_t> numBytes_;
   std::vector<uint64_t> offsets_;
@@ -69,7 +89,7 @@ struct SelectedReads {
 // A `ReadPolicy` that serves the reads of a batch that are in the page cache
 // with `readPageCacheHits` and passes only the others on to `Policy`.
 template <typename Policy>
-class PageCacheFirstPolicy {
+class PageCacheFirstPolicy : public NoCopyNoMove {
   static_assert(
       ReadPolicyConcept<Policy>,
       "PageCacheFirstPolicy's Policy must satisfy the ReadPolicyConcept.");
@@ -79,9 +99,6 @@ class PageCacheFirstPolicy {
 
   // `ringSize` is forwarded to the constructor of the wrapped `Policy`.
   explicit PageCacheFirstPolicy(unsigned ringSize) : policy_(ringSize) {}
-
-  PageCacheFirstPolicy(const PageCacheFirstPolicy&) = delete;
-  PageCacheFirstPolicy& operator=(const PageCacheFirstPolicy&) = delete;
 
   // Switch the fast path on (the default) or off for the batches that are added
   // afterwards.
@@ -99,16 +116,18 @@ class PageCacheFirstPolicy {
       policy_.addBatch(fd, numBytes, offsets, buffers, handle);
       return;
     }
-    const std::vector<size_t> notServed =
-        readPageCacheHits(fd, numBytes, offsets, buffers);
-    if (notServed.size() == numBytes.size()) {
-      // Nothing was served, so the batch is passed on unchanged.
+    auto forwardAll = [&](const UnservedReads::NothingRead&) {
       policy_.addBatch(fd, numBytes, offsets, buffers, handle);
-      return;
-    }
-    detail::SelectedReads missed{numBytes, offsets, buffers, notServed};
-    policy_.addBatch(fd, missed.numBytes_, missed.offsets_, missed.buffers_,
-                     handle);
+    };
+    auto forwardRemaining =
+        [&](const UnservedReads::RemainingPositions& remaining) {
+          detail::SelectedReads missed{numBytes, offsets, buffers,
+                                       remaining.positions_};
+          policy_.addBatch(fd, missed.numBytes_, missed.offsets_,
+                           missed.buffers_, handle);
+        };
+    std::visit(OverloadCallOperator{forwardAll, forwardRemaining},
+               readPageCacheHits(fd, numBytes, offsets, buffers).reads_);
   }
 
   // Block until every read of the batch `handle` has completed.

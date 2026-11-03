@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "util/GTestHelpers.h"
@@ -31,11 +32,12 @@ namespace {
 using namespace ::testing;
 using namespace ioUringManagerTestHelpers;
 
+using ad_utility::UnservedReads;
+
 // Run `readPageCacheHits` on `reads` (pairs of file offset and size) of `fd`
-// and return, in this order, the positions of the reads that were not
-// served (in ascending order) and the buffers (filled with '-' before the
-// call).
-std::pair<std::vector<size_t>, std::vector<std::string>> notServedAndBuffers(
+// and return, in this order, the reads that were not served and the buffers
+// (filled with '-' before the call).
+std::pair<UnservedReads, std::vector<std::string>> notServedAndBuffers(
     int fd, const std::vector<std::pair<uint64_t, size_t>>& reads) {
   std::vector<size_t> numBytes;
   numBytes.reserve(reads.size());
@@ -58,9 +60,18 @@ std::pair<std::vector<size_t>, std::vector<std::string>> notServedAndBuffers(
   return {std::move(notServed), std::move(buffers)};
 }
 
-// All positions `0 .. n - 1`.
-std::vector<size_t> allPositions(size_t n) {
-  return ::ranges::to<std::vector<size_t>>(ad_utility::integerRange(n));
+// True iff no read of the batch was served.
+bool nothingRead(const UnservedReads& unserved) {
+  return std::holds_alternative<UnservedReads::NothingRead>(unserved.reads_);
+}
+
+// Matches an `UnservedReads` for which at least one read was served and the
+// reads at `positions` were not.
+auto remainingPositions(std::vector<size_t> positions) {
+  return Field(&UnservedReads::reads_,
+               VariantWith<UnservedReads::RemainingPositions>(
+                   Field(&UnservedReads::RemainingPositions::positions_,
+                         ElementsAreArray(std::move(positions)))));
 }
 
 // Reads that cannot be served completely (here: beyond the end of the file)
@@ -69,7 +80,7 @@ TEST(ReadPageCacheHits, missOnlyBatch) {
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
   auto [notServed, buffers] =
       notServedAndBuffers(fd, {{16, 4}, {40, 4}, {20, 4}});
-  EXPECT_EQ(notServed, allPositions(3));
+  EXPECT_TRUE(nothingRead(notServed));
 }
 
 // Fault injection for `readPageCacheHits`: the tests below replace its
@@ -163,7 +174,7 @@ TEST(ReadPageCacheHits, hitOnlyBatch) {
   ScopedPageCacheRead inject{&countedCachedRead};
   auto [notServed, buffers] =
       notServedAndBuffers(fd, {{0, 4}, {4, 4}, {12, 4}, {4, 0}});
-  EXPECT_TRUE(notServed.empty());
+  EXPECT_THAT(notServed, remainingPositions({}));
   EXPECT_EQ(buffers[0], "AAAA");
   EXPECT_EQ(buffers[1], "BBBB");
   EXPECT_EQ(buffers[2], "DDDD");
@@ -180,7 +191,7 @@ TEST(ReadPageCacheHits, mixedBatchWithShortRead) {
   ScopedPageCacheRead inject{&countedCachedRead};
   auto [notServed, buffers] = notServedAndBuffers(
       fd, {{0, 4}, {8, 4}, {12, 2}, {14, 4}, {18, 4}, {4, 4}});
-  EXPECT_EQ(notServed, (std::vector<size_t>{3, 4}));
+  EXPECT_THAT(notServed, remainingPositions({3, 4}));
   EXPECT_EQ(buffers[0], "AAAA");
   EXPECT_EQ(buffers[1], "CCCC");
   EXPECT_EQ(buffers[2], "DD");
@@ -195,7 +206,7 @@ TEST(ReadPageCacheHits, notCachedReadsAreReturned) {
   ScopedPageCacheRead inject{&pageCacheReadTestHelpers::nothingCached};
   auto [notServed, buffers] =
       notServedAndBuffers(fd, {{0, 4}, {4, 4}, {12, 4}});
-  EXPECT_EQ(notServed, allPositions(3));
+  EXPECT_TRUE(nothingRead(notServed));
   EXPECT_EQ(buffers[0], "----");
   EXPECT_TRUE(ad_utility::pageCacheFastPathIsSupported());
 }
@@ -209,7 +220,7 @@ TEST(ReadPageCacheHits, partialAndZeroByteReads) {
     ScopedPageCacheRead inject{&sixBytesCached};
     auto [notServed, buffers] =
         notServedAndBuffers(fd, {{0, 4}, {4, 4}, {12, 4}});
-    EXPECT_EQ(notServed, (std::vector<size_t>{1}));
+    EXPECT_THAT(notServed, remainingPositions({1}));
     EXPECT_EQ(buffers[0], "AAAA");
     EXPECT_EQ(buffers[2], "DDDD");
   }
@@ -217,7 +228,7 @@ TEST(ReadPageCacheHits, partialAndZeroByteReads) {
     ScopedPageCacheRead inject{&zeroBytes};
     auto [notServed, buffers] =
         notServedAndBuffers(fd, {{0, 4}, {4, 4}, {12, 4}});
-    EXPECT_EQ(notServed, allPositions(3));
+    EXPECT_TRUE(nothingRead(notServed));
   }
 }
 
@@ -232,11 +243,11 @@ TEST(ReadPageCacheHits, notSupportedDisablesTheFastPath) {
     ScopedPageCacheRead inject{&countedNotSupported};
     auto [notServed, buffers] =
         notServedAndBuffers(fd, {{0, 4}, {8, 4}, {12, 2}});
-    EXPECT_EQ(notServed, allPositions(3));
+    EXPECT_TRUE(nothingRead(notServed));
     EXPECT_EQ(numPageCacheReads, 1u);
     EXPECT_FALSE(ad_utility::pageCacheFastPathIsSupported());
     auto [notServed2, unusedBuffers] = notServedAndBuffers(fd, {{0, 4}});
-    EXPECT_EQ(notServed2, allPositions(1));
+    EXPECT_TRUE(nothingRead(notServed2));
     EXPECT_EQ(numPageCacheReads, 1u);
   }
   // The guard re-enabled the fast path.
@@ -258,17 +269,17 @@ TEST(ReadPageCacheHits, runsAreSplitAtIovMax) {
   numPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedCachedRead};
   auto [notServed, buffers] = notServedAndBuffers(fd, reads);
-  EXPECT_TRUE(notServed.empty());
+  EXPECT_THAT(notServed, remainingPositions({}));
   EXPECT_EQ(numPageCacheReads, 2u);
   EXPECT_EQ(buffers.front(), "x");
   EXPECT_EQ(buffers.back(), "y");
 }
 
-// An empty batch is trivially served, and spans of different lengths are
+// An empty batch serves nothing, and spans of different lengths are
 // rejected.
 TEST(ReadPageCacheHits, emptyBatchAndContract) {
   auto [tmp, fd] = makeTempFile("AAAA");
-  EXPECT_TRUE(ad_utility::readPageCacheHits(fd, {}, {}, {}).empty());
+  EXPECT_TRUE(nothingRead(ad_utility::readPageCacheHits(fd, {}, {}, {})));
   std::vector<size_t> numBytes{4, 4};
   std::vector<uint64_t> offsets{0};
   std::string buffer(8, '-');
@@ -417,7 +428,7 @@ TEST(PageCacheFirstPolicy, anUnsupportedFastPathIsLeftAlone) {
   numPageCacheReads = 0;
   ScopedPageCacheRead inject{&countedNotSupported};
   RecordedManager manager(64);
-  for ([[maybe_unused]] int round : ql::views::iota(0, 2)) {
+  for ([[maybe_unused]] size_t round : ad_utility::integerRange(size_t{2})) {
     ReadBatchForTesting batch;
     batch.add({{0, 4}, {8, 4}});
     manager.wait(batch.submitTo(manager, fd));
