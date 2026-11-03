@@ -37,12 +37,14 @@ using PageCacheRead = std::function<int64_t(int fd, const ::iovec* iov,
                                             int iovcnt, int64_t offset)>;
 
 // The `PageCacheRead` of production code: `preadv2(RWF_NOWAIT)`, which copies
-// only the bytes that the kernel can copy without waiting for the disk. It
-// returns fewer bytes than requested (possibly 0) if the rest is not cached or
-// the file ends, and fails with `EAGAIN` if the first byte is not cached, and
-// with `EOPNOTSUPP`, `ENOSYS` or `EPERM` if the kernel, the file system or a
-// seccomp filter does not allow the call. Where `preadv2(RWF_NOWAIT)` is not
-// compiled in, it fails with `EOPNOTSUPP`.
+// only the bytes that the kernel can copy without blocking. It stops early, or
+// fails with `EAGAIN` if it cannot copy the first byte, as soon as it would
+// block: at a page that is not cached, at a lock, or at a cached page that
+// would start readahead. It may also return fewer bytes than requested, even
+// 0, before the end of the file (Linux 5.9 and 5.10, see the BUGS of
+// readv(2)). It fails with `EOPNOTSUPP`, `ENOSYS` or `EPERM` if the kernel,
+// the file system or a seccomp filter does not allow the call. Where
+// `preadv2(RWF_NOWAIT)` is not compiled in, it fails with `EOPNOTSUPP`.
 int64_t systemPageCacheRead(int fd, const ::iovec* iov, int iovcnt,
                             int64_t offset) noexcept;
 
@@ -108,13 +110,19 @@ class PageCacheReader {
       int fd, ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
       ql::span<char*> buffers);
 
+ private:
+  const PageCacheRead read_;
   // False if the fast path is not compiled in, or once a read of this reader
   // has failed with `EOPNOTSUPP`, `ENOSYS` or `EPERM`.
-  bool isSupported() const noexcept { return supported_; }
-
- private:
-  PageCacheRead read_;
   bool supported_ = pageCacheFastPathIsCompiledIn();
+  // The `iovec`s of the run that is currently read (at most `IOV_MAX`); kept
+  // across runs and batches, so that their memory is allocated only once.
+  std::vector<::iovec> iovecs_;
+
+  // Read a `run` of adjacent reads with one call of `read_` and return how
+  // many of its reads, from the front, were read completely.
+  template <typename Run>
+  size_t serveRun(int fd, Run run);
 };
 
 namespace detail {
