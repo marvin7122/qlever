@@ -229,6 +229,62 @@ TEST(ReadPageCacheHits, otherErrorsAreRetried) {
 }
 
 // _____________________________________________________________________________
+// A permanent error after some runs were served: the served runs stay served,
+// the failed run and the runs after it are returned without further calls, and
+// so are all reads of later batches.
+TEST(ReadPageCacheHits, switchingOffInTheMiddleOfABatch) {
+  SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  size_t numberOfReads = 0;
+  PageCacheReader reader{
+      [&numberOfReads](int fd, const ::iovec* iov, int iovcnt, int64_t offset) {
+        if (numberOfReads++ == 0) {
+          return fullyCached(fd, iov, iovcnt, offset);
+        }
+        return notSupported(fd, iov, iovcnt, offset);
+      }};
+  auto [notServed, buffers] =
+      notServedAndBuffers(reader, fd, {{0, 4}, {8, 4}, {4, 4}});
+  EXPECT_THAT(notServed, remainingPositions({1, 2}));
+  EXPECT_EQ(buffers[0], "AAAA");
+  EXPECT_EQ(numberOfReads, 2u);
+  auto [notServed2, unusedBuffers] = notServedAndBuffers(reader, fd, {{0, 4}});
+  EXPECT_TRUE(nothingRead(notServed2));
+  EXPECT_EQ(numberOfReads, 2u);
+}
+
+// _____________________________________________________________________________
+// A run of more than `IOV_MAX` adjacent reads is split into chunks. A short
+// first chunk leaves the rest of that chunk unserved, but the next chunk is
+// still read and served.
+TEST(ReadPageCacheHits, aShortChunkDoesNotStopTheNextChunk) {
+  SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
+  const auto iovMax = static_cast<size_t>(IOV_MAX);
+  const size_t numReads = iovMax + 1;
+  auto [tmp, fd] = makeTempFile(std::string(numReads, 'x'));
+  std::vector<std::pair<uint64_t, size_t>> reads;
+  reads.reserve(numReads);
+  for (size_t i : ad_utility::integerRange(numReads)) {
+    reads.emplace_back(i, 1);
+  }
+  size_t numberOfReads = 0;
+  // The first chunk only gets 1 byte (its first read), the second one is
+  // served completely.
+  PageCacheReader reader{
+      [&numberOfReads](int fd, const ::iovec* iov, int iovcnt, int64_t offset) {
+        const int64_t numBytesRead = fullyCached(fd, iov, iovcnt, offset);
+        return numberOfReads++ == 0 ? std::min<int64_t>(numBytesRead, 1)
+                                    : numBytesRead;
+      }};
+  auto [notServed, buffers] = notServedAndBuffers(reader, fd, reads);
+  EXPECT_THAT(notServed, remainingPositions(::ranges::to<std::vector<size_t>>(
+                             ::ranges::views::iota(size_t{1}, iovMax))));
+  EXPECT_EQ(numberOfReads, 2u);
+  EXPECT_EQ(buffers.front(), "x");
+  EXPECT_EQ(buffers.back(), "x");
+}
+
+// _____________________________________________________________________________
 // A run of more than `IOV_MAX` adjacent reads is split into several calls.
 TEST(ReadPageCacheHits, runsAreSplitAtIovMax) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
