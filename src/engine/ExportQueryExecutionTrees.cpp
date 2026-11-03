@@ -108,7 +108,10 @@ STREAMABLE_GENERATOR_TYPE computeResultForAsk(
 
 // _____________________________________________________________________________
 // The maximal number of rows that are serialized together in one chunk of a
-// CSV or TSV export (see `csvOrTsvRows` below).
+// CSV or TSV export (see `csvOrTsvRows` below). A chunk is the unit of work of
+// the parallel export, so it has to be large enough that scheduling a task
+// costs little compared to its serialization, and small enough that the
+// chunks in flight (two per thread) take only a few megabytes.
 constexpr uint64_t NUM_ROWS_PER_CSV_OR_TSV_CHUNK = 8192;
 
 // Return the CSV or TSV lines (each terminated by a newline) of the `rows` of
