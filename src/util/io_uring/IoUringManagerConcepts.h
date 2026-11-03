@@ -16,37 +16,47 @@
 #include "backports/concepts.h"
 #include "backports/span.h"
 
+// The compile-time interface between `BatchManager` (in `IoUringManager.h`) and
+// the policies that carry out its reads. A `BatchManager` owns the batch
+// bookkeeping (it hands out one `BatchHandle` per batch) and delegates the
+// reads themselves to a `ReadPolicy`. This header holds only the constraints,
+// so that `PageCacheFirstPolicy.h`, a policy that wraps another policy, can
+// state them without depending on `IoUringManager.h`. The models are
+// `IoUringPolicy` (asynchronous reads via io_uring) and `SyncIoPolicy`
+// (blocking `pread`) in `IoUringManager.h`, and `PageCacheFirstPolicy<Policy>`
+// in `PageCacheFirstPolicy.h`.
+
 namespace ad_utility {
 
+// The member functions of a `ReadPolicy`: `addBatch` starts the reads of one
+// batch (read `i` reads `numBytes[i]` bytes at file offset `offsets[i]` of `fd`
+// into `buffers[i]`) and tags them with `handle`; `wait(handle)` blocks until
+// all reads of that batch have completed.
 template <typename T>
 CPP_requires(ReadPolicy_,
              requires(T& policy, int fd, ql::span<const size_t> numBytes,
                       ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                       typename T::BatchHandle handle)(
-                 // Must provide `addBatch` with the following parameters.
                  policy.addBatch(fd, numBytes, offsets, buffers, handle),
-                 // Must provide a `wait` method with the following interface.
                  policy.wait(handle)));
 
-// The pluggable I/O backend of `BatchManager`: it specifies how the reads in a
-// batch are carried out. See `IoUringPolicy` (asynchronous, via io_uring) and
-// `SyncIoPolicy` (blocking `pread` fallback) in `IoUringManager.h`, and the
-// decorator `PageCacheFirstPolicy` in `PageCacheFirstPolicy.h`. Must
-// additionally be
-// constructible from a ringsize (`unsigned`). Also require that `T` must expose
-// an unsigned integral `BatchHandle` type.
+// A `ReadPolicy`, used as the template argument of `BatchManager` and
+// `PageCacheFirstPolicy`: it has the member functions of `ReadPolicy_` above,
+// an unsigned integral `BatchHandle` type, and a constructor from the size of
+// an io_uring ring (`unsigned`), which policies without a ring ignore.
 template <typename T>
 CPP_concept ReadPolicyConcept =
-    concepts::constructible_from<T, unsigned> &&
-    concepts::unsigned_integral<typename T::BatchHandle> &&
+    ql::concepts::constructible_from<T, unsigned> &&
+    ql::concepts::unsigned_integral<typename T::BatchHandle> &&
     CPP_requires_ref(ReadPolicy_, T);
 
 namespace detail {
 // Satisfied iff `Policy` has a member callable as `setPageCacheFastPath(true)`,
-// i.e. a switchable page-cache fast path. That member must be `noexcept` (see
-// `BatchManager::setPageCacheFastPath`, which checks it).
+// i.e. a switchable page-cache fast path (`PageCacheFirstPolicy`).
+// `BatchManager::setPageCacheFastPath` forwards its argument to such a member
+// and checks at compile time that the member is `noexcept`.
 template <typename Policy>
-CPP_requires(HasPageCacheFastPathSwitch,
+CPP_requires(HasPageCacheFastPathSwitch_,
              requires(Policy& policy)(policy.setPageCacheFastPath(true)));
 }  // namespace detail
 
