@@ -14,4 +14,5 @@ add_library(vocabulary VocabularyInMemory.h VocabularyInMemory.cpp
                        Vocabulary.cpp EncodedIriManager.cpp
                        EncodedIriPattern.cpp PrefixHeuristic.cpp
                        SecondaryVocabulary.cpp)
-qlever_target_link_libraries(vocabulary qlever_util rdfTypes)
+# `VocabularyOnDisk` reads the runtime parameters (`global`).
+qlever_target_link_libraries(vocabulary qlever_util rdfTypes global)
