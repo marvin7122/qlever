@@ -1,13 +1,14 @@
-// Copyright 2026, The QLever Authors, in particular:
+// Copyright 2026 The QLever Authors, in particular:
 //
 // 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
 //
 // UFR = University of Freiburg, Chair of Algorithms and Data Structures
-
+//
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include <fcntl.h>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <unistd.h>
 
@@ -24,6 +25,7 @@
 #include "backports/algorithm.h"
 #include "util/BatchManagerPool.h"
 #include "util/Exception.h"
+#include "util/GTestHelpers.h"
 #include "util/Views.h"
 
 using ad_utility::BatchManagerBase;
@@ -38,10 +40,12 @@ struct TempFile {
   explicit TempFile(const std::string& contents) {
     char name[] = "/tmp/batchManagerPoolTestXXXXXX";
     fd_ = mkstemp(name);
-    AD_CORRECTNESS_CHECK(fd_ != -1);
+    AD_CORRECTNESS_CHECK(fd_ != -1,
+                         "`mkstemp` failed to create a temporary file.");
     name_ = name;
     AD_CORRECTNESS_CHECK(::write(fd_, contents.data(), contents.size()) ==
-                         static_cast<ssize_t>(contents.size()));
+                             static_cast<ssize_t>(contents.size()),
+                         "Writing the contents of the temporary file failed.");
   }
   ~TempFile() {
     ::close(fd_);
@@ -138,8 +142,9 @@ TEST(BatchManagerPool, leaseIsMovable) {
     EXPECT_TRUE(movedLease.isValid());
     EXPECT_EQ(&*movedLease, manager);
     EXPECT_FALSE(lease.isValid());
-    EXPECT_ANY_THROW(*lease);
-    EXPECT_ANY_THROW(lease->wait(0));
+    AD_EXPECT_THROW_WITH_MESSAGE(*lease, ::testing::HasSubstr("moved-from"));
+    AD_EXPECT_THROW_WITH_MESSAGE(lease->wait(0),
+                                 ::testing::HasSubstr("moved-from"));
   }
   auto lease = pool.acquire();
   EXPECT_EQ(&*lease, manager);
@@ -226,8 +231,8 @@ TEST(BatchManagerPool, noManagerIsUsedByTwoThreadsAtOnce) {
 // _____________________________________________________________________________
 // A pool without managers is rejected.
 TEST(BatchManagerPool, zeroManagersAreRejected) {
-  EXPECT_THROW((BatchManagerPool{0, /*preferIoUring=*/false}),
-               ad_utility::Exception);
+  AD_EXPECT_THROW_WITH_MESSAGE((BatchManagerPool{0, /*preferIoUring=*/false}),
+                               ::testing::HasSubstr("at least one manager"));
 }
 
 // _____________________________________________________________________________
@@ -259,9 +264,9 @@ TEST(BatchManagerPool, globalPoolIsConfiguredBeforeItsCreation) {
       size + 1, /*preferIoUring=*/true));
   EXPECT_EQ(pool.size(), size);
   EXPECT_EQ(pool.usesIoUring(), usesIoUring);
-  EXPECT_THROW(ad_utility::trySetGlobalBatchManagerPoolConfig(
-                   0, /*preferIoUring=*/false),
-               ad_utility::Exception);
+  AD_EXPECT_THROW_WITH_MESSAGE(ad_utility::trySetGlobalBatchManagerPoolConfig(
+                                   0, /*preferIoUring=*/false),
+                               ::testing::HasSubstr("at least one manager"));
   TempFile file{"AAAABBBBCCCC"};
   auto lease = pool.acquire();
   EXPECT_EQ(readFourBytesAt(*lease, file, 8), "CCCC");
