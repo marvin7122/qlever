@@ -14,8 +14,13 @@
 #include <gtest/gtest_prod.h>
 
 #include <cstdint>
+#include <limits>
 #include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include "backports/algorithm.h"
@@ -230,6 +235,18 @@ class IoUringInterface {
   virtual void backOff() = 0;
 };
 
+namespace detail {
+// The text of `errno` value `errorNumber`.
+std::string errorText(int errorNumber);
+
+// Log that `operation` failed with `errorNumber` and terminate the process.
+// Used where the kernel may still hold reads while the ring cannot be used any
+// more: throwing would let the caller free buffers that the kernel still
+// writes into.
+[[noreturn]] void terminateBecauseRingIsUnusable(std::string_view operation,
+                                                 int errorNumber) noexcept;
+}  // namespace detail
+
 // Return an `IoUringInterface` backed by liburing with (at least) `ringSize`
 // SQEs; liburing rounds the size up to a power of two. Throw if the ring
 // cannot be set up, for example because `io_uring_setup` is blocked by
@@ -242,27 +259,78 @@ std::unique_ptr<IoUringInterface> makeLiburingRing(unsigned ringSize);
 // via `wait()`. Single-threaded use only. See https://github.com/axboe/liburing
 // for more details.
 //
+// A batch's error is thrown only once the kernel holds none of the batch's
+// reads, because the caller frees the target buffers when it unwinds:
+// - A failed or short read is thrown by the `wait()` of its batch.
+// - An `io_uring_submit` that keeps failing with `EAGAIN` (the kernel is out of
+//   memory for requests), or that keeps taking no SQE, makes `addBatch` throw.
+//   Its queued reads are rewritten into no-ops first, which refer to no buffer.
+// - Any other submit error does the same if the kernel holds no read. If it
+//   does hold reads, the process terminates, since the ring is unusable.
+// - A failed wait for completions terminates the process: the kernel may
+//   still write into the buffers of the reads it holds.
+//
 // Neither copyable nor movable: the policy owns the ring, whose kernel-side
 // state cannot be duplicated, and it lives inside its `BatchManager`.
 class IoUringPolicy : public NoCopyNoMove {
  public:
   using BatchHandle = uint64_t;
 
+  // The request id of a no-op (the no-ops of cancelled reads keep this id). The
+  // reads get their ids from a counter that starts at 0, so no read gets this
+  // id. It is not `uint64_t` max: that is liburing's `LIBURING_UDATA_TIMEOUT`,
+  // whose completions liburing consumes itself on kernels before 5.11, so the
+  // no-op would never be reaped.
+  static constexpr uint64_t NO_OP_REQUEST_ID =
+      std::numeric_limits<uint64_t>::max() - 1;
+
  private:
   std::unique_ptr<IoUringInterface> ring_;
-  // The most reads that the policy keeps in the ring.
+  // The most requests (reads and no-ops) that the policy keeps in the ring.
   size_t ringSize_;
+
+  // How often in a row an `io_uring_submit` that fails with `EAGAIN` (or takes
+  // no SQE) is retried before the queued reads are cancelled.
+  static constexpr unsigned MAX_SUBMIT_RETRIES = 16;
 
   // Total number of reads that occupy a ring slot but have not yet been reaped
   // via a completion queue entry (CQE), i.e. that are prepared or submitted but
   // not yet completed. Used to detect whether the ring is full.
   size_t numInFlightReadRequests_ = 0;
 
-  // The same in-flight reads as `numInFlight_`, but broken down per batch:
-  // maps a batch handle to the number of its reads that have not yet completed
-  // (are "in flight"). An entry for a batch (identified by `BatchHandle`) is
-  // removed once `wait()` has observed all of its reads complete.
-  ad_utility::HashMap<BatchHandle, size_t> numInFlightReadRequestsPerBatch_;
+  // No-ops of cancelled reads that are queued or in the kernel. They occupy
+  // ring slots until their CQE is reaped. The queued no-ops precede every
+  // queued read, because a batch whose reads are cancelled queues no more.
+  size_t numberOfNoOpsQueued_ = 0;
+  size_t numberOfNoOpsInKernel_ = 0;
+
+  // A read that failed: the kernel reported an error (`res` is `-errno`)...
+  struct ReadError {
+    int errorNumber;
+  };
+  // ... or read fewer bytes than requested (a partial read, or 0 at the end of
+  // the file).
+  struct ShortRead {
+    size_t numberOfBytesRead;
+    size_t numberOfRequestedBytes;
+  };
+  using ReadFailure = std::variant<ReadError, ShortRead>;
+
+  // The state of a batch whose reads are in flight, or that has a failed read
+  // whose `wait()` has not yet thrown it.
+  struct Batch {
+    // The reads of this batch that have not yet completed (are "in flight").
+    size_t numberOfInFlightReads;
+    // The first failed read of the batch. Stored in place, so that recording a
+    // failure does not allocate.
+    std::optional<ReadFailure> firstFailure = std::nullopt;
+  };
+
+  // The same in-flight reads as `numInFlightReadRequests_`, but broken down per
+  // batch. The entry of a batch is removed once all of its reads have
+  // completed, unless one of them failed: then the `wait()` of the batch
+  // removes it when it throws the failure.
+  ad_utility::HashMap<BatchHandle, Batch> batches_;
 
   // Per-read metadata needed when a completion is reaped: which batch the read
   // belongs to, and how many bytes it was supposed to read (so that reading
@@ -280,11 +348,32 @@ class IoUringPolicy : public NoCopyNoMove {
 
   // Maps a read's request id to its metadata. An entry is inserted when the
   // read is prepared in `addBatch` and erased when its completion is reaped in
-  // `drainOneCqe`.
+  // `drainOneCqe`, or when the read is cancelled.
   ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
 
-  // Wait for one CQE and update the in-flight bookkeeping.
+  // The reads, and all requests, that the kernel has taken and whose
+  // completion has not been reaped yet.
+  size_t numberOfReadsInKernel() const;
+  size_t numberOfRequestsInKernel() const;
+
+  // Wait for one CQE and update the in-flight bookkeeping. A failed or short
+  // read is recorded in its batch, not thrown, so that the caller can reap the
+  // batch's other reads first. Retries an interrupted wait and terminates if
+  // waiting fails otherwise.
   void drainOneCqe();
+
+  // Reap completions until no read of the batch `handle` is in flight.
+  void drainBatch(BatchHandle handle);
+
+  // Hand the queued SQEs to the kernel. Retries `EINTR`, and retries `EAGAIN`
+  // (or a submit that takes no SQE) up to `MAX_SUBMIT_RETRIES` times in a row.
+  // If the submit fails for good, cancels the queued reads and returns the
+  // error, or terminates if the error shows the ring to be unusable while the
+  // kernel holds reads.
+  std::optional<std::string> submitQueued();
+
+  // Rewrite the queued reads into no-ops and forget them.
+  void cancelQueuedReads();
 
  public:
   // Set up a liburing ring with (at least) `ringSize` SQEs. `ringSize` must be
@@ -292,8 +381,8 @@ class IoUringPolicy : public NoCopyNoMove {
   explicit IoUringPolicy(unsigned ringSize);
 
   // Run on `ring` instead of a liburing ring, for tests. The policy keeps at
-  // most `ring->sqCapacity()` reads in the ring. Throws if `ring` is null, has
-  // no SQE, or has fewer CQEs than SQEs.
+  // most `ring->sqCapacity()` requests in the ring. Throws if `ring` is null,
+  // has no SQE, or has fewer CQEs than SQEs.
   explicit IoUringPolicy(std::unique_ptr<IoUringInterface> ring);
   ~IoUringPolicy();
 
@@ -303,14 +392,17 @@ class IoUringPolicy : public NoCopyNoMove {
   // reads `numBytesToRead[i]` bytes from file descriptor `fd`, starting at
   // offset `offsets[i]` (from the start of the file), into the buffer starting
   // at `buffers[i]`. The reads are tracked under `handle`, which can be passed
-  // to `wait()` to block until this batch has completed.
+  // to `wait()` to block until this batch has completed. Throws if the reads
+  // cannot be submitted (see above), but only once the kernel holds none of
+  // the batch's reads.
   void addBatch(int fd, ql::span<const size_t> numBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle);
 
   // Block until every read in the batch that is represented by the `handle` has
   // completed. (The `handle` was submitted along the read requests using
-  // `addBatch`.) Throws on any I/O error.
+  // `addBatch`.) Then throw if one of these reads failed or read fewer bytes
+  // than requested.
   void wait(BatchHandle handle);
 };
 
