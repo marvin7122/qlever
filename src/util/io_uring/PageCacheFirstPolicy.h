@@ -112,10 +112,6 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
   void addBatch(int fd, ql::span<const size_t> numBytes,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle) {
-    if (!enabled_ || !pageCacheFastPathIsSupported()) {
-      policy_.addBatch(fd, numBytes, offsets, buffers, handle);
-      return;
-    }
     auto forwardAll = [&](const UnservedReads::NothingRead&) {
       policy_.addBatch(fd, numBytes, offsets, buffers, handle);
     };
@@ -126,8 +122,11 @@ class PageCacheFirstPolicy : public NoCopyNoMove {
           policy_.addBatch(fd, missed.numBytes_, missed.offsets_,
                            missed.buffers_, handle);
         };
+    const UnservedReads unserved =
+        enabled_ ? readPageCacheHits(fd, numBytes, offsets, buffers)
+                 : UnservedReads{UnservedReads::NothingRead{}};
     std::visit(OverloadCallOperator{forwardAll, forwardRemaining},
-               readPageCacheHits(fd, numBytes, offsets, buffers).reads_);
+               unserved.reads_);
   }
 
   // Block until every read of the batch `handle` has completed.

@@ -159,6 +159,9 @@ UnservedReads readPageCacheHits(int fd, ql::span<const size_t> numBytes,
       "The three spans describe the same reads, so they "
       "must have the same length.");
 #ifdef QL_PAGE_CACHE_FAST_PATH
+  if (!pageCacheFastPathIsSupported()) {
+    return {UnservedReads::NothingRead{}};
+  }
   const auto positions = ::ranges::views::iota(size_t{0}, numBytes.size());
   // View over the three spans and `positions`; it is only used inside
   // this call, while all four are alive.
