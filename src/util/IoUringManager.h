@@ -293,7 +293,7 @@ class IoUringPolicy : public NoCopyNoMove {
   // Total number of reads that occupy a ring slot but have not yet been reaped
   // via a completion queue entry (CQE), i.e. that are prepared or submitted but
   // not yet completed. Used to detect whether the ring is full.
-  size_t numberOfInFlightReads_ = 0;
+  size_t numberOfOutstandingReads_ = 0;
   // Of those, the reads that are prepared but not yet taken by the kernel.
   size_t numberOfQueuedReads_ = 0;
 
@@ -315,18 +315,18 @@ class IoUringPolicy : public NoCopyNoMove {
   };
   using ReadFailure = std::variant<ReadError, ShortRead>;
 
-  // The state of a batch whose reads are in flight, or that has a failed read
+  // The state of a batch whose reads are outstanding, or that has a failed read
   // whose `wait()` has not yet thrown it.
   struct Batch {
-    // The reads of this batch that have not yet completed (are "in flight").
-    size_t numberOfInFlightReads;
+    // The reads of this batch that have not yet completed (are "outstanding").
+    size_t numberOfOutstandingReads;
     // The first failed read of the batch. Stored in place, so that recording a
     // failure does not allocate.
     std::optional<ReadFailure> firstFailure = std::nullopt;
   };
 
-  // The same in-flight reads as `numberOfInFlightReads_`, but broken down per
-  // batch. The entry of a batch is removed once all of its reads have
+  // The same outstanding reads as `numberOfOutstandingReads_`, but broken down
+  // per batch. The entry of a batch is removed once all of its reads have
   // completed, unless one of them failed: then the `wait()` of the batch
   // removes it when it throws the failure.
   ad_utility::HashMap<BatchHandle, Batch> batches_;
@@ -334,33 +334,33 @@ class IoUringPolicy : public NoCopyNoMove {
   // Per-read metadata needed when a completion is reaped: which batch the read
   // belongs to, and how many bytes it was supposed to read (so that reading
   // fewer bytes than requested can be detected). See
-  // `inFlightReadsByRequestId_`.
-  struct InFlightRead {
+  // `outstandingReadsByRequestId_`.
+  struct OutstandingRead {
     BatchHandle batchHandle;
     size_t numberOfRequestedBytes;
   };
 
   // Monotonically increasing counter that mints a unique request id for each
   // individual read. The id is stored in the SQE's `user_data` and recovered
-  // from the matching CQE to look up the read's `InFlightRead` metadata.
+  // from the matching CQE to look up the read's `OutstandingRead` metadata.
   uint64_t nextRequestIdToAssign_ = 0;
 
   // Maps a read's request id to its metadata. An entry is inserted when the
   // read is prepared in `addBatch` and erased when its completion is reaped in
   // `processCompletion`, or when the read is cancelled.
-  ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
+  ad_utility::HashMap<uint64_t, OutstandingRead> outstandingReadsByRequestId_;
 
   // The requests (reads and no-ops) that the kernel has taken and whose
   // completion has not been reaped yet.
   size_t numberOfRequestsInKernel() const noexcept {
-    return numberOfInFlightReads_ - numberOfQueuedReads_ +
+    return numberOfOutstandingReads_ - numberOfQueuedReads_ +
            numberOfNoOpsInKernel_;
   }
 
   // Whether every slot of the ring holds a request: a read or a no-op that is
   // queued, in the kernel, or completed but not yet reaped.
   bool ringIsFull() const noexcept {
-    return numberOfInFlightReads_ + numberOfNoOpsQueued_ +
+    return numberOfOutstandingReads_ + numberOfNoOpsQueued_ +
                numberOfNoOpsInKernel_ >=
            ringSize_;
   }
@@ -370,7 +370,7 @@ class IoUringPolicy : public NoCopyNoMove {
   static constexpr size_t REAP_CHUNK =
       IoUringInterface::MAX_COMPLETIONS_PER_POP;
 
-  // Reap every ready CQE and update the in-flight bookkeeping. If none is
+  // Reap every ready CQE and update the outstanding bookkeeping. If none is
   // ready, first block until a wave of `min(REAP_WAVE,
   // numberOfRequestsToComplete)` CQEs is ready. `numberOfRequestsToComplete` is
   // the number of requests the caller waits for; it must be > 0 and at most
@@ -382,10 +382,11 @@ class IoUringPolicy : public NoCopyNoMove {
   // an interrupted wait and terminates if waiting fails otherwise.
   void reapWave(size_t numberOfRequestsToComplete);
 
-  // Apply one reaped completion to the in-flight bookkeeping (see `reapWave`).
+  // Apply one reaped completion to the outstanding bookkeeping (see
+  // `reapWave`).
   void processCompletion(const IoUringInterface::Completion& completion);
 
-  // Reap completions until no read of the batch `handle` is in flight.
+  // Reap completions until no read of the batch `handle` is outstanding.
   void drainBatch(BatchHandle handle);
 
   // Hand the queued SQEs to the kernel. Retries `EINTR` at once, and retries
