@@ -418,6 +418,17 @@ TYPED_TEST(IoUringManagerTest, waitOnNonExistingBatch) {
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
 }
 
+// A batch without reads is accepted and has nothing to wait for. Every policy
+// must allow this, because `PageCacheFirstPolicy` passes an empty batch on to
+// the policy it wraps when the page cache serves all reads of a batch.
+TYPED_TEST(IoUringManagerTest, emptyBatchHasNothingToWaitFor) {
+  auto [tmp, fd] = makeTempFile("AAAA");
+  ReadBatchForTesting batch;
+  TypeParam manager(64);
+  manager.wait(batch.submitTo(manager, fd));
+  EXPECT_THAT(batch.result(), ::testing::IsEmpty());
+}
+
 // Wait on `BatchHandle` for which no actual batch of read calls has been
 // issued.
 TYPED_TEST(IoUringManagerTest, fakeHandle) {
