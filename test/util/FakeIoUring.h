@@ -158,8 +158,9 @@ class FakeIoUring final : public IoUringInterface {
       ++faultCounts_.interruptedWaits;
       return -EINTR;
     }
-    // A real wait for more completions than requests in the kernel would
-    // block forever.
+    // Like `io_uring_wait_cqes`, the wait counts the completions that are
+    // already ready. A real wait for more completions than those plus the
+    // requests in the kernel would block forever.
     AD_CORRECTNESS_CHECK(minComplete <= kernel_.size() + completions_.size());
     while (completions_.size() < minComplete) {
       completeRandomRequests(1);

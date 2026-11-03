@@ -266,7 +266,15 @@ class IoUringPolicy {
                 BatchHandle handle);
 
   // Nothing to do: `addBatch` has already completed the batch.
-  void wait([[maybe_unused]] BatchHandle handle) {}
+  void wait([[maybe_unused]] BatchHandle handle) noexcept {}
+
+  // The request id of a no-op (the no-ops of cancelled reads keep this id). A
+  // read's request id is its index in the batch, so no read gets this id. It
+  // is not `uint64_t` max: that is liburing's `LIBURING_UDATA_TIMEOUT`, whose
+  // completions liburing consumes itself on kernels without
+  // `IORING_FEAT_EXT_ARG` (before 5.11), so the no-op would never be reaped.
+  static constexpr uint64_t NO_OP_REQUEST_ID =
+      std::numeric_limits<uint64_t>::max() - 1;
 
  private:
   enum class ReadState : uint8_t { NotQueued, Queued, InKernel, Done };
@@ -291,19 +299,6 @@ class IoUringPolicy {
     size_t numSlots() const { return numQueued - numDone; }
   };
 
-  // The request id of a no-op. A read's request id is its index in the batch,
-  // so no read gets this id. It is not `uint64_t` max: that is liburing's
-  // `LIBURING_UDATA_TIMEOUT`, whose completions liburing consumes itself on
-  // kernels without `IORING_FEAT_EXT_ARG` (before 5.11), so the no-op would
-  // never be reaped.
-  static constexpr uint64_t NO_OP_REQUEST_ID =
-      std::numeric_limits<uint64_t>::max() - 1;
-
- public:
-  // The request id that `IoUringPolicy` gives the no-ops of cancelled reads.
-  static constexpr uint64_t noOpRequestId() { return NO_OP_REQUEST_ID; }
-
- private:
   // The size of a wave: wait for up to this many completions at once (fewer if
   // fewer requests are in the kernel), then reap all ready ones in one pass.
   // This amortizes `io_uring_enter` and the CQ-head update over the wave.

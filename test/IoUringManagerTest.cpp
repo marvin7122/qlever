@@ -516,7 +516,7 @@ TEST(LiburingRing, cancelledReadsCompleteAsNoOps) {
   using Completion = ad_utility::IoUringInterface::Completion;
   // The policy's real no-op id, so that a collision with an id that liburing
   // reserves would show up here.
-  constexpr uint64_t noOp = ad_utility::IoUringPolicy::noOpRequestId();
+  constexpr uint64_t noOp = ad_utility::IoUringPolicy::NO_OP_REQUEST_ID;
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCC");
   auto ring = ad_utility::makeLiburingRing(8);
   constexpr size_t NUMBER_OF_READS = 3;
@@ -679,9 +679,9 @@ TEST(IoUringPolicyModel, invalidConstructionThrows) {
     return std::make_unique<FakeIoUring>("AAAA", 8, FakeIoUring::Faults{}, 0);
   };
   AD_EXPECT_THROW_WITH_MESSAGE(ad_utility::IoUringPolicy(0, makeFake()),
-                               HasSubstr("ringSize_ > 0"));
+                               HasSubstr("ring size of at least 1"));
   AD_EXPECT_THROW_WITH_MESSAGE(ad_utility::IoUringPolicy(8, nullptr),
-                               HasSubstr("ring_ != nullptr"));
+                               HasSubstr("a ring to run on"));
 }
 #endif
 

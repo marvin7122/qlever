@@ -31,7 +31,8 @@ CPP_requires(ReadPolicy_,
 
 // The pluggable I/O backend of `BatchManager`: it specifies how the reads in a
 // batch are carried out. See `IoUringPolicy` (via io_uring) and
-// `SyncIoPolicy` (blocking `pread` fallback) below. Must additionally be
+// `SyncIoPolicy` (blocking `pread` fallback) in `IoUringManager.h`. Must
+// additionally be
 // constructible from a ringsize (`unsigned`). Also require that `T` must expose
 // an unsigned integral `BatchHandle` type.
 template <typename T>

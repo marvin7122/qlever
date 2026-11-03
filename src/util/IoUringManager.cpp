@@ -199,9 +199,10 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize)
 IoUringPolicy::IoUringPolicy(unsigned ringSize,
                              std::unique_ptr<IoUringInterface> ring)
     : ring_{std::move(ring)}, ringSize_{ringSize} {
-  AD_CONTRACT_CHECK(ringSize_ > 0 && ring_ != nullptr,
-                    "An IoUringPolicy needs a ring size of at least 1 and "
-                    "a ring to run on.");
+  AD_CONTRACT_CHECK(ringSize_ > 0,
+                    "An IoUringPolicy needs a ring size of at least 1.");
+  AD_CONTRACT_CHECK(ring_ != nullptr,
+                    "An IoUringPolicy needs a ring to run on.");
 }
 
 //______________________________________________________________________________

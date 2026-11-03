@@ -108,10 +108,15 @@ class ReadBatchForTesting {
   // completed).
   const std::vector<std::string>& result() const { return targetBuffers_; }
 
-  // The file offset of read `i`.
+  // The file offset of read `i`, where `i` is the index that `add` returned
+  // (so `i` must be smaller than the number of added reads).
   uint64_t offset(size_t i) const { return offsets_[i]; }
 
-  // Like `submitTo`, but directly to a `ReadPolicy`.
+  // Like `submitTo`, but directly to a `ReadPolicy`, bypassing the
+  // `BatchManager`: the spans are not validated and no handle is minted, so
+  // the caller passes the `handle` that the policy's `addBatch` receives
+  // (`IoUringPolicy` ignores it). As with `submitTo`, the buffers are owned by
+  // this object and must outlive the batch.
   template <typename Policy>
   void submitToPolicy(Policy& policy, int fd,
                       typename Policy::BatchHandle handle) {
@@ -120,10 +125,10 @@ class ReadBatchForTesting {
   }
 
  private:
-  // The buffer pointers, built when the batch is submitted, after all buffers
-  // have been added, so the addresses are stable (no further `add` will
-  // reallocate `targetBuffers_`). `addBatch` copies each address into its read
-  // request, so the vector need not outlive the call.
+  // The buffer pointers of all added reads. Precondition: no `add` runs
+  // between this call and the `addBatch` that uses the pointers, because a
+  // further `add` may reallocate `targetBuffers_`. `addBatch` copies each
+  // address into its read request, so the vector need not outlive the call.
   std::vector<char*> bufferPointers() {
     return ::ranges::to_vector(targetBuffers_ |
                                ql::views::transform([](std::string& buffer) {
