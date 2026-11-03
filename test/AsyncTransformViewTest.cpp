@@ -269,6 +269,49 @@ TEST(AsyncTransformView, destructionWithPendingElements) {
 }
 
 // _____________________________________________________________________________
+TEST(AsyncTransformView, stopFlagIsSetOnDestruction) {
+  boost::asio::thread_pool pool{2};
+  // A transformation that takes the stop flag gets `false` while the view is
+  // consumed to the end.
+  auto doubleUnlessStopped = [](int i, const std::atomic<bool>& stop) {
+    return stop ? -1 : 2 * i;
+  };
+  {
+    AsyncTransformView view{ql::views::iota(0, 4), doubleUnlessStopped, 2,
+                            pool.get_executor()};
+    EXPECT_THAT(::ranges::to_vector(view), ElementsAre(0, 2, 4, 6));
+  }
+
+  // Element 1 is still pending when the view is destroyed. It waits for the
+  // stop flag, which the destructor sets before it waits for the element. (If
+  // the flag were never set, the element would give up after the `timeout`
+  // and the test would fail instead of hanging.)
+  std::atomic<size_t> numberOfStopsSeen = 0;
+  auto waitForStop = [&numberOfStopsSeen](int i,
+                                          const std::atomic<bool>& stop) {
+    if (i == 0) {
+      return i;
+    }
+    auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!stop && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(1ms);
+    }
+    if (stop) {
+      ++numberOfStopsSeen;
+    }
+    return i;
+  };
+  {
+    AsyncTransformView view{ql::views::iota(0, 2), waitForStop, 2,
+                            pool.get_executor()};
+    auto element = view.get();
+    ASSERT_TRUE(element.has_value());
+    EXPECT_EQ(element.value(), 0);
+  }
+  EXPECT_EQ(numberOfStopsSeen, 1);
+}
+
+// _____________________________________________________________________________
 TEST(AsyncTransformView, globalExecutorAndTypeErasure) {
   // The view can be type-erased via `InputRangeTypeErased`, which makes it
   // movable, and it works with the global executor.
