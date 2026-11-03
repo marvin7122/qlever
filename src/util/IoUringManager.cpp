@@ -81,6 +81,12 @@ IoUringPolicy::IoUringPolicy(unsigned ringSize) : ringSize_(ringSize) {
 
 //______________________________________________________________________________
 IoUringPolicy::~IoUringPolicy() {
+  if (!failedBatches_.empty()) {
+    AD_LOG_WARN << "IoUringPolicy destroyed with " << failedBatches_.size()
+                << " failed batch(es) that were never `wait()`ed; the first "
+                   "failure is: "
+                << failedBatches_.begin()->second << "\n";
+  }
   if (numOutstandingReadRequests_ > 0) {
     AD_LOG_WARN << "IoUringPolicy destroyed with "
                 << numOutstandingReadRequests_
@@ -220,8 +226,8 @@ void IoUringPolicy::drainAtLeastCqes(unsigned minComplete) {
   // left the queue without being applied would leave the outstanding counts
   // too high, so that the next `wait()` or the destructor would block forever.
   // The first exception is rethrown once the chunk is applied.
-  std::array<io_uring_cqe*, 64> cqes{};
-  std::array<std::pair<int, uint64_t>, 64> resultAndRequestIdPerCqe{};
+  std::array<io_uring_cqe*, REAP_CHUNK> cqes{};
+  std::array<std::pair<int, uint64_t>, REAP_CHUNK> resultAndRequestIdPerCqe{};
   size_t numReaped = 0;
   std::exception_ptr firstException;
   while (true) {
@@ -230,17 +236,16 @@ void IoUringPolicy::drainAtLeastCqes(unsigned minComplete) {
     if (n == 0) {
       break;
     }
+    const ql::span<io_uring_cqe* const> readyCqes(cqes.data(), n);
+    const ql::span<std::pair<int, uint64_t>> resultsAndRequestIds(
+        resultAndRequestIdPerCqe.data(), n);
     for (auto [cqe, resultAndRequestId] :
-         ::ranges::views::zip(ql::span<io_uring_cqe* const>(cqes.data(), n),
-                              ql::span<std::pair<int, uint64_t>>(
-                                  resultAndRequestIdPerCqe.data(), n))) {
+         ::ranges::views::zip(readyCqes, resultsAndRequestIds)) {
       // Recover the id via the 64-bit `user_data` field, see `addBatch`.
       resultAndRequestId = {cqe->res, io_uring_cqe_get_data64(cqe)};
     }
     io_uring_cq_advance(&ring_, n);
-    for (const auto& [numBytesRead, requestId] :
-         ql::span<const std::pair<int, uint64_t>>(
-             resultAndRequestIdPerCqe.data(), n)) {
+    for (const auto& [numBytesRead, requestId] : resultsAndRequestIds) {
       try {
         processCqe(numBytesRead, requestId);
       } catch (...) {
@@ -252,7 +257,7 @@ void IoUringPolicy::drainAtLeastCqes(unsigned minComplete) {
     numReaped += n;
   }
   if (firstException) {
-    std::rethrow_exception(firstException);
+    std::rethrow_exception(std::move(firstException));
   }
   // `io_uring_wait_cqes` returned with at least `minComplete` CQEs ready, and
   // the loop above reaps every ready CQE.
@@ -261,22 +266,23 @@ void IoUringPolicy::drainAtLeastCqes(unsigned minComplete) {
 
 //______________________________________________________________________________
 void IoUringPolicy::processCqe(int numBytesRead, uint64_t requestId) {
-  --numOutstandingReadRequests_;
-
   // Every reaped CQE corresponds to exactly one outstanding read whose id we
-  // inserted in `addBatch`, so the entry must be present.
+  // inserted in `addBatch`, so the entry must be present, and so must the
+  // entry of its batch. Both lookups and checks happen before any count is
+  // changed, so that a failing check leaves the bookkeeping consistent.
   auto outstandingReadIt = outstandingReadsByRequestId_.find(requestId);
   AD_CORRECTNESS_CHECK(outstandingReadIt != outstandingReadsByRequestId_.end());
   const OutstandingRead outstandingRead = outstandingReadIt->second;
-  outstandingReadsByRequestId_.erase(outstandingReadIt);
+  auto it =
+      numOutstandingReadRequestsPerBatch_.find(outstandingRead.batchHandle);
+  AD_CORRECTNESS_CHECK(it != numOutstandingReadRequestsPerBatch_.end());
 
   // Attribute the completion to its batch and decrement that batch's
   // outstanding count, erasing the batch once its last read is reaped. This
   // happens also for a failed read, so a batch whose read failed does not stay
   // outstanding.
-  auto it =
-      numOutstandingReadRequestsPerBatch_.find(outstandingRead.batchHandle);
-  AD_CORRECTNESS_CHECK(it != numOutstandingReadRequestsPerBatch_.end());
+  --numOutstandingReadRequests_;
+  outstandingReadsByRequestId_.erase(outstandingReadIt);
   if (--it->second == 0) {
     numOutstandingReadRequestsPerBatch_.erase(it);
   }
