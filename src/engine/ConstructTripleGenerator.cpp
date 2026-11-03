@@ -49,14 +49,15 @@ struct BatchEvalContext {
   std::shared_ptr<ConstructDeduplicator> deduplicator_;
 };
 
-// Evaluate the rows covered by `batch.view_`. Cancellation is checked once at
-// the start. When `context.deduplicator_` is set, duplicate triples are
-// dropped as they are instantiated (see `instantiateBatch`'s
-// `DeduplicationParams`).
+// Evaluate the rows covered by `batch.view_`. The blank nodes of the first row
+// get the row id `blankNodeRowIdOfFirstRow`, those of the following rows
+// consecutive ids. Cancellation is checked once at the start. When
+// `context.deduplicator_` is set, duplicate triples are dropped as they are
+// instantiated (see `instantiateBatch`'s `DeduplicationParams`).
 CPP_template(typename ChunkView)(requires ranges::range<ChunkView>)
 std::vector<EvaluatedTriple> computeBatch(
     const TableConstRefWithVocab& tableWithVocab, ChunkView batch,
-    const BatchEvalContext& context, size_t tableRowOffset) {
+    const BatchEvalContext& context, size_t blankNodeRowIdOfFirstRow) {
   context.cancellationHandle_.get()->throwIfCancelled();
   AD_CORRECTNESS_CHECK(!ql::ranges::empty(batch));
 
@@ -71,14 +72,12 @@ std::vector<EvaluatedTriple> computeBatch(
       context.preprocessedTemplate_.get().uniqueVariableColumns_, ctx,
       tableWithVocab.localVocab(), context.index_, context.cache_);
 
-  const size_t blankNodeBaseId = tableRowOffset + batchBegin;
-
   std::optional<DeduplicationParams> deduplication{std::nullopt};
   if (context.deduplicator_) {
     deduplication.emplace(DeduplicationParams{*context.deduplicator_, ctx});
   }
   return instantiateBatch(context.preprocessedTemplate_.get(), batchResult,
-                          blankNodeBaseId, deduplication);
+                          blankNodeRowIdOfFirstRow, deduplication);
 }
 
 // Chunks `table` into batches and evaluates each one. Takes `TableWithRange` by
@@ -87,19 +86,27 @@ std::vector<EvaluatedTriple> computeBatch(
 // `TableWithRange` / parameter can dangle). `TableWithRange` itself is a cheap
 // non-owning handle (`IdTableView` + `LocalVocab` ref); the underlying result
 // storage must still outlive the whole export, as with every other CONSTRUCT
-// export path.
+// export path. The blank nodes of the first row of `table.view_` get the row id
+// `blankNodeRowIdOfFirstRow`.
 auto processTableBatches(TableWithRange table, BatchEvalContext context,
-                         size_t tableRowOffset) {
+                         size_t blankNodeRowIdOfFirstRow) {
   // Copy the cheap pieces out first so neither `chunk` nor the transform
   // lambda retain a reference into the by-value `table` parameter.
   auto rowView = table.view_;
   const TableConstRefWithVocab tableWithVocab = table.tableWithVocab_;
+  // The view does not have to start at row 0 of the table (for example, if
+  // the OFFSET ends inside the table), so the row id of a batch is counted
+  // from the first row of the view.
+  const size_t firstRow = *ql::ranges::begin(rowView);
   return ranges::views::chunk(std::move(rowView),
                               ConstructTripleGenerator::BATCH_SIZE) |
          ql::views::transform([tableWithVocab, context = std::move(context),
-                               tableRowOffset](auto chunkView) {
-           return computeBatch(tableWithVocab, chunkView, context,
-                               tableRowOffset);
+                               blankNodeRowIdOfFirstRow,
+                               firstRow](auto chunkView) {
+           const size_t batchBegin = *ql::ranges::begin(chunkView);
+           return computeBatch(
+               tableWithVocab, chunkView, context,
+               blankNodeRowIdOfFirstRow + (batchBegin - firstRow));
          }) |
          ql::views::join;
 }
@@ -232,12 +239,12 @@ InputRangeTypeErased<EvaluatedTriple> ConstructTripleGenerator::evaluateTables(
        accumulatedRowOffset = rowOffset](const TableWithRange& table) mutable {
         const size_t numRowsOfTable = ql::ranges::size(table.view_);
 
-        const size_t tableRowOffset = accumulatedRowOffset;
+        const size_t blankNodeRowIdOfFirstRow = accumulatedRowOffset;
         accumulatedRowOffset += numRowsOfTable;
 
         const BatchEvalContext context{*preprocessedTemplate, index, cache,
                                        cancellationHandle, deduplicator};
-        return processTableBatches(table, context, tableRowOffset);
+        return processTableBatches(table, context, blankNodeRowIdOfFirstRow);
       };
 
   auto pipeline = std::move(rowIndices) |

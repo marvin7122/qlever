@@ -134,7 +134,8 @@ class ConstructTripleGenerator {
   // Lazily evaluates all `TableWithRange` values from `rowIndices`, processes
   // them in batches of `BATCH_SIZE` rows, and returns a flat range of
   // `EvaluatedTriple`. Duplicate triples are handled according to
-  // `config.mode_`.
+  // `config.mode_`. The blank nodes of the `i`-th row of `rowIndices` (counted
+  // over all tables, from 0) get the row id `rowOffset + i`.
   static InputRangeTypeErased<EvaluatedTriple> evaluateTables(
       const Triples& templateTriples,
       const VariableToColumnMap& variableColumns,
@@ -169,6 +170,8 @@ class ConstructTripleGenerator {
   FRIEND_TEST(MakeIdCache, singleVariable);
   FRIEND_TEST(MakeIdCache, multipleVariables);
   FRIEND_TEST(ConstructTripleGeneratorTest, rowOffsetAccumulatesAcrossTables);
+  FRIEND_TEST(ConstructTripleGeneratorTest,
+              blankNodeRowIdsWithOffsetInsideTable);
   FRIEND_TEST(ConstructTripleGeneratorTest, cannotCancelDuringBatch);
   FRIEND_TEST(ConstructTripleGeneratorTest, cancellationThrowsBetweenBatches);
   FRIEND_TEST(ConstructTripleGeneratorTest, makeRowChunks);
