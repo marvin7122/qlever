@@ -284,6 +284,16 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // If true, loading a vocabulary that keeps some of its words in RAM
+  // (`VocabularyInternalExternal`) also builds a rank directory over the
+  // indices of these words (see `ad_utility::BitVectorWithRank`). Looking up
+  // whether an index is in RAM, and where, then reads one cache line instead
+  // of doing a binary search over these indices. Costs 8/7 bits per index of
+  // the whole vocabulary (the indices of the words in RAM are spread over all
+  // of it). Only read when the index is loaded.
+  Bool vocabularyInternalRankDirectory_{true,
+                                        "vocabulary-internal-rank-directory"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.
