@@ -340,7 +340,8 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
 
 // _____________________________________________________________________________
 // `lookupBatch` reads the runtime parameter for every lookup: with the
-// parameter off, no page-cache read is attempted.
+// parameter off, no page-cache read is attempted. The lookups go round the
+// whole pool twice, so every manager is switched off and on again.
 TEST(VocabularyOnDisk, LookupBatchFollowsThePageCacheFastPathParameter) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   size_t numberOfPageCacheReads = 0;
@@ -349,14 +350,21 @@ TEST(VocabularyOnDisk, LookupBatchFollowsThePageCacheFastPathParameter) {
   std::array<size_t, 4> indices{0, 1, 3, 2};
   auto resetParameter = setRuntimeParameterForTest<
       &RuntimeParameters::vocabularyPageCacheFastPath_>(false);
-  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
-      *vocab, vocab->lookupBatch(indices), indices);
+  for ([[maybe_unused]] size_t i :
+       ad_utility::integerRange(NUM_VOCAB_BATCH_IO_MANAGERS)) {
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+  }
   EXPECT_EQ(numberOfPageCacheReads, 0u);
 
   setRuntimeParameter<&RuntimeParameters::vocabularyPageCacheFastPath_>(true);
-  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
-      *vocab, vocab->lookupBatch(indices), indices);
-  EXPECT_GT(numberOfPageCacheReads, 0u);
+  for ([[maybe_unused]] size_t i :
+       ad_utility::integerRange(NUM_VOCAB_BATCH_IO_MANAGERS)) {
+    const size_t numberOfPageCacheReadsBefore = numberOfPageCacheReads;
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+    EXPECT_GT(numberOfPageCacheReads, numberOfPageCacheReadsBefore);
+  }
 }
 
 // _____________________________________________________________________________
@@ -371,28 +379,31 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheMissesGoThroughTheManager) {
   // Runs of consecutive indices, reordered and duplicated indices.
   std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
   size_t numberOfCalls = 0;
+  size_t numberOfServedCalls = 0;
   // Every other run is cached, starting with the first one.
-  auto everyOtherRunCached = [&numberOfCalls](int fd, const ::iovec* iov,
-                                              int iovcnt, int64_t offset) {
+  auto everyOtherRunCached = [&numberOfCalls, &numberOfServedCalls](
+                                 int fd, const ::iovec* iov, int iovcnt,
+                                 int64_t offset) {
     if (numberOfCalls++ % 2 == 1) {
       return pageCacheReadTestHelpers::nothingCached(fd, iov, iovcnt, offset);
     }
+    ++numberOfServedCalls;
     return pageCacheReadTestHelpers::fullyCached(fd, iov, iovcnt, offset);
   };
+  // With `notSupported`, the words batch of the lookup runs on the manager
+  // whose reader the offsets batch has just switched off.
   for (const ad_utility::PageCacheRead& pageCacheRead :
        {ad_utility::PageCacheRead{&pageCacheReadTestHelpers::nothingCached},
         ad_utility::PageCacheRead{everyOtherRunCached},
         ad_utility::PageCacheRead{&pageCacheReadTestHelpers::notSupported}}) {
     auto vocab = createExampleVocabulary(pageCacheRead);
-    // Twice, so that the second lookup runs after `notSupported` switched the
-    // reader off.
-    for ([[maybe_unused]] size_t round : ad_utility::integerRange(size_t{2})) {
-      vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
-          *vocab, vocab->lookupBatch(indices), indices);
-    }
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
   }
-  // The offsets and the words of both lookups each made several runs.
-  EXPECT_GT(numberOfCalls, 4u);
+  // `everyOtherRunCached` served some runs and missed others, in the offsets
+  // as well as in the words batch (9 runs each).
+  EXPECT_EQ(numberOfCalls, 18u);
+  EXPECT_EQ(numberOfServedCalls, 9u);
 }
 
 // An empty batch is an invalid request and must throw.
