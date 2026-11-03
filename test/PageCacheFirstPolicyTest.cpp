@@ -24,7 +24,6 @@
 #include "util/Views.h"
 #include "util/io_uring/IoUringManager.h"
 #include "util/io_uring/PageCacheFirstPolicy.h"
-#include "util/io_uring/PageCacheReadHook.h"
 
 namespace {
 
