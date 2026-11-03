@@ -12,6 +12,7 @@
 
 #include <condition_variable>
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -22,11 +23,13 @@
 
 namespace ad_utility {
 
-// A fixed set of `BatchManagerBase`s (an io_uring ring each, or the synchronous
-// fallback) that threads borrow for batched reads. A manager serves one batch
-// at a time, so a thread that performs a batched read takes a manager with
-// `acquire`, uses it through the returned `Lease`, and gives it back when the
-// lease goes out of scope. `acquire` waits while all managers are in use.
+// A fixed number of `BatchManagerBase`s (an io_uring ring each, or the
+// synchronous fallback) that threads borrow for batched reads. A manager serves
+// one batch at a time, so a thread that performs a batched read takes a manager
+// with `acquire`, uses it through the returned `Lease`, and gives it back when
+// the lease goes out of scope. `acquire` waits, without a timeout, while all
+// managers are in use, so the pool should have one manager per thread that
+// performs batched reads.
 //
 // All managers are created in the constructor. So the io_uring probe, and the
 // fallback to synchronous reads if the `io_uring_setup` syscall fails, happen
@@ -36,6 +39,13 @@ namespace ad_utility {
 // pointer and other threads wait on its condition variable.
 class BatchManagerPool : public NoCopyNoMove {
  public:
+  // Create one manager, with the protocol of `makeBatchManager`: if
+  // `preferIoUring` is `true`, try to create an io_uring manager, and clear
+  // `preferIoUring` if that fails; if `preferIoUring` is `false`, create a
+  // synchronous manager. The parameter lets tests inject failures.
+  using MakeManager =
+      std::function<std::unique_ptr<BatchManagerBase>(bool& preferIoUring)>;
+
   // A manager on loan from the pool. The destructor gives it back, also when
   // the user leaves the scope with an exception. A lease can be moved (the
   // moved-from lease then holds nothing), but not assigned, because an
@@ -70,12 +80,12 @@ class BatchManagerPool : public NoCopyNoMove {
     std::unique_ptr<BatchManagerBase> manager_;
   };
 
-  // Create `numManagers` (> 0) managers. If `preferIoUring` is `true`, and
-  // io_uring is compiled in and its setup succeeds, they are io_uring managers.
-  // Otherwise they read synchronously (see `makeBatchManager`). If the setup
-  // fails for one of the managers, that one and all later ones are synchronous
-  // and `usesIoUring()` is `false`.
-  BatchManagerPool(size_t numManagers, bool preferIoUring);
+  // Create `numManagers` (> 0) managers with `makeManager`, preferring
+  // io_uring. If the io_uring setup fails for one of them, all managers are
+  // synchronous ones (the io_uring managers that were created before the
+  // failure are replaced), so that every lookup uses the same backend.
+  explicit BatchManagerPool(size_t numManagers,
+                            MakeManager makeManager = makeDefaultManager);
 
   // Borrow a manager and return the lease that gives it back. Wait while all
   // managers are in use.
@@ -88,13 +98,17 @@ class BatchManagerPool : public NoCopyNoMove {
   bool usesIoUring() const { return usesIoUring_; }
 
  private:
+  static std::unique_ptr<BatchManagerBase> makeDefaultManager(
+      bool& preferIoUring) {
+    return makeBatchManager(preferIoUring);
+  }
+
   // Give a manager back. Never throws or allocates, because `idle_` has room
   // for all managers and this runs in the destructor of `Lease`.
   void release(std::unique_ptr<BatchManagerBase> manager) noexcept;
 
-  // The number of managers, and whether all of them use io_uring. Both are
-  // fixed in the constructor.
   const size_t numManagers_;
+  const MakeManager makeManager_;
   bool usesIoUring_ = false;
   // The managers that are not on loan, guarded by `mutex_`. `release` notifies
   // `managerReturned_` when it puts a manager back.

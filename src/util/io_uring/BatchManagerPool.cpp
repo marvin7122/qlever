@@ -41,21 +41,32 @@ BatchManagerPool::Lease::~Lease() {
 }
 
 // _____________________________________________________________________________
-BatchManagerPool::BatchManagerPool(size_t numManagers, bool preferIoUring)
-    : numManagers_{numManagers} {
+BatchManagerPool::BatchManagerPool(size_t numManagers, MakeManager makeManager)
+    : numManagers_{numManagers}, makeManager_{std::move(makeManager)} {
   AD_CONTRACT_CHECK(numManagers > 0,
                     "A `BatchManagerPool` needs at least one manager.");
-  // `makeBatchManager` clears `preferIoUring` (a reference parameter) when the
-  // io_uring setup fails or io_uring is not compiled in, so after the first
-  // failure the remaining managers are synchronous ones, and the flag is still
-  // set afterwards iff all managers use io_uring.
-  auto makeManager = [&preferIoUring]() {
-    return makeBatchManager(preferIoUring);
+  bool preferIoUring = true;
+  size_t numberOfIoUringManagers = 0;
+  auto makeManagers = [this, &preferIoUring, &numberOfIoUringManagers]() {
+    auto makeOne = [this, &preferIoUring, &numberOfIoUringManagers]() {
+      auto manager = makeManager_(preferIoUring);
+      numberOfIoUringManagers += preferIoUring ? 1 : 0;
+      return manager;
+    };
+    return ::ranges::views::generate_n(makeOne, numManagers_) |
+           ::ranges::to_vector;
   };
   // All managers start idle, so `idle_` has room for all of them and `release`
-  // never has to allocate.
-  idle_ = ::ranges::to_vector(
-      ::ranges::views::generate_n(makeManager, numManagers));
+  // never has to grow it.
+  idle_ = makeManagers();
+  // A failed io_uring setup clears `preferIoUring`, but the managers created
+  // before the failure keep their rings. Recreate all managers (synchronous
+  // ones now), so that the backend of a lookup does not depend on the manager
+  // that it happens to get.
+  if (numberOfIoUringManagers > 0 && numberOfIoUringManagers < numManagers_) {
+    idle_.clear();
+    idle_ = makeManagers();
+  }
   usesIoUring_ = preferIoUring;
 }
 
@@ -101,8 +112,7 @@ BatchManagerPool& globalBatchManagerPool() {
   // threads that are still inside a batched read when the process exits would
   // otherwise give their manager back to a destroyed pool.
   static BatchManagerPool* pool =
-      new BatchManagerPool{numberOfManagersOfGlobalPool().load(),
-                           /*preferIoUring=*/true};
+      new BatchManagerPool{numberOfManagersOfGlobalPool().load()};
   return *pool;
 }
 
