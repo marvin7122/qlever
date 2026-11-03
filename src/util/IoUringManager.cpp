@@ -221,7 +221,7 @@ void IoUringPolicy::addBatch(int fd, ql::span<const size_t> numberOfBytesToRead,
     return;
   }
   Batch batch;
-  batch.numBytes = numberOfBytesToRead;
+  batch.numberOfBytesToRead = numberOfBytesToRead;
   batch.states.assign(numberOfBytesToRead.size(), ReadState::NotQueued);
   // `run` throws only if a correctness check fails or memory runs out. The
   // bookkeeping can then no longer tell which reads the kernel still holds, so
@@ -237,7 +237,7 @@ void IoUringPolicy::addBatch(int fd, ql::span<const size_t> numberOfBytesToRead,
 //______________________________________________________________________________
 void IoUringPolicy::run(int fd, ql::span<const uint64_t> offsets,
                         ql::span<char*> buffers, Batch& batch) {
-  const size_t numReads = batch.numBytes.size();
+  const size_t numReads = batch.numberOfBytesToRead.size();
   while (true) {
     // Fill the free ring slots with the next reads, unless the batch has
     // failed (then `addBatch` throws anyway). At most `ringSize_` requests are
@@ -246,8 +246,8 @@ void IoUringPolicy::run(int fd, ql::span<const uint64_t> offsets,
     while (!batch.error.has_value() && batch.numQueued < numReads &&
            batch.numSlots() + numNoOpsQueued_ + numNoOpsInKernel_ < ringSize_) {
       const size_t i = batch.numQueued;
-      AD_CORRECTNESS_CHECK(
-          ring_->prepareRead(fd, buffers[i], batch.numBytes[i], offsets[i], i));
+      AD_CORRECTNESS_CHECK(ring_->prepareRead(
+          fd, buffers[i], batch.numberOfBytesToRead[i], offsets[i], i));
       batch.states[i] = ReadState::Queued;
       ++batch.numQueued;
     }
@@ -397,7 +397,7 @@ void IoUringPolicy::reap(Batch& batch, unsigned minComplete) {
       // `result` < 0 is `-errno`. A result smaller than requested (a partial
       // read, or 0 at end of file) means we read fewer bytes than expected,
       // which we treat as an error. Only the first error of a batch is kept.
-      const size_t expectedNumBytes = batch.numBytes[requestId];
+      const size_t expectedNumberOfBytes = batch.numberOfBytesToRead[requestId];
       if (batch.error.has_value()) {
         continue;
       }
@@ -405,10 +405,10 @@ void IoUringPolicy::reap(Batch& batch, unsigned minComplete) {
         batch.error =
             absl::StrCat("I/O error in IoUringPolicy read operation (read ",
                          requestId, " of the batch): ", std::strerror(-result));
-      } else if (static_cast<size_t>(result) != expectedNumBytes) {
+      } else if (static_cast<size_t>(result) != expectedNumberOfBytes) {
         batch.error = absl::StrCat(
             "read fewer bytes than requested in IoUringPolicy (read ",
-            requestId, " of the batch: ", result, " of ", expectedNumBytes,
+            requestId, " of the batch: ", result, " of ", expectedNumberOfBytes,
             ")");
       }
     }

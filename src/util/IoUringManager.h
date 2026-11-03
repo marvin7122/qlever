@@ -284,7 +284,7 @@ class IoUringPolicy {
   // `[numTaken, numQueued)`; the reads before `numTaken` are `InKernel` or
   // `Done`.
   struct Batch {
-    ql::span<const size_t> numBytes;
+    ql::span<const size_t> numberOfBytesToRead;
     std::vector<ReadState> states;
     size_t numQueued = 0;
     size_t numTaken = 0;

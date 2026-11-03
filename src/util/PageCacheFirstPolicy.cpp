@@ -90,16 +90,19 @@ namespace {
 // The elements of the range of reads in `readPageCacheHits`: the position of a
 // read in its batch, its number of bytes, its file offset and its buffer.
 constexpr auto position = [](const auto& read) { return std::get<0>(read); };
-constexpr auto numBytesOf = [](const auto& read) { return std::get<1>(read); };
+constexpr auto numberOfBytesOf = [](const auto& read) {
+  return std::get<1>(read);
+};
 constexpr auto fileOffsetOf = [](const auto& read) {
   return std::get<2>(read);
 };
 constexpr auto toIovec = [](const auto& read) {
-  return ::iovec{std::get<3>(read), numBytesOf(read)};
+  return ::iovec{std::get<3>(read), numberOfBytesOf(read)};
 };
 // True if the file range of `next` starts where that of `previous` ends.
 constexpr auto areAdjacent = [](const auto& previous, const auto& next) {
-  return fileOffsetOf(previous) + numBytesOf(previous) == fileOffsetOf(next);
+  return fileOffsetOf(previous) + numberOfBytesOf(previous) ==
+         fileOffsetOf(next);
 };
 
 //______________________________________________________________________________
