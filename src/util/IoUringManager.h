@@ -14,6 +14,8 @@
 #include <gtest/gtest_prod.h>
 
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <unordered_map>
 
 #include "backports/algorithm.h"
@@ -182,16 +184,40 @@ class IoUringPolicy {
   io_uring ring_{};
   unsigned ringSize_;
 
+  // Whether `ring_` is set up. It is torn down (and set up again by the next
+  // `addBatch`) when `addBatch` fails with SQEs that were prepared but never
+  // handed to the kernel: every later `io_uring_submit` on the same ring would
+  // hand them to the kernel, although their target buffers may have been freed.
+  bool ringIsSetUp_ = false;
+
   // Total number of reads that occupy a ring slot but have not yet been reaped
   // via a completion queue entry (CQE), i.e. that are prepared or submitted but
   // not yet completed. Used to detect whether the ring is full.
   size_t numInFlightReadRequests_ = 0;
 
-  // The same in-flight reads as `numInFlight_`, but broken down per batch:
-  // maps a batch handle to the number of its reads that have not yet completed
-  // (are "in flight"). An entry for a batch (identified by `BatchHandle`) is
-  // removed once `wait()` has observed all of its reads complete.
-  ad_utility::HashMap<BatchHandle, size_t> numInFlightReadRequestsPerBatch_;
+  // The result of a read that failed or read fewer bytes than requested, kept
+  // until the `wait()` of its batch throws it.
+  struct FailedRead {
+    // The CQE's `res`: the number of bytes read, or `-errno`.
+    int result;
+    size_t numberOfRequestedBytes;
+  };
+
+  // The state of a batch whose reads are in flight or whose failure has not yet
+  // been thrown by its `wait()`.
+  struct Batch {
+    // The reads of this batch that have not yet completed (are "in flight").
+    size_t numberOfInFlightReads;
+    // The first read of this batch that failed. Stored in place, so that
+    // recording a failure never allocates (and therefore never throws).
+    std::optional<FailedRead> firstFailedRead = std::nullopt;
+  };
+
+  // The same in-flight reads as `numInFlightReadRequests_`, but broken down per
+  // batch. The entry of a batch is removed once all of its reads have
+  // completed, unless one of them failed: then it is removed by the `wait()`
+  // of the batch, which throws the failure.
+  ad_utility::HashMap<BatchHandle, Batch> batches_;
 
   // Per-read metadata needed when a completion is reaped: which batch the read
   // belongs to, and how many bytes it was supposed to read (so that reading
@@ -212,8 +238,43 @@ class IoUringPolicy {
   // `drainOneCqe`.
   ad_utility::HashMap<uint64_t, InFlightRead> inFlightReadsByRequestId_;
 
-  // Wait for one CQE and update the in-flight bookkeeping.
+  // Set up `ring_`. Throws if `io_uring_queue_init` fails.
+  void setUpRing();
+
+  // Wait for one CQE and update the in-flight bookkeeping. A failed or short
+  // read is recorded in its batch instead of thrown, so that a caller can keep
+  // reaping the other reads of the batch first. An interrupted wait is retried;
+  // throws only if waiting fails otherwise.
   void drainOneCqe();
+
+  // Reap completions until no read of the batch `handle` is in flight.
+  void drainBatch(BatchHandle handle);
+
+  // Hand every prepared SQE to the kernel. `io_uring_submit` may take only some
+  // of them per call, so it is called until all are taken. Throws if a submit
+  // fails.
+  void submitPreparedReads();
+
+  // Clean up when `addBatch` of the batch `handle` throws: the caller frees the
+  // target buffers while unwinding and never gets the handle to `wait()` for.
+  // So reap every read of the batch that reached the kernel, forget the reads
+  // that did not, and tear down the ring if SQEs were prepared but not handed
+  // to the kernel. `numberOfUnpreparedReads` is the number of reads of the
+  // batch for which no SQE was prepared.
+  void abandonBatch(BatchHandle handle, size_t numberOfUnpreparedReads);
+
+ public:
+  // The liburing calls whose failures `IoUringPolicy` must handle: an
+  // interrupted wait, and a submit that fails or takes only some of the
+  // prepared SQEs. Tests replace them to inject such failures, which a real
+  // kernel produces only rarely.
+  struct LiburingCalls {
+    std::function<int(io_uring*)> submit = &io_uring_submit;
+    std::function<int(io_uring*, io_uring_cqe**)> waitCqe = &io_uring_wait_cqe;
+  };
+
+ private:
+  LiburingCalls liburingCalls_;
 
  public:
   IoUringPolicy(const IoUringPolicy&) = delete;
@@ -221,6 +282,7 @@ class IoUringPolicy {
 
   // `ringSize` must be > 0 (power of 2 preferred; liburing rounds up).
   explicit IoUringPolicy(unsigned ringSize);
+  IoUringPolicy(unsigned ringSize, LiburingCalls liburingCalls);
   ~IoUringPolicy();
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
@@ -229,14 +291,17 @@ class IoUringPolicy {
   // reads `numBytesToRead[i]` bytes from file descriptor `fd`, starting at
   // offset `offsets[i]` (from the start of the file), into the buffer starting
   // at `buffers[i]`. The reads are tracked under `handle`, which can be passed
-  // to `wait()` to block until this batch has completed.
+  // to `wait()` to block until this batch has completed. Throws if the reads
+  // cannot be submitted, but only after every read of this batch that reached
+  // the kernel has completed.
   void addBatch(int fd, ql::span<const size_t> numBytesToRead,
                 ql::span<const uint64_t> offsets, ql::span<char*> buffers,
                 BatchHandle handle);
 
   // Block until every read in the batch that is represented by the `handle` has
   // completed. (The `handle` was submitted along the read requests using
-  // `addBatch`.) Throws on any I/O error.
+  // `addBatch`.) Throws if a read of the batch failed or read fewer bytes than
+  // requested, but only after every read of the batch has completed.
   void wait(BatchHandle handle);
 };
 
