@@ -35,6 +35,7 @@
 #include "parser/ParsedQuery.h"
 #include "parser/SparqlParser.h"
 #include "util/AsioHelpers.h"
+#include "util/BatchManagerPool.h"
 #include "util/Exception.h"
 #include "util/MemorySize/MemorySize.h"
 #include "util/ParseException.h"
@@ -76,6 +77,25 @@ Server::Server(
               ? std::move(indexRebuildIdTracker)
               : std::make_shared<ad_utility::IndexRebuildIdTracker>()) {
   AD_LOG_INFO << "Initializing server ..." << std::endl;
+
+  // One batch I/O manager per query thread, created now, so that the io_uring
+  // rings exist (and the fallback to synchronous reads, if io_uring is
+  // unavailable, has been decided) before the first query. The pool is
+  // process-wide and cannot be resized once it exists (see
+  // `BatchManagerPool.h`), which is not an error, but is worth a warning.
+  if (!ad_utility::trySetGlobalBatchManagerPoolConfig(numThreads_,
+                                                      /*preferIoUring=*/true)) {
+    AD_LOG_WARN << "The pool of batch I/O managers already exists with "
+                << ad_utility::globalBatchManagerPool().size()
+                << " managers, so it cannot be sized for the " << numThreads_
+                << " query threads of this server" << std::endl;
+  }
+  const auto& batchManagerPool = ad_utility::globalBatchManagerPool();
+  AD_LOG_INFO << "Batched vocabulary reads use " << batchManagerPool.size()
+              << " I/O managers ("
+              << (batchManagerPool.usesIoUring() ? "io_uring"
+                                                 : "synchronous pread")
+              << ")" << std::endl;
 
   initializeServerMetrics(config.memoryLimit_);
 

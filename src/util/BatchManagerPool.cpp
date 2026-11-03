@@ -1,0 +1,119 @@
+// Copyright 2026, The QLever Authors, in particular:
+//
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
+
+#include "util/BatchManagerPool.h"
+
+#include <algorithm>
+#include <thread>
+#include <utility>
+
+#include "util/Exception.h"
+
+namespace ad_utility {
+
+// _____________________________________________________________________________
+BatchManagerPool::Lease::Lease(BatchManagerPool* pool,
+                               std::unique_ptr<BatchManagerBase> manager)
+    : pool_{pool}, manager_{std::move(manager)} {}
+
+// _____________________________________________________________________________
+BatchManagerPool::Lease::Lease(Lease&& other) noexcept
+    : pool_{std::exchange(other.pool_, nullptr)},
+      manager_{std::move(other.manager_)} {}
+
+// _____________________________________________________________________________
+BatchManagerPool::Lease::~Lease() {
+  if (pool_ != nullptr) {
+    pool_->release(std::move(manager_));
+  }
+}
+
+// _____________________________________________________________________________
+BatchManagerPool::BatchManagerPool(size_t numManagers, bool preferIoUring)
+    : numManagers_{numManagers} {
+  AD_CONTRACT_CHECK(numManagers > 0);
+  idle_.reserve(numManagers);
+  // `makeBatchManager` clears `preferIoUring` when the io_uring setup fails,
+  // so after the first failure the remaining managers are synchronous ones.
+  for (size_t i = 0; i < numManagers; ++i) {
+    idle_.push_back(makeBatchManager(preferIoUring));
+  }
+  usesIoUring_ = preferIoUring;
+}
+
+// _____________________________________________________________________________
+BatchManagerPool::Lease BatchManagerPool::acquire() {
+  std::unique_lock lock{mutex_};
+  managerReturned_.wait(lock, [this]() { return !idle_.empty(); });
+  auto manager = std::move(idle_.back());
+  idle_.pop_back();
+  return Lease{this, std::move(manager)};
+}
+
+// _____________________________________________________________________________
+void BatchManagerPool::release(
+    std::unique_ptr<BatchManagerBase> manager) noexcept {
+  {
+    std::lock_guard lock{mutex_};
+    idle_.push_back(std::move(manager));
+  }
+  managerReturned_.notify_one();
+}
+
+namespace {
+
+struct GlobalPoolConfig {
+  std::mutex mutex_;
+  // The configuration that the pool has or will have.
+  size_t numManagers_ =
+      std::max<size_t>(1, std::thread::hardware_concurrency());
+  bool preferIoUring_ = true;
+  // Set as soon as the pool has been created, after which the configuration
+  // can no longer be changed.
+  bool poolWasCreated_ = false;
+};
+
+GlobalPoolConfig& config() {
+  static GlobalPoolConfig config;
+  return config;
+}
+
+}  // namespace
+
+// _____________________________________________________________________________
+bool trySetGlobalBatchManagerPoolConfig(size_t numManagers,
+                                        bool preferIoUring) {
+  AD_CONTRACT_CHECK(numManagers > 0);
+  auto& conf = config();
+  std::lock_guard lock{conf.mutex_};
+  if (conf.poolWasCreated_) {
+    return conf.numManagers_ == numManagers &&
+           conf.preferIoUring_ == preferIoUring;
+  }
+  conf.numManagers_ = numManagers;
+  conf.preferIoUring_ = preferIoUring;
+  return true;
+}
+
+// _____________________________________________________________________________
+BatchManagerPool& globalBatchManagerPool() {
+  // NOTE: The initialization of a function-local static is thread-safe, so the
+  // lambda (and with it the marking of the configuration as final) runs exactly
+  // once.
+  static std::unique_ptr<BatchManagerPool> pool = []() {
+    auto& conf = config();
+    std::lock_guard lock{conf.mutex_};
+    conf.poolWasCreated_ = true;
+    return std::make_unique<BatchManagerPool>(conf.numManagers_,
+                                              conf.preferIoUring_);
+  }();
+  return *pool;
+}
+
+}  // namespace ad_utility
