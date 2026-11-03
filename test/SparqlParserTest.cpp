@@ -1288,7 +1288,7 @@ TEST(ParserTest, Group) {
 
 // _____________________________________________________________________________
 TEST(ParserTest, LanguageFilterPostProcessingUnrepresentableTags) {
-  for (const std::string& filter :
+  for (const std::string filter :
        {"(LANG(?y) = \"@en\")", "(LANG(?y) IN (\"en\", \"@en\"))",
         "(LANG(?y) = \"en\" || LANG(?y) = \"@en\")",
         "(LANG(?y) IN (\"en\", \"\"))"}) {
