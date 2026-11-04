@@ -290,6 +290,7 @@ TEST_F(ConstructBatchEvaluatorTest, localVocabIdBypassesIdCache) {
   EXPECT_TRUE(idCache.tryGet(idO_).has_value());
 }
 
+// _____________________________________________________________________________
 // The words of the vocabulary are not copied: their terms view the words in
 // the batch-lookup result, which they keep alive. So a term in `idCache` stays
 // readable after the batch that looked it up is gone, also when later batches
@@ -325,7 +326,8 @@ TEST_F(ConstructBatchEvaluatorTest, borrowedVocabTermsOutliveTheirBatch) {
                 ElementsAre(evalTerm("<o>"), evalTerm("<s>"), evalTerm("<q>")));
 
     for (const std::string word : {"<s>", "\"hello\"", "<o>", "<q>"}) {
-      const auto cached = idCache.tryGet(getId(word));
+      const Id id = getId(word);
+      const auto cached = idCache.tryGet(id);
       ASSERT_TRUE(cached.has_value()) << word;
       EXPECT_THAT(cached.value(), evalTerm(word));
       EXPECT_TRUE(cached.value().value()->isBorrowed()) << word;
@@ -333,6 +335,7 @@ TEST_F(ConstructBatchEvaluatorTest, borrowedVocabTermsOutliveTheirBatch) {
   }
 }
 
+// _____________________________________________________________________________
 // A term of a `LocalVocab` word owns its bytes, so it stays readable after the
 // `LocalVocab` (that is, the result block that it belongs to) is gone.
 TEST_F(ConstructBatchEvaluatorTest, localVocabTermOutlivesItsLocalVocab) {
@@ -358,6 +361,7 @@ TEST_F(ConstructBatchEvaluatorTest, localVocabTermOutlivesItsLocalVocab) {
   EXPECT_TRUE(column.at(1).value()->isBorrowed());
 }
 
+// _____________________________________________________________________________
 // A blank-node IRI of the vocabulary is serialized as a different string
 // (`_:b0`) than the word, so its term owns that string instead of viewing the
 // word.
