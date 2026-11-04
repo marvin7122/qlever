@@ -165,28 +165,36 @@ TEST(BitVectorWithRank, Memory) {
 }
 
 // _____________________________________________________________________________
-TEST(BitVectorWithRank, RandomSetsMatchBinarySearch) {
+// A random set from a universe of 50 blocks and a few values, in which each
+// value is contained with the probability given by the parameter.
+class BitVectorWithRankRandomSets : public ::testing::TestWithParam<double> {};
+
+// _____________________________________________________________________________
+TEST_P(BitVectorWithRankRandomSets, MatchBinarySearch) {
+  const double fractionContained = GetParam();
   std::mt19937_64 randomEngine{42};
-  // Sparse (like the in-RAM words of `VocabularyInternalExternal`), medium,
-  // and dense sets.
-  for (const double fractionContained : {0.001, 0.05, 0.5, 0.99}) {
-    std::bernoulli_distribution isContained{fractionContained};
-    const uint64_t universeSize = 50 * numberOfBitsPerBlock + 17;
-    const auto values = valuesWhere(
-        universeSize, [&](uint64_t) { return isContained(randomEngine); });
-    BitVectorWithRank set{values, universeSize};
-    for (const uint64_t element : ad_utility::integerRange(universeSize)) {
-      const auto it = ql::ranges::lower_bound(values, element);
-      const std::optional<uint64_t> expected =
-          it != values.end() && *it == element
-              ? std::optional<uint64_t>{static_cast<uint64_t>(it -
-                                                              values.begin())}
-              : std::nullopt;
-      ASSERT_EQ(set.rankIfContained(element), expected)
-          << element << ' ' << fractionContained;
-    }
+  std::bernoulli_distribution isContained{fractionContained};
+  const uint64_t universeSize = 50 * numberOfBitsPerBlock + 17;
+  const auto values = valuesWhere(
+      universeSize, [&](uint64_t) { return isContained(randomEngine); });
+  BitVectorWithRank set{values, universeSize};
+  for (const uint64_t element : ad_utility::integerRange(universeSize)) {
+    const auto it = ql::ranges::lower_bound(values, element);
+    const std::optional<uint64_t> expected =
+        it != values.end() && *it == element
+            ? std::optional<uint64_t>{static_cast<uint64_t>(it -
+                                                            values.begin())}
+            : std::nullopt;
+    // `ASSERT`, so that a mismatch stops at the first value instead of
+    // reporting thousands.
+    ASSERT_EQ(set.rankIfContained(element), expected) << element;
   }
 }
+
+// Sparse (like the in-RAM words of `VocabularyInternalExternal`), medium, and
+// dense sets.
+INSTANTIATE_TEST_SUITE_P(SparseToDense, BitVectorWithRankRandomSets,
+                         ::testing::Values(0.001, 0.05, 0.5, 0.99));
 
 // _____________________________________________________________________________
 TEST(BitVectorWithRank, Move) {
