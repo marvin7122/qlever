@@ -8,7 +8,6 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 #include <gtest/gtest.h>
@@ -344,6 +343,7 @@ TYPED_TEST(IoUringManagerTest, BatchLargerThanRing) {
               ::testing::ElementsAreArray(scenario.expected()));
 }
 
+// _____________________________________________________________________________
 // A batch much larger than the ring completes with every read in its own
 // buffer. For `IoUringPolicy`: ring 4 is smaller than a `REAP_WAVE`, so the
 // wave for a full ring is clamped to the requests in the kernel; ring 8 is
@@ -368,6 +368,7 @@ TYPED_TEST(IoUringManagerTest, BatchMuchLargerThanRing) {
   }
 }
 
+// _____________________________________________________________________________
 // Waiting on the last of many small batches (1, 3 or 5 reads each) can reap
 // the CQEs of the other batches in the same waves. The remaining waits may then
 // find their batches already complete and must still see the correct bytes.
@@ -554,6 +555,7 @@ TYPED_TEST(IoUringManagerTest, zeroLengthReadsWithNonZeroLengthReads) {
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("C", "", "DDD"));
 }
 
+// _____________________________________________________________________________
 // Dropping a `SyncIoPolicy`-backed manager with reads submitted but never
 // waited: the synchronous policy performs all reads eagerly in `submitTo`, so
 // by the time the manager is destroyed nothing is outstanding, the destructor
@@ -722,8 +724,9 @@ struct RingScript {
   size_t numberOfWaitsToInterrupt = 0;
   // If nonzero, every wait fails with this `errno`.
   int brokenWaitErrno = 0;
-  // Called before every wait that reaches the real ring, e.g. to write the
-  // bytes that the reads of a pipe wait for.
+  // Called once, before the next wait that reaches the real ring, e.g. to
+  // write the bytes that the reads of a pipe wait for. It may install the next
+  // callback.
   std::function<void()> beforeRealWait;
 
   // The requests (reads and no-ops) that the kernel took, and the completions
@@ -784,7 +787,8 @@ class ScriptedRing final : public ad_utility::IoUringInterface {
       return -ETIME;
     }
     if (script_.beforeRealWait) {
-      script_.beforeRealWait();
+      // Taken out before it runs, so that it can install the next one.
+      std::exchange(script_.beforeRealWait, nullptr)();
     }
     return ring_->waitForCompletions(minComplete);
   }
@@ -827,6 +831,25 @@ class IoUringPolicyFailureTest : public ::testing::Test {
     return ad_utility::IoUringPolicy{
         std::make_unique<ScriptedRing>(ringSize, script)};
   }
+};
+
+// A pipe that stays empty until the test writes into it. Both ends are closed
+// when it is destroyed.
+class EmptyPipe {
+ public:
+  EmptyPipe() { AD_CORRECTNESS_CHECK(pipe(fds_.data()) == 0); }
+  ~EmptyPipe() {
+    close(fds_[0]);
+    close(fds_[1]);
+  }
+  EmptyPipe(const EmptyPipe&) = delete;
+  EmptyPipe& operator=(const EmptyPipe&) = delete;
+
+  int readEnd() const noexcept { return fds_[0]; }
+  int writeEnd() const noexcept { return fds_[1]; }
+
+ private:
+  std::array<int, 2> fds_{};
 };
 
 // A file of `numberOfChunks` chunks of 4 bytes, chunk `i` filled with a
@@ -1119,21 +1142,16 @@ TEST_F(IoUringPolicyFailureTest, brokenWaitTerminates) {
   // completion ready and has to wait. (A ready completion is reaped without a
   // wait, and the child of the death test would consume it from the
   // completion queue, which it shares with this process.)
-  std::array<int, 2> pipeFds{};
-  ASSERT_EQ(pipe(pipeFds.data()), 0);
-  absl::Cleanup closePipe{[&pipeFds] {
-    close(pipeFds[0]);
-    close(pipeFds[1]);
-  }};
+  EmptyPipe pipe;
   ReadBatchForTesting batch;
   batch.add({{0, 4}});
   RingScript script;
   auto policy = makePolicy(64, script);
-  batch.addTo(policy, pipeFds[0], 0);
+  batch.addTo(policy, pipe.readEnd(), 0);
   script.brokenWaitErrno = EIO;
   EXPECT_DEATH_IF_SUPPORTED(policy.wait(0), "io_uring_wait_cqes failed");
   script.brokenWaitErrno = 0;
-  ASSERT_EQ(write(pipeFds[1], "AAAA", 4), 4);
+  ASSERT_EQ(write(pipe.writeEnd(), "AAAA", 4), 4);
   policy.wait(0);
   EXPECT_THAT(batch.result(), ElementsAre("AAAA"));
 }
@@ -1145,12 +1163,7 @@ TEST_F(IoUringPolicyFailureTest, interruptedWaitsAreRetried) {
   // The reads come from a pipe that is filled only right before a wait reaches
   // the real ring, so that no completion is ready before and the policy has to
   // wait. (A ready completion is reaped without a wait.)
-  std::array<int, 2> pipeFds{};
-  ASSERT_EQ(pipe(pipeFds.data()), 0);
-  absl::Cleanup closePipe{[&pipeFds] {
-    close(pipeFds[0]);
-    close(pipeFds[1]);
-  }};
+  EmptyPipe pipe;
   RingScript script;
   ReadBatchForTesting waited;
   waited.add({{0, 4}, {0, 4}});
@@ -1158,22 +1171,20 @@ TEST_F(IoUringPolicyFailureTest, interruptedWaitsAreRetried) {
   unwaited.add({{0, 4}, {0, 4}, {0, 4}});
   {
     auto policy = makePolicy(64, script);
-    waited.addTo(policy, pipeFds[0], 0);
+    waited.addTo(policy, pipe.readEnd(), 0);
     script.numberOfWaitsToInterrupt = 2;
-    script.beforeRealWait = [&pipeFds, &script] {
-      ASSERT_EQ(write(pipeFds[1], "AAAAAAAA", 8), 8);
-      script.beforeRealWait = nullptr;
+    script.beforeRealWait = [&pipe] {
+      ASSERT_EQ(write(pipe.writeEnd(), "AAAAAAAA", 8), 8);
     };
     policy.wait(0);
     EXPECT_THAT(waited.result(), ElementsAre("AAAA", "AAAA"));
 
-    unwaited.addTo(policy, pipeFds[0], 1);
+    unwaited.addTo(policy, pipe.readEnd(), 1);
     // Set only after `addTo`, which does not wait here, so that the interrupt
     // hits the wait of the destructor.
     script.numberOfWaitsToInterrupt = 1;
-    script.beforeRealWait = [&pipeFds, &script] {
-      ASSERT_EQ(write(pipeFds[1], "BBBBBBBBBBBB", 12), 12);
-      script.beforeRealWait = nullptr;
+    script.beforeRealWait = [&pipe] {
+      ASSERT_EQ(write(pipe.writeEnd(), "BBBBBBBBBBBB", 12), 12);
     };
   }
   // The destructor reaped all three reads of the unwaited batch.
@@ -1393,6 +1404,7 @@ TEST(IoUringPolicyOnFakeRing, randomFaults) {
   EXPECT_GT(totals.cancelledReads, 0U);
 }
 
+// _____________________________________________________________________________
 // When the ring is full and no completion is ready, `addBatch` waits for a
 // wave of `REAP_WAVE` completions, not for one, and so does `wait()`: 64 reads
 // through a ring of 16 take (64 - 16) / `REAP_WAVE` waits in `addBatch` and
@@ -1403,9 +1415,8 @@ TEST(IoUringPolicyWaves, fullRingIsRefilledInWaves) {
   auto [file, batch] = chunkedFileAndBatch(64);
   FakeIoUring::Faults faults;
   faults.completeOnSubmit = false;
-  auto fakeOwner = std::make_unique<FakeIoUring>(file, 16, faults, 0);
-  const FakeIoUring& fake = *fakeOwner;
-  ad_utility::IoUringPolicy policy{std::move(fakeOwner)};
+  auto [fake, policy] =
+      makePolicyOnFakeRing(std::make_unique<FakeIoUring>(file, 16, faults, 0));
   batch.addTo(policy, -1, 0);
   EXPECT_EQ(fake.callCounts().waits, (64 - 16) / REAP_WAVE);
   policy.wait(0);
@@ -1414,6 +1425,7 @@ TEST(IoUringPolicyWaves, fullRingIsRefilledInWaves) {
   EXPECT_THAT(batch.result(), ElementsAreArray(chunksOf(file)));
 }
 
+// _____________________________________________________________________________
 // Completions that are ready are reaped without waiting, all of them, in
 // chunks of `REAP_CHUNK`: 200 ready completions take no wait and
 // ceil(200 / `REAP_CHUNK`) chunks.
@@ -1422,9 +1434,8 @@ TEST(IoUringPolicyWaves, readyCompletionsAreReapedInChunksWithoutWaiting) {
   auto [file, batch] = chunkedFileAndBatch(200);
   FakeIoUring::Faults faults;
   faults.completeAllOnSubmit = true;
-  auto fakeOwner = std::make_unique<FakeIoUring>(file, 256, faults, 0);
-  const FakeIoUring& fake = *fakeOwner;
-  ad_utility::IoUringPolicy policy{std::move(fakeOwner)};
+  auto [fake, policy] =
+      makePolicyOnFakeRing(std::make_unique<FakeIoUring>(file, 256, faults, 0));
   batch.addTo(policy, -1, 0);
   policy.wait(0);
   EXPECT_EQ(fake.callCounts().waits, 0U);
@@ -1432,6 +1443,7 @@ TEST(IoUringPolicyWaves, readyCompletionsAreReapedInChunksWithoutWaiting) {
   EXPECT_THAT(batch.result(), ElementsAreArray(chunksOf(file)));
 }
 
+// _____________________________________________________________________________
 // A signal can end the wait for a wave early: with at least one completion
 // ready, `io_uring_wait_cqes` can return 0 although fewer completions than the
 // wave are ready. The policy reaps what is ready and waits again: here every
@@ -1442,9 +1454,8 @@ TEST(IoUringPolicyWaves, waitThatReturnsEarlyIsRepeated) {
   FakeIoUring::Faults faults;
   faults.completeOnSubmit = false;
   faults.waitReturnsEarly = 1.0;
-  auto fakeOwner = std::make_unique<FakeIoUring>(file, 64, faults, 0);
-  const FakeIoUring& fake = *fakeOwner;
-  ad_utility::IoUringPolicy policy{std::move(fakeOwner)};
+  auto [fake, policy] =
+      makePolicyOnFakeRing(std::make_unique<FakeIoUring>(file, 64, faults, 0));
   batch.addTo(policy, -1, 0);
   policy.wait(0);
   EXPECT_EQ(fake.callCounts().waits, 16U);
@@ -1452,6 +1463,7 @@ TEST(IoUringPolicyWaves, waitThatReturnsEarlyIsRepeated) {
   EXPECT_THAT(batch.result(), ElementsAreArray(chunksOf(file)));
 }
 
+// _____________________________________________________________________________
 // `wait()` waits for at most the remaining reads of its own batch, not for a
 // wave of the reads of other batches: next to a batch of 15 reads, the `wait()`
 // of a batch of 1 read waits for 1 completion at a time.
@@ -1461,9 +1473,8 @@ TEST(IoUringPolicyWaves, waitWaitsOnlyForItsOwnBatch) {
   auto [file2, large] = chunkedFileAndBatch(15);
   FakeIoUring::Faults faults;
   faults.completeOnSubmit = false;
-  auto fakeOwner = std::make_unique<FakeIoUring>(file2, 64, faults, 0);
-  const FakeIoUring& fake = *fakeOwner;
-  ad_utility::IoUringPolicy policy{std::move(fakeOwner)};
+  auto [fake, policy] =
+      makePolicyOnFakeRing(std::make_unique<FakeIoUring>(file2, 64, faults, 0));
   single.addTo(policy, -1, 0);
   large.addTo(policy, -1, 1);
   policy.wait(0);

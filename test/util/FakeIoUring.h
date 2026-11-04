@@ -234,6 +234,8 @@ class FakeIoUring final : public IoUringInterface {
         happens(faults_.waitReturnsEarly)) {
       ++faultCounts_.earlyWaits;
       if (completions_.empty()) {
+        // The check above guarantees a request in the kernel here.
+        AD_CORRECTNESS_CHECK(!kernel_.empty());
         completeRandomRequests(1);
       }
       return 0;
