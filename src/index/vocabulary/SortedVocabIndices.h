@@ -84,15 +84,15 @@ class SortedVocabIndices : public ad_utility::NoCopy {
   // Return the indices, no matter whether they are owned or only viewed. For
   // viewed indices, the returned view is valid as long as the memory they were
   // viewed from (see `OwnedOrViewedVector`).
-  View view() const { return storage_.view(); }
+  View view() const noexcept { return storage_.view(); }
 
   //____________________________________________________________________________
   // Return the underlying storage, for serialization.
-  const Storage& storage() const { return storage_; }
+  const Storage& storage() const noexcept { return storage_; }
 
   //____________________________________________________________________________
   // Return one more than the largest index, or `0` if there are no indices.
-  uint64_t endIndex() const {
+  uint64_t endIndex() const noexcept {
     const auto indices = view();
     return indices.empty() ? 0 : indices.back() + 1;
   }
@@ -119,7 +119,7 @@ class SortedVocabIndices : public ad_utility::NoCopy {
 
   //____________________________________________________________________________
   // Return the number of bytes of the rank directory, `0` if there is none.
-  size_t numberOfBytesOfRankDirectory() const {
+  size_t numberOfBytesOfRankDirectory() const noexcept {
     return rankDirectory_.has_value() ? rankDirectory_->numberOfBytes() : 0;
   }
 
@@ -127,7 +127,7 @@ class SortedVocabIndices : public ad_utility::NoCopy {
   //____________________________________________________________________________
   // Return whether a rank directory over `[0, endIndex())` takes fewer bytes
   // than the indices (see `PositionLookup::RankDirectoryIfSmaller`).
-  bool isRankDirectorySmaller() const {
+  bool isRankDirectorySmaller() const noexcept {
     const auto indices = view();
     return !indices.empty() &&
            indices.back() < std::numeric_limits<uint64_t>::max() &&

@@ -115,21 +115,24 @@ class BitVectorWithRank : public ad_utility::NoCopy {
   }
 
   // One more than the largest element that the set can contain.
-  uint64_t universeSize() const { return universeSize_; }
+  uint64_t universeSize() const noexcept { return universeSize_; }
 
   // The number of bytes of the bits and the stored ranks.
-  size_t numberOfBytes() const { return blocks_.size() * sizeof(Block); }
+  size_t numberOfBytes() const noexcept {
+    return blocks_.size() * sizeof(Block);
+  }
 
   // The `numberOfBytes()` of a set over a universe of size `universeSize`,
   // without building it.
-  static constexpr uint64_t numberOfBytesForUniverse(uint64_t universeSize) {
+  static constexpr uint64_t numberOfBytesForUniverse(
+      uint64_t universeSize) noexcept {
     return numberOfBlocks(universeSize) * sizeof(Block);
   }
 
  private:
   // `ceil(universeSize / numberOfBitsPerBlock)`, written without an addition
   // that could overflow for a universe close to `UINT64_MAX`.
-  static constexpr uint64_t numberOfBlocks(uint64_t universeSize) {
+  static constexpr uint64_t numberOfBlocks(uint64_t universeSize) noexcept {
     return universeSize / numberOfBitsPerBlock +
            (universeSize % numberOfBitsPerBlock != 0);
   }

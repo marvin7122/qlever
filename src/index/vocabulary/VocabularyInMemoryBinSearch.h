@@ -103,7 +103,7 @@ class VocabularyInMemoryBinSearch
 
   // Return the number of bytes of the rank directory, `0` if there is none
   // (see `open`).
-  size_t numberOfBytesOfRankDirectory() const {
+  size_t numberOfBytesOfRankDirectory() const noexcept {
     return indices_.numberOfBytesOfRankDirectory();
   }
 
@@ -154,7 +154,7 @@ class VocabularyInMemoryBinSearch
   // Return the vocabulary index one past the largest index that is contained
   // in this vocabulary, or `0` if the vocabulary is empty. Because of the
   // holes, this is in general much larger than `size()`.
-  uint64_t endIndex() const { return indices_.endIndex(); }
+  uint64_t endIndex() const noexcept { return indices_.endIndex(); }
 
   // Return the range of vocabulary indices at which `word` is stored, or the
   // empty range at the index at which it would be stored if it is not
