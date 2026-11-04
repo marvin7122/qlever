@@ -20,14 +20,13 @@
 #include "util/http/ContentEncodingHelper.h"
 
 namespace ad_utility::streams {
-using ad_utility::content_encoding::CompressionMethod;
 
 // Like `compressStream` (see `CompressorStream.h`), the concatenation of the
 // yielded strings is the concatenation of the strings of the `range`,
 // compressed with the `compressionMethod` (or unchanged for
-// `CompressionMethod::NONE`). The difference is that the compression runs on
-// the `executor`, for up to `maxNumberOfBlocksInFlight` blocks at the same
-// time, in the way of `pigz`:
+// `content_encoding::CompressionMethod::NONE`). The difference is that the
+// compression runs on the `executor`, for up to `maxNumberOfBlocksInFlight`
+// blocks at the same time, in the way of `pigz`:
 //
 // 1. The input is cut into blocks of at least
 //    `MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK` bytes (except the last one).
@@ -49,7 +48,8 @@ using ad_utility::content_encoding::CompressionMethod;
 // has to outlive the generator. The `range` itself is read on the thread that
 // consumes the generator. `maxNumberOfBlocksInFlight` has to be at least 1.
 cppcoro::generator<std::string> compressStreamInParallel(
-    cppcoro::generator<std::string> range, CompressionMethod compressionMethod,
+    cppcoro::generator<std::string> range,
+    content_encoding::CompressionMethod compressionMethod,
     ql::any_io_executor executor, size_t maxNumberOfBlocksInFlight);
 
 // The minimal size of a block (except the last one) that is compressed on its

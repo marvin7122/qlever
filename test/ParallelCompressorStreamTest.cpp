@@ -25,12 +25,14 @@
 #include "util/views/ChunkedIotaView.h"
 
 namespace {
-using ad_utility::content_encoding::CompressionMethod;
-using ad_utility::streams::compressStreamInParallel;
-using ad_utility::streams::MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK;
+// The parts of `compressStreamInParallel` that are exposed for testing.
 namespace pc = ad_utility::streams::detail::parallelCompression;
-using pc::NUMBER_OF_BYTES_IN_DICTIONARY;
-constexpr size_t minBlock = MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK;
+// The minimal size of a block that `compressStreamInParallel` compresses on its
+// own (except for the last block). The tests choose the sizes of their inputs
+// and pieces relative to it, so that an input is one block, several blocks, or
+// blocks that end inside a piece.
+constexpr size_t minBlock =
+    ad_utility::streams::MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK;
 
 // Yield the `data` in pieces of `pieceSize` bytes (the last one may be
 // shorter). Nothing is yielded for empty `data`.
@@ -97,10 +99,13 @@ std::string concatenate(cppcoro::generator<std::string> generator) {
 // gzip member (`windowBits` 15 + 16) or one zlib stream (`windowBits` 15) is
 // accepted, and the stream has to end exactly at the end of the `compressed`
 // bytes. Return the decompressed bytes.
-std::string inflateStrictly(std::string_view compressed,
-                            CompressionMethod method) {
+std::string inflateStrictly(
+    std::string_view compressed,
+    ad_utility::content_encoding::CompressionMethod method) {
   z_stream stream{};
-  int windowBits = method == CompressionMethod::GZIP ? 15 + 16 : 15;
+  int windowBits =
+      method == ad_utility::content_encoding::CompressionMethod::GZIP ? 15 + 16
+                                                                      : 15;
   EXPECT_EQ(inflateInit2(&stream, windowBits), Z_OK);
   stream.next_in =
       reinterpret_cast<Bytef*>(const_cast<char*>(compressed.data()));
@@ -123,13 +128,14 @@ std::string inflateStrictly(std::string_view compressed,
 }
 
 // Decompress with Boost.Iostreams, as `CompressorStreamTest` does.
-std::string decompressWithBoost(std::string_view compressed,
-                                CompressionMethod method) {
+std::string decompressWithBoost(
+    std::string_view compressed,
+    ad_utility::content_encoding::CompressionMethod method) {
   namespace io = boost::iostreams;
   std::string result;
   {
     io::filtering_ostream filterStream;
-    if (method == CompressionMethod::GZIP) {
+    if (method == ad_utility::content_encoding::CompressionMethod::GZIP) {
       filterStream.push(io::gzip_decompressor());
     } else {
       filterStream.push(io::zlib_decompressor());
@@ -142,7 +148,8 @@ std::string decompressWithBoost(std::string_view compressed,
 }
 
 class ParallelCompressorStream
-    : public ::testing::TestWithParam<CompressionMethod> {
+    : public ::testing::TestWithParam<
+          ad_utility::content_encoding::CompressionMethod> {
  protected:
   boost::asio::thread_pool pool_{4};
 
@@ -151,7 +158,7 @@ class ParallelCompressorStream
   std::string compressAndCheck(cppcoro::generator<std::string> input,
                                const std::string& expected,
                                size_t maxNumberOfBlocksInFlight = 8) {
-    auto compressed = concatenate(compressStreamInParallel(
+    auto compressed = concatenate(ad_utility::streams::compressStreamInParallel(
         std::move(input), GetParam(), pool_.get_executor(),
         maxNumberOfBlocksInFlight));
     EXPECT_EQ(inflateStrictly(compressed, GetParam()), expected);
@@ -175,9 +182,9 @@ TEST_P(ParallelCompressorStream, oneByte) {
 // _____________________________________________________________________________
 TEST_P(ParallelCompressorStream, sizesAroundTheBlockSize) {
   for (size_t size :
-       {NUMBER_OF_BYTES_IN_DICTIONARY - 1, NUMBER_OF_BYTES_IN_DICTIONARY,
-        minBlock - 1, minBlock, minBlock + 1, 2 * minBlock - 1, 2 * minBlock,
-        2 * minBlock + 1, 5 * minBlock + 17}) {
+       {pc::NUMBER_OF_BYTES_IN_DICTIONARY - 1,
+        pc::NUMBER_OF_BYTES_IN_DICTIONARY, minBlock - 1, minBlock, minBlock + 1,
+        2 * minBlock - 1, 2 * minBlock, 2 * minBlock + 1, 5 * minBlock + 17}) {
     auto text = csvLikeText(size);
     // One piece, pieces of exactly one block, pieces that do not divide the
     // block size, and many small pieces.
@@ -214,7 +221,7 @@ TEST_P(ParallelCompressorStream, large) {
 // one full copy. (The string is shorter than the window, because deflate finds
 // no match at a distance of almost 32 KiB.)
 TEST_P(ParallelCompressorStream, blocksUseTheDictionary) {
-  auto unit = randomBytes(NUMBER_OF_BYTES_IN_DICTIONARY / 2);
+  auto unit = randomBytes(pc::NUMBER_OF_BYTES_IN_DICTIONARY / 2);
   std::string text;
   while (text.size() < 10 * minBlock) {
     text += unit;
@@ -222,8 +229,10 @@ TEST_P(ParallelCompressorStream, blocksUseTheDictionary) {
   auto compressed = compressAndCheck(inPieces(text, minBlock), text);
   // The same blocks, each compressed without a dictionary.
   size_t numberOfBytesWithoutDictionary = 0;
-  auto format = GetParam() == CompressionMethod::GZIP ? pc::StreamFormat::Gzip
-                                                      : pc::StreamFormat::Zlib;
+  auto format =
+      GetParam() == ad_utility::content_encoding::CompressionMethod::GZIP
+          ? pc::StreamFormat::Gzip
+          : pc::StreamFormat::Zlib;
   for (auto [begin, end] :
        ad_utility::chunkedIotaView(size_t{0}, text.size(), minBlock)) {
     numberOfBytesWithoutDictionary +=
@@ -238,8 +247,10 @@ TEST_P(ParallelCompressorStream, blocksUseTheDictionary) {
 // _____________________________________________________________________________
 TEST_P(ParallelCompressorStream, noneIsTheIdentity) {
   auto text = csvLikeText(3 * minBlock);
-  auto output = concatenate(compressStreamInParallel(
-      inPieces(text, 1000), CompressionMethod::NONE, pool_.get_executor(), 2));
+  auto output = concatenate(ad_utility::streams::compressStreamInParallel(
+      inPieces(text, 1000),
+      ad_utility::content_encoding::CompressionMethod::NONE,
+      pool_.get_executor(), 2));
   EXPECT_EQ(output, text);
 }
 
@@ -253,8 +264,8 @@ TEST_P(ParallelCompressorStream, exceptionInTheInputIsPropagated) {
     }
     throw std::runtime_error{"Operation was manually cancelled."};
   };
-  auto generator =
-      compressStreamInParallel(throwing(), GetParam(), pool_.get_executor(), 4);
+  auto generator = ad_utility::streams::compressStreamInParallel(
+      throwing(), GetParam(), pool_.get_executor(), 4);
   EXPECT_THROW(concatenate(std::move(generator)), std::runtime_error);
 }
 
@@ -273,7 +284,7 @@ cppcoro::generator<std::string> endlessInput(size_t& numberOfPiecesRead) {
 TEST_P(ParallelCompressorStream, earlyDestruction) {
   size_t numberOfPiecesRead = 0;
   {
-    auto generator = compressStreamInParallel(
+    auto generator = ad_utility::streams::compressStreamInParallel(
         endlessInput(numberOfPiecesRead), GetParam(), pool_.get_executor(), 4);
     // The header, and then two blocks.
     auto it = generator.begin();
@@ -289,9 +300,10 @@ TEST_P(ParallelCompressorStream, earlyDestruction) {
 }
 
 // _____________________________________________________________________________
-INSTANTIATE_TEST_SUITE_P(DeflateAndGzip, ParallelCompressorStream,
-                         ::testing::Values(CompressionMethod::DEFLATE,
-                                           CompressionMethod::GZIP));
+INSTANTIATE_TEST_SUITE_P(
+    DeflateAndGzip, ParallelCompressorStream,
+    ::testing::Values(ad_utility::content_encoding::CompressionMethod::DEFLATE,
+                      ad_utility::content_encoding::CompressionMethod::GZIP));
 
 // _____________________________________________________________________________
 // The stream around the blocks: the header and trailer of an empty stream are

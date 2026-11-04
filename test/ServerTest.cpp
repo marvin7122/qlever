@@ -87,7 +87,10 @@ TEST(ServerTest, chooseBestFittingMediaType) {
 
 // _____________________________________________________________________________
 namespace {
-// Yield the `text` in pieces of 1000 bytes.
+// Helpers of the test `compressBodyForQuery` below, which compresses one body
+// in several ways and compares the compressed bytes.
+
+// Yield the `text` in pieces of 1000 bytes, as a response body comes in pieces.
 cppcoro::generator<std::string> inPiecesOf1000(std::string text) {
   for (auto [begin, end] :
        ad_utility::chunkedIotaView(size_t{0}, text.size(), size_t{1000})) {
@@ -95,6 +98,7 @@ cppcoro::generator<std::string> inPiecesOf1000(std::string text) {
   }
 }
 
+// Return all the pieces of the `generator` (a compressed body) as one string.
 std::string concatenate(cppcoro::generator<std::string> generator) {
   std::string result;
   for (const std::string& piece : generator) {

@@ -206,19 +206,21 @@ cppcoro::generator<UncompressedBlock> cutIntoBlocks(
 
 // _____________________________________________________________________________
 cppcoro::generator<std::string> compressStreamInParallel(
-    cppcoro::generator<std::string> range, CompressionMethod compressionMethod,
+    cppcoro::generator<std::string> range,
+    content_encoding::CompressionMethod compressionMethod,
     ql::any_io_executor executor, size_t maxNumberOfBlocksInFlight) {
   using namespace detail::parallelCompression;
   AD_CONTRACT_CHECK(maxNumberOfBlocksInFlight >= 1);
-  if (compressionMethod == CompressionMethod::NONE) {
+  if (compressionMethod == content_encoding::CompressionMethod::NONE) {
     for (std::string& piece : range) {
       co_yield piece;
     }
     co_return;
   }
-  const StreamFormat format = compressionMethod == CompressionMethod::GZIP
-                                  ? StreamFormat::Gzip
-                                  : StreamFormat::Zlib;
+  const StreamFormat format =
+      compressionMethod == content_encoding::CompressionMethod::GZIP
+          ? StreamFormat::Gzip
+          : StreamFormat::Zlib;
   StreamFrame frame{format};
   co_yield frame.header();
   // When this generator is destroyed early (for example, after a client
