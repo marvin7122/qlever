@@ -5,6 +5,7 @@
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -17,8 +18,9 @@
 #include "util/Generator.h"
 #include "util/IoUringManager.h"
 #include "util/Iterators.h"
+#include "util/NoCopyNoMove.h"
+#include "util/RecyclingPool.h"
 #include "util/Serializer/Serializer.h"
-#include "util/ThreadSafeQueue.h"
 #include "util/UninitializedAllocator.h"
 
 // On-disk vocabulary of strings. Each entry is a pair of <ID, String>. The IDs
@@ -46,10 +48,22 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // never reused.
   uint64_t id_ = 0;
 
-  // Pool of persistent `BatchIoManager`s for `lookupBatch`.
-  mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
-      std::unique_ptr<ad_utility::BatchManagerBase>>>
-      ioManagers_;
+  // The batch I/O managers (an io_uring ring each, or the synchronous
+  // fallback) of `lookupBatch`. A lookup takes an idle manager, or creates one
+  // if there is none, and gives it back afterwards. So a lookup never waits for
+  // a manager, and the pool holds at most as many managers as lookups of this
+  // vocabulary ran at the same time. It never shrinks.
+  struct BatchManagers : ad_utility::NoCopyNoMove {
+    ad_utility::RecyclingPool<std::unique_ptr<ad_utility::BatchManagerBase>>
+        pool_;
+    // Cleared when the io_uring setup of a manager fails (see
+    // `makeBatchManager`), so that the later managers read with `pread`
+    // without another failing setup and warning.
+    std::atomic<bool> preferIoUring_{true};
+  };
+  // Behind a pointer, because `BatchManagers` is not movable (it holds a mutex
+  // and an atomic), but `VocabularyOnDisk` is.
+  std::unique_ptr<BatchManagers> batchManagers_;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
@@ -133,6 +147,13 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
   // Get the number of words in the vocabulary.
   size_t size() const { return size_; }
+
+  // Return the number of idle managers of `lookupBatch`. Only for testing.
+  size_t numberOfIdleBatchManagersForTesting() const {
+    AD_CONTRACT_CHECK(batchManagers_ != nullptr,
+                      "`open()` must be called before the managers exist");
+    return batchManagers_->pool_.numStoredObjects();
+  }
 
   // Default constructor for an empty vocabulary.
   VocabularyOnDisk() = default;
@@ -232,6 +253,7 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
   // Phase 1 of `lookupBatch`: for each requested index, read its `OffsetPair`
   // (16 bytes) from the `.offsets` file in a single batched read via `manager`.
+  // The `indices` must be smaller than `size()`, which `lookupBatch` checks.
   std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
                                           ql::span<const size_t> indices) const;
 
