@@ -14,13 +14,17 @@
 #ifndef QLEVER_SRC_ENGINE_EXPORTQUERYEXECUTIONTREES_H
 #define QLEVER_SRC_ENGINE_EXPORTQUERYEXECUTIONTREES_H
 
+#include <string>
+
 #include "engine/ConstructTripleGenerator.h"
 #include "engine/QueryExecutionTree.h"
 #include "engine/QueryExportTypes.h"
 #include "parser/data/LimitOffsetClause.h"
+#include "util/AllocatorWithLimit.h"
 #include "util/CancellationHandle.h"
 #include "util/http/MediaTypes.h"
 #include "util/stream_generator.h"
+#include "util/views/AsyncTransformStopFlag.h"
 
 // Class for computing the result of an already parsed and planned query and
 // exporting it in different formats (TSV, CSV, Turtle, JSON, Binary).
@@ -56,6 +60,21 @@ class ExportQueryExecutionTrees {
   static constexpr std::array staticallySupportedMediaTypes{
       csv,        tsv,        octetStream,       turtle, ntriples, sparqlXml,
       sparqlJson, qleverJson, binaryQleverExport};
+
+  // The maximal number of rows in one chunk of a parallel CSV or TSV export
+  // (see the runtime parameter `parallel-csv-tsv-export`). A chunk is the unit
+  // of work of the parallel export, so it has to be large enough that
+  // scheduling a task costs little compared to its serialization. This value
+  // has not been tuned yet.
+  static constexpr uint64_t MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK = 8192;
+
+  // The serialized lines (each terminated by a newline) of one chunk of a
+  // parallel CSV or TSV export. The memory is allocated with the allocator of
+  // the query, so it counts towards the `memory-for-queries` budget that all
+  // queries share. An allocation that does not fit first evicts unpinned
+  // entries of the query cache and then fails the export.
+  using CsvOrTsvChunk = std::basic_string<char, std::char_traits<char>,
+                                          ad_utility::AllocatorWithLimit<char>>;
 
   // Compute the result of the given `parsedQuery` (created by the
   // `SparqlParser`) for which the `QueryExecutionTree` has been previously
@@ -176,6 +195,27 @@ class ExportQueryExecutionTrees {
       LimitOffsetClause limitAndOffset, CancellationHandle cancellationHandle,
       const ad_utility::Timer& requestTimer, STREAMABLE_YIELDER_ARG_DECL);
 
+  // Return the CSV or TSV lines (each terminated by a newline) of the `rows`
+  // of the `table`, with one field per entry of `columns` (an empty field for
+  // a column that is `std::nullopt` or an unbound value), allocated with the
+  // `allocator`. This is the unit of work of the parallel CSV or TSV export,
+  // so it only reads its arguments and may be called concurrently for
+  // different `rows`. Throw a `CancellationException` if the
+  // `cancellationHandle` is cancelled. Stop early and return the lines so far
+  // as soon as `stop` is requested (the export then no longer needs them).
+  // Every row in `rows` and every column index in `columns` must be valid for
+  // `table` (checked).
+  template <ad_utility::MediaType format>
+  static CsvOrTsvChunk csvOrTsvRows(
+      const Index& index,
+      ql::span<const std::optional<QueryExecutionTree::VariableAndColumnIndex>>
+          columns,
+      const TableConstRefWithVocab& table,
+      ql::ranges::iota_view<uint64_t, uint64_t> rows,
+      const ad_utility::AllocatorWithLimit<char>& allocator,
+      ad_utility::CancellationHandle<>& cancellationHandle,
+      ad_utility::AsyncTransformStopFlag stop);
+
   // Yield all `IdTables` provided by the given `result`.
   static ad_utility::InputRangeTypeErased<TableConstRefWithVocab> getIdTables(
       const Result& result);
@@ -217,6 +257,7 @@ class ExportQueryExecutionTrees {
               ensureGeneratorIsNotConsumedWhenNotRequired);
   FRIEND_TEST(ExportQueryExecutionTrees, verifyQleverJsonContainsValidMetadata);
   FRIEND_TEST(ExportQueryExecutionTrees, compensateForLimitOffsetClause);
+  FRIEND_TEST(ExportQueryExecutionTrees, csvOrTsvRows);
 };
 
 #endif  // QLEVER_SRC_ENGINE_EXPORTQUERYEXECUTIONTREES_H

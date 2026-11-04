@@ -10,6 +10,7 @@
 #ifndef QLEVER_SRC_UTIL_VIEWS_ASYNCTRANSFORMVIEW_H
 #define QLEVER_SRC_UTIL_VIEWS_ASYNCTRANSFORMVIEW_H
 
+#include <atomic>
 #include <deque>
 #include <functional>
 #include <future>
@@ -19,12 +20,30 @@
 
 #include "backports/algorithm.h"
 #include "backports/asio.h"
+#include "backports/concepts.h"
 #include "util/Exception.h"
 #include "util/Iterators.h"
 #include "util/NoCopyNoMove.h"
 #include "util/TaskQueueOnExecutor.h"
+#include "util/views/AsyncTransformStopFlag.h"
 
 namespace ad_utility {
+
+namespace detail::asyncTransformView {
+// True iff the `Transformation` takes the stop flag of the view (see NOTE 5
+// below) as its second argument.
+template <typename Transformation, typename Element>
+CPP_concept takesStopFlag =
+    std::is_invocable_v<const Transformation&, Element, AsyncTransformStopFlag>;
+
+// The type that the view stores and yields for an `Element`: the decayed return
+// type of the `Transformation`, called with or without the stop flag.
+template <typename Transformation, typename Element>
+using Result = std::decay_t<typename std::conditional_t<
+    takesStopFlag<Transformation, Element>,
+    std::invoke_result<const Transformation&, Element, AsyncTransformStopFlag>,
+    std::invoke_result<const Transformation&, Element>>::type>;
+}  // namespace detail::asyncTransformView
 
 // An input range that yields `transformation(element)` for each `element` of
 // the `Range`, in the original order of the elements, like
@@ -65,15 +84,20 @@ namespace ad_utility {
 // return type of the `transformation`). In particular, a `transformation` that
 // returns a reference to its argument (like `std::identity`) is fine, because
 // the result is moved out of the element before the element is destroyed.
+//
+// NOTE 5: A `transformation` may take an `AsyncTransformStopFlag` as its
+// second argument. It is requested when the view is destroyed, before the
+// destructor waits for the pending elements, whose results are then no longer
+// needed (for example, because the consumer stopped early). A long
+// `transformation` can check it and return early.
 template <typename Range, typename Transformation>
 class AsyncTransformView
-    : public InputRangeFromGet<std::decay_t<std::invoke_result_t<
-          const Transformation&, ql::ranges::range_value_t<Range>>>>,
+    : public InputRangeFromGet<detail::asyncTransformView::Result<
+          Transformation, ql::ranges::range_value_t<Range>>>,
       public NoCopyNoMove {
  public:
   using Element = ql::ranges::range_value_t<Range>;
-  using Result =
-      std::decay_t<std::invoke_result_t<const Transformation&, Element>>;
+  using Result = detail::asyncTransformView::Result<Transformation, Element>;
   static_assert(!std::is_void_v<Result>,
                 "The transformation of an `AsyncTransformView` must return a "
                 "value");
@@ -90,6 +114,8 @@ class AsyncTransformView
   // yet yielded, in the order of the elements. Some of them may still be in
   // the process of being computed.
   std::deque<std::future<Result>> pending_;
+  // Set by the destructor, before it waits for the pending tasks (see NOTE 5).
+  std::atomic<bool> stopRequested_ = false;
 
   // NOTE: This member is deliberately declared last, so that its destructor
   // (which waits for all pending tasks) runs before the `transformation_`, to
@@ -110,7 +136,14 @@ class AsyncTransformView
         transformation_{std::move(transformation)},
         maxNumElementsInFlight_{maxNumElementsInFlight},
         queue_{std::move(executor), maxNumElementsInFlight,
-               "The tasks of an `AsyncTransformView`"} {}
+               "The tasks of an `AsyncTransformView`"} {
+    AD_CONTRACT_CHECK(maxNumElementsInFlight > 0);
+  }
+
+  // Tell the pending tasks that their results are no longer needed (see
+  // NOTE 5). The members are destroyed after this, and the `queue_` (which is
+  // destroyed first) waits for the tasks.
+  ~AsyncTransformView() noexcept { stopRequested_ = true; }
 
   // Return the result for the next element, or `std::nullopt` once all the
   // elements have been yielded.
@@ -146,8 +179,17 @@ class AsyncTransformView
       ++it;
       pending_.push_back(
           queue_.submit([&transformation = std::as_const(transformation_),
+                         &stopRequested = std::as_const(stopRequested_),
                          element = std::move(element)]() mutable -> Result {
-            return std::invoke(transformation, std::move(element));
+            if constexpr (detail::asyncTransformView::takesStopFlag<
+                              Transformation, Element>) {
+              return std::invoke(transformation, std::move(element),
+                                 AsyncTransformStopFlag{stopRequested});
+            } else {
+              // Only used by a `transformation` that takes the stop flag.
+              static_cast<void>(stopRequested);
+              return std::invoke(transformation, std::move(element));
+            }
           }));
     }
   }
