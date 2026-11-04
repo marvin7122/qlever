@@ -410,9 +410,10 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheMissesGoThroughTheManager) {
         *vocab, vocab->lookupBatch(indices), indices);
   }
   // `everyOtherRunCached` served some runs and missed others, in the offsets
-  // as well as in the words batch (9 runs each).
-  EXPECT_EQ(numberOfCalls, 18u);
-  EXPECT_EQ(numberOfServedCalls, 9u);
+  // batch (13 runs: the 16-byte reads of two indices are never adjacent) as
+  // well as in the words batch (9 runs: the words of `0, 1, 2, 3, 4` are one).
+  EXPECT_EQ(numberOfCalls, 22u);
+  EXPECT_EQ(numberOfServedCalls, 11u);
 }
 
 // An empty batch is an invalid request and must throw.
