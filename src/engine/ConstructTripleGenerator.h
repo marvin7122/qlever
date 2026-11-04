@@ -52,6 +52,9 @@ class ConstructTripleGenerator {
   // Each string of `generateFormattedTriples` but the last one holds at least
   // this many bytes.
   static constexpr size_t FORMATTED_CHUNK_BYTES = 1 << 16;
+  static_assert(FORMATTED_CHUNK_BYTES > 0,
+                "A chunk size of zero would make `generateFormattedTriples` "
+                "yield an empty range.");
   // the number of entries in the `IdCache` for each variable in the construct
   // clause template.
   static constexpr size_t CACHE_ENTRIES_PER_VARIABLE = 2048;
