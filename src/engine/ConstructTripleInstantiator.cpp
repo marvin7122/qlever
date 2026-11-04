@@ -97,11 +97,14 @@ std::vector<EvaluatedTriple> instantiateBatch(
   return triples;
 }
 
-// _____________________________________________________________________________
-std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
-  if (term.rdfTermDataType_ == nullptr) {
+namespace {
+// Return true iff `formatTerm(term, includeDataType)` is
+// `term.rdfTermString()` itself (no `"..."^^<datatype>` annotation).
+bool isInFinalForm(const EvaluatedTermData& term, bool includeDataType) {
+  const char* type = term.rdfTermDataType();
+  if (type == nullptr) {
     // IRI, blank node, or vocab-indexed literal: already in final form.
-    return term.rdfTermString_;
+    return true;
   }
   const auto* i = static_cast<const char*>(XSD_INT_TYPE);
   const auto* d = static_cast<const char*>(XSD_DECIMAL_TYPE);
@@ -109,19 +112,45 @@ std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
 
   // Note: XSD_DOUBLE_TYPE values (for example "NaN", "INF", "-INF") always
   // include the datatype.
-  if (!includeDataType &&
-      (term.rdfTermDataType_ == i || term.rdfTermDataType_ == d ||
-       (term.rdfTermDataType_ == b && term.rdfTermString_.length() > 1))) {
-    return term.rdfTermString_;
+  return !includeDataType && (type == i || type == d ||
+                              (type == b && term.rdfTermString().length() > 1));
+}
+
+// Append `formatTerm(term, includeDataType)` to `out`. If `escapeLiteral` is
+// true and `term` is a literal (either an encoded literal, which is always a
+// literal, or a term whose string starts with `"`), the term is appended in
+// the form of `RdfEscaping::validRDFLiteralFromNormalized`.
+void appendFormattedTerm(std::string& out, const EvaluatedTermData& term,
+                         bool includeDataType, bool escapeLiteral) {
+  if (!isInFinalForm(term, includeDataType)) {
+    // The `"..."^^<datatype>` form, which always is a literal.
+    std::string formatted = formatTerm(term, includeDataType);
+    out += escapeLiteral ? RdfEscaping::validRDFLiteralFromNormalized(formatted)
+                         : formatted;
+    return;
   }
-  return absl::StrCat("\"", term.rdfTermString_, "\"^^<", term.rdfTermDataType_,
-                      ">");
+  const std::string_view str = term.rdfTermString();
+  if (escapeLiteral && ql::starts_with(str, '"')) {
+    out += RdfEscaping::validRDFLiteralFromNormalized(str);
+  } else {
+    out += str;
+  }
+}
+}  // namespace
+
+// _____________________________________________________________________________
+std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
+  const std::string_view str = term.rdfTermString();
+  if (isInFinalForm(term, includeDataType)) {
+    return std::string{str};
+  }
+  return absl::StrCat("\"", str, "\"^^<", term.rdfTermDataType(), ">");
 }
 
 // _____________________________________________________________________________
-std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
-                         const ad_utility::MediaType& format) {
-  // TODO<ms2144>: take a look where we can eliminate string constructions here.
+void appendFormattedTriple(std::string& out,
+                           const EvaluatedTriple& evaluatedTriple,
+                           const ad_utility::MediaType& format) {
   using enum ad_utility::MediaType;
   static constexpr std::array supportedFormats{turtle, csv, tsv, ntriples};
   AD_CONTRACT_CHECK(ad_utility::contains(supportedFormats, format));
@@ -130,31 +159,39 @@ std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
 
   const bool includeDataType = (format == ntriples);
 
+  if (format == turtle || format == ntriples) {
+    // Only escape the object, and only if it is a literal. The terms are
+    // appended without an intermediate string unless they need formatting.
+    appendFormattedTerm(out, *subject, includeDataType, false);
+    out += ' ';
+    appendFormattedTerm(out, *predicate, includeDataType, false);
+    out += ' ';
+    appendFormattedTerm(out, *object, includeDataType, true);
+    out += " .\n";
+    return;
+  }
+
   std::string s = formatTerm(*subject, includeDataType);
   std::string p = formatTerm(*predicate, includeDataType);
   std::string o = formatTerm(*object, includeDataType);
-
-  if (format == turtle || format == ntriples) {
-    // Only escape literals (strings starting with "). IRIs and blank nodes
-    // are used as-is, avoiding an unnecessary string copy.
-    if (ql::starts_with(o, '"')) {
-      return absl::StrCat(
-          s, " ", p, " ",
-          RdfEscaping::validRDFLiteralFromNormalized(std::move(o)), " .\n");
-    }
-    return absl::StrCat(s, " ", p, " ", o, " .\n");
-
-  } else if (format == csv) {
-    return absl::StrCat(RdfEscaping::escapeForCsv(std::move(s)), ",",
-                        RdfEscaping::escapeForCsv(std::move(p)), ",",
-                        RdfEscaping::escapeForCsv(std::move(o)), "\n");
-  } else if (format == tsv) {
-    return absl::StrCat(RdfEscaping::escapeForTsv(std::move(s)), "\t",
-                        RdfEscaping::escapeForTsv(std::move(p)), "\t",
-                        RdfEscaping::escapeForTsv(std::move(o)), "\n");
+  if (format == csv) {
+    absl::StrAppend(&out, RdfEscaping::escapeForCsv(std::move(s)), ",",
+                    RdfEscaping::escapeForCsv(std::move(p)), ",",
+                    RdfEscaping::escapeForCsv(std::move(o)), "\n");
   } else {
-    AD_FAIL();  // unreachable
+    AD_CORRECTNESS_CHECK(format == tsv);
+    absl::StrAppend(&out, RdfEscaping::escapeForTsv(std::move(s)), "\t",
+                    RdfEscaping::escapeForTsv(std::move(p)), "\t",
+                    RdfEscaping::escapeForTsv(std::move(o)), "\n");
   }
+}
+
+// _____________________________________________________________________________
+std::string formatTriple(const EvaluatedTriple& evaluatedTriple,
+                         const ad_utility::MediaType& format) {
+  std::string result;
+  appendFormattedTriple(result, evaluatedTriple, format);
+  return result;
 }
 
 // _____________________________________________________________________________

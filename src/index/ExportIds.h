@@ -15,8 +15,10 @@
 
 #include <array>
 #include <optional>
+#include <range/v3/view/enumerate.hpp>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "backports/StartsWithAndEndsWith.h"
@@ -26,6 +28,7 @@
 #include "index/Index.h"
 #include "index/IndexImpl.h"
 #include "index/LocalVocab.h"
+#include "index/vocabulary/VocabularyTypes.h"
 #include "parser/LiteralOrIri.h"
 #include "util/Algorithm.h"
 #include "util/CompilerExtensions.h"
@@ -241,40 +244,12 @@ struct PartitionedIdPositions {
 // `VocabIndex`.
 PartitionedIdPositions partitionIdPositions(ql::span<const Id> ids);
 
-// Resolve the IDs at `positions` (all non-`VocabIndex`) immediately via
-// in-memory `idToStringAndType`, writing each result into its slot in
-// `results`. These values are either encoded in the id bits or stored in the
-// in-memory `LocalVocab`.
-template <bool removeQuotesAndAngleBrackets, bool returnOnlyLiterals,
-          typename EscapeFunction>
-void resolveNonVocabIndexIds(
-    const Index& index, ql::span<const Id> ids, const LocalVocab& localVocab,
-    ql::span<const size_t> positions,
-    ql::span<std::optional<std::pair<std::string, const char*>>> results,
-    const EscapeFunction& escapeFunction) {
-  AD_EXPENSIVE_CHECK(ql::ranges::all_of(positions, [&ids](size_t i) {
-    return ids[i].getDatatype() != Datatype::VocabIndex;
-  }));
-  ql::ranges::for_each(positions, [&](size_t i) {
-    results[i] =
-        idToStringAndType<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
-            index, ids[i], localVocab, escapeFunction);
-  });
-}
-
-// Resolve the `VocabIndex` IDs at `positions` in a single batched vocabulary
-// lookup, writing each result into its slot in `results`.
-template <bool removeQuotesAndAngleBrackets, bool returnOnlyLiterals,
-          typename EscapeFunction>
-void resolveVocabIndexIds(
+// Look up the words of the `VocabIndex` IDs at `positions` (not empty) in a
+// single batched vocabulary lookup. The words are in the order of `positions`.
+inline VocabBatchLookupResult lookupVocabIndexIds(
     const Index& index, ql::span<const Id> ids,
-    ql::span<const size_t> positions,
-    ql::span<std::optional<std::pair<std::string, const char*>>> results,
-    const EscapeFunction& escapeFunction) {
-  if (positions.empty()) {
-    return;
-  }
-
+    ql::span<const size_t> positions) {
+  AD_CONTRACT_CHECK(!positions.empty());
   AD_EXPENSIVE_CHECK(ql::ranges::all_of(positions, [&ids](size_t i) {
     return ids[i].getDatatype() == Datatype::VocabIndex;
   }));
@@ -286,40 +261,75 @@ void resolveVocabIndexIds(
       positions | ql::views::transform([&ids](size_t i) {
         return static_cast<size_t>(ids[i].getVocabIndex().get());
       }));
-  auto vocabStrings = index.getImpl().getVocab().lookupBatch(rawIndices);
+  return index.getImpl().getVocab().lookupBatch(rawIndices);
+}
 
-  // `vocabStrings` is in the same order as `positions`, so zip scatters each
-  // looked-up string back to the position it came from.
-  for (auto&& [sv, i] : ::ranges::views::zip(*vocabStrings, positions)) {
-    results[i] = literalOrIriToStringAndType<removeQuotesAndAngleBrackets,
-                                             returnOnlyLiterals>(
-        LiteralOrIriView::fromStringRepresentation(sv), escapeFunction);
+// The result of `idsToStringAndTypeOrBorrowedWord` for one `Id`: the
+// `(string, type)` pair of `idToStringAndType`, or a vocabulary word that is
+// viewed in the batch-lookup result instead of copied. A `BorrowedVocabWord`
+// is always in its final serialized form (the type of the pair would be
+// `nullptr`).
+using StringAndTypeOrBorrowedWord =
+    std::variant<std::pair<std::string, const char*>, BorrowedVocabWord>;
+
+// Resolve the `VocabIndex` `Id`s at `positions` (not empty) in one batched
+// lookup and store the results in the same positions of `results`: a word that
+// is its own serialized form becomes a `BorrowedVocabWord`, a blank-node IRI
+// becomes the `(string, type)` pair.
+inline void resolveVocabIndexIdsBorrowed(
+    const Index& index, ql::span<const Id> ids,
+    ql::span<const size_t> positions,
+    std::vector<std::optional<StringAndTypeOrBorrowedWord>>& results) {
+  auto vocabWords = lookupVocabIndexIds(index, ids, positions);
+  // `vocabWords` is in the same order as `positions`.
+  for (const auto& [positionInBatch, i] :
+       ::ranges::views::enumerate(positions)) {
+    const auto literalOrIri = LiteralOrIriView::fromStringRepresentation(
+        (*vocabWords)[positionInBatch]);
+    if (literalOrIri.isIri() &&
+        blankNodeIriToString(literalOrIri.getIri()).has_value()) {
+      results[i] = literalOrIriToStringAndType(literalOrIri).value();
+      continue;
+    }
+    // The documented invariant of `BorrowedVocabWord`: the word is the
+    // string of the pair that `idToStringAndType` would return, with type
+    // `nullptr`.
+    AD_EXPENSIVE_CHECK(
+        literalOrIriToStringAndType(literalOrIri).value() ==
+        (std::pair<std::string, const char*>{
+            std::string{(*vocabWords)[positionInBatch]}, nullptr}));
+    results[i] =
+        BorrowedVocabWord{vocabWords, static_cast<size_t>(positionInBatch)};
   }
 }
 
-// Batch variant of `idToStringAndType`. We cannot assume that the `VocabIndex`
-// IDs form a single contiguous block: even when the `ids` are sorted, IDs of
-// datatype `LocalVocabIndex` might be interspersed between the `VocabIndex`
-// IDs. We therefore check each ID's datatype individually to partition the
-// positions.
-template <bool removeQuotesAndAngleBrackets = false,
-          bool returnOnlyLiterals = false,
-          typename EscapeFunction = ql::identity>
-std::vector<std::optional<std::pair<std::string, const char*>>>
-idsToStringAndType(const Index& index, ql::span<const Id> ids,
-                   const LocalVocab& localVocab,
-                   const EscapeFunction& escapeFunction = EscapeFunction{}) {
-  std::vector<std::optional<std::pair<std::string, const char*>>> results(
-      ids.size());
+// Batch variant of `idToStringAndType` with the default template arguments
+// (quotes and angle brackets are kept, nothing is escaped): the words of all
+// `VocabIndex` `Id`s are looked up in one batch, and a word that is its own
+// serialized form yields a `BorrowedVocabWord` instead of a copy of the word.
+// Each `BorrowedVocabWord` shares the ownership of the batch-lookup result, so
+// the returned entries are valid independently of each other.
+// The `VocabIndex` `Id`s need not be contiguous in `ids` (`LocalVocabIndex`
+// `Id`s may be interspersed even when `ids` is sorted), so each `Id`'s
+// datatype is checked. All other `Id`s yield the pair: the encoded values,
+// the words of the `LocalVocab` (which a `BorrowedVocabWord` cannot keep
+// alive), and the blank-node IRIs of the vocabulary (which are serialized as
+// a different string, e.g. `_:b0`).
+inline std::vector<std::optional<StringAndTypeOrBorrowedWord>>
+idsToStringAndTypeOrBorrowedWord(const Index& index, ql::span<const Id> ids,
+                                 const LocalVocab& localVocab) {
+  std::vector<std::optional<StringAndTypeOrBorrowedWord>> results(ids.size());
 
-  PartitionedIdPositions positions = partitionIdPositions(ids);
-
-  resolveNonVocabIndexIds<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
-      index, ids, localVocab, positions.nonVocabIndexIndices_, results,
-      escapeFunction);
-  resolveVocabIndexIds<removeQuotesAndAngleBrackets, returnOnlyLiterals>(
-      index, ids, positions.vocabIndexIndices_, results, escapeFunction);
-
+  const PartitionedIdPositions positions = partitionIdPositions(ids);
+  for (size_t i : positions.nonVocabIndexIndices_) {
+    if (auto stringAndType = idToStringAndType(index, ids[i], localVocab)) {
+      results[i] = std::move(stringAndType.value());
+    }
+  }
+  if (!positions.vocabIndexIndices_.empty()) {
+    resolveVocabIndexIdsBorrowed(index, ids, positions.vocabIndexIndices_,
+                                 results);
+  }
   return results;
 }
 

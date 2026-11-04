@@ -14,6 +14,7 @@
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/ConstructTypes.h"
 #include "global/Constants.h"
+#include "util/Views.h"
 
 namespace {
 using namespace qlever::constructExport;
@@ -37,8 +38,9 @@ EvaluatedTerm makeTerm(std::string str, const char* type = nullptr) {
 static constexpr auto matchesEvaluatedTerm = [](const auto& str,
                                                 const char* type) {
   return ::testing::Pointee(::testing::AllOf(
-      AD_FIELD(EvaluatedTermData, rdfTermString_, std::string(str)),
-      AD_FIELD(EvaluatedTermData, rdfTermDataType_, ::testing::Eq(type))));
+      AD_PROPERTY(EvaluatedTermData, rdfTermString,
+                  ::testing::Eq(std::string_view{str})),
+      AD_PROPERTY(EvaluatedTermData, rdfTermDataType, ::testing::Eq(type))));
 };
 
 // Matches an `EvaluatedTriple` by applying `matchesEvaluatedTerm` with
@@ -330,10 +332,10 @@ static constexpr auto testTermFormatting =
 
 // _____________________________________________________________________________
 TEST(FormatTerm, dataTypeNull) {
-  // By the definition of `EvaluatedTermData`, if `rdfTermDataType_`==`nullptr`,
-  // then `rdfTermString_` is expected to already hold the value of the rdf term
-  // string include the complete serialized form (including the appended
-  // datatype string via ^^).
+  // By the definition of `EvaluatedTermData`, if `rdfTermDataType()` is
+  // `nullptr`, then `rdfTermString()` is expected to already hold the value of
+  // the rdf term string include the complete serialized form (including the
+  // appended datatype string via ^^).
 
   // Setting `includeDataType` = true instructs `formatTerm` to append the
   // datataype string (which is contained in `rdfTermDataType`) to the string
@@ -486,6 +488,57 @@ TEST(FormatTriple, UnsupportedMediaType) {
 // ============================================================================
 //                       TESTS FOR `createStringTriple`
 // ============================================================================
+
+// A term that views a word of a batch-lookup result is formatted like a term
+// that owns the same string, in every format and position, and stays valid
+// when the other owners of the result are gone.
+// _____________________________________________________________________________
+TEST(FormatTriple, BorrowedTermsAreFormattedLikeOwnedTerms) {
+  const std::vector<std::string> words{"<http://borrowed>",
+                                       "\"line\nbreak\"@en",
+                                       "\"needs \\\\ escaping, \ttab\""};
+  std::vector<EvaluatedTerm> borrowed;
+  {
+    VocabBatchLookupResult lookupResult =
+        StringVectorVocabBatchLookupData::fromWords(words);
+    for (const size_t i : ad_utility::integerRange(words.size())) {
+      borrowed.push_back(std::make_shared<const EvaluatedTermData>(
+          BorrowedVocabWord{lookupResult, i}));
+    }
+  }
+  std::vector<EvaluatedTerm> owned;
+  for (const auto& word : words) {
+    owned.push_back(makeTerm(word));
+  }
+  const std::vector<EvaluatedTerm> others{
+      makeTerm("<http://s>"), makeTerm("_:b0"), makeTerm("42", XSD_INT_TYPE),
+      makeTerm("NaN", XSD_DOUBLE_TYPE)};
+  using ad_utility::MediaType;
+  for (const auto format : {MediaType::turtle, MediaType::ntriples,
+                            MediaType::csv, MediaType::tsv}) {
+    for (const size_t i : ad_utility::integerRange(words.size())) {
+      ASSERT_TRUE(borrowed.at(i)->isBorrowed());
+      for (const auto& other : others) {
+        EXPECT_EQ(formatTriple({borrowed.at(i), other, borrowed.at(i)}, format),
+                  formatTriple({owned.at(i), other, owned.at(i)}, format));
+        EXPECT_EQ(formatTriple({other, borrowed.at(i), other}, format),
+                  formatTriple({other, owned.at(i), other}, format));
+      }
+    }
+  }
+}
+
+// _____________________________________________________________________________
+// `appendFormattedTriple` appends to what `out` already holds.
+TEST(AppendFormattedTriple, AppendsToTheString) {
+  const EvaluatedTriple triple{makeTerm("<s>"), makeTerm("<p>"),
+                               makeTerm("1.5", XSD_DECIMAL_TYPE)};
+  std::string out = "before\n";
+  appendFormattedTriple(out, triple, ad_utility::MediaType::turtle);
+  appendFormattedTriple(out, triple, ad_utility::MediaType::ntriples);
+  EXPECT_EQ(out, absl::StrCat("before\n<s> <p> 1.5 .\n<s> <p> \"1.5\"^^<",
+                              XSD_DECIMAL_TYPE, "> .\n"));
+}
 
 // _____________________________________________________________________________
 TEST(CreateStringTriple, ReturnsFormattedTerms) {

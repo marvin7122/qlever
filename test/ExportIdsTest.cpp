@@ -12,6 +12,8 @@
 
 #include <gmock/gmock.h>
 
+#include <array>
+
 #include "engine/IndexScan.h"
 #include "index/ExportIds.h"
 #include "index/LocalVocabEntry.h"
@@ -258,149 +260,102 @@ TEST(ExportIds, GetLiteralOrIriFromVocabIndexWithEncodedIris) {
   }
 }
 
-// _____________________________________________________________________________
-// Verify that `idsToStringAndType` produces identical results to calling
-// `idToStringAndType` for each ID individually.
-TEST(ExportIds, idsToStringAndTypeBatchMatchesIndividualLookups) {
-  // Build a small index with IRIs and literals of various types.
-  std::string kg =
-      "<s> <p> <o> . "
-      "<s> <q> \"hello\" . "
-      "<s> <p> 42 . "
-      "<s> <p> 3.14 .";
-  auto qec = ad_utility::testing::getQec(kg);
-  const Index& index = qec->getIndex();
-  LocalVocab localVocab{};
-  auto getId = ad_utility::testing::makeGetId(index);
+// The input of the tests of `idsToStringAndTypeOrBorrowedWord`. The IDs are not
+// sorted, and the `VocabIndex` IDs are interspersed with other IDs, so the
+// results have to be scattered back to their positions.
+class ExportIdsBorrowedWordTest : public ::testing::Test {
+ protected:
+  // The positions in `ids_` of the `VocabIndex` IDs whose words are borrowed.
+  static constexpr std::array<size_t, 5> borrowedPositions_{0, 2, 4, 7, 9};
+  // The position in `ids_` of the `VocabIndex` ID of a blank-node IRI, which
+  // is serialized as a different string and thus not borrowed.
+  static constexpr size_t blankNodePosition_ = 5;
 
-  // Collect a mix of VocabIndex IDs (IRIs, literal) and non-VocabIndex IDs
-  // (integer, double, undefined).
-  std::vector<Id> ids{
-      getId("<s>"),
-      getId("<p>"),
-      getId("<o>"),
-      getId("<q>"),
-      getId("\"hello\""),
-      Id::makeFromInt(42),
-      Id::makeFromDouble(3.14),
-      Id::makeUndefined(),
-  };
+  QueryExecutionContext* qec_ = nullptr;
+  LocalVocab localVocab_;
+  std::vector<Id> ids_;
 
-  // `idsToStringAndType` requires the input to be sorted by `ValueId`.
-  ql::ranges::sort(ids);
-
-  auto batchResults = ql::exportIds::idsToStringAndType(
-      index, ql::span<const Id>{ids}, localVocab);
-
-  ASSERT_EQ(batchResults.size(), ids.size());
-  for (size_t i = 0; i < ids.size(); ++i) {
-    EXPECT_EQ(batchResults[i],
-              ql::exportIds::idToStringAndType(index, ids[i], localVocab))
-        << "Mismatch at index " << i;
+  void SetUp() override {
+    const std::string blankNodeIri =
+        absl::StrCat(QLEVER_INTERNAL_BLANK_NODE_IRI_PREFIX, "_:b0>");
+    qec_ = ad_utility::testing::getQec(
+        absl::StrCat("<s> <p> <o> . <s> <q> \"hello\"@en . ", blankNodeIri,
+                     " <p> 42 . <s> <p> 3.14 ."));
+    auto getId = ad_utility::testing::makeGetId(qec_->getIndex());
+    const Id idLocal =
+        Id::makeFromLocalVocabIndex(localVocab_.getIndexAndAddIfNotContained(
+            LocalVocabEntry::literalWithoutQuotes(
+                "local", qec_->getLocalVocabContext())));
+    ids_ = {getId("<q>"),
+            Id::makeFromInt(42),
+            getId("<s>"),
+            idLocal,
+            getId("\"hello\"@en"),
+            getId(blankNodeIri),
+            Id::makeUndefined(),
+            getId("<o>"),
+            Id::makeFromDouble(3.14),
+            getId("<p>")};
   }
-}
 
-// _____________________________________________________________________________
-// Empty span returns an empty vector.
-TEST(ExportIds, idsToStringAndTypeEmptyInput) {
-  auto qec = ad_utility::testing::getQec("<s> <p> <o>");
-  LocalVocab localVocab{};
-  auto result = ql::exportIds::idsToStringAndType(
-      qec->getIndex(), ql::span<const Id>{}, localVocab);
-  EXPECT_TRUE(result.empty());
-}
-
-using ResolveResult =
-    std::vector<std::optional<std::pair<std::string, const char*>>>;
-
-// A shared empty `LocalVocab` for the vocab oracle (whose lookup takes no
-// `LocalVocab`, so the per-ID oracle is fed an empty one).
-inline const LocalVocab& emptyLocalVocab() {
-  static const LocalVocab empty{};
-  return empty;
-}
-
-// The only thing that differs between the two oracles: the batched lookup under
-// test. Each policy fills `results` for the entries at `positions`.
-struct VocabResolver {
-  template <bool RemoveQuotesAndAngleBrackets, bool returnOnlyLiterals,
-            typename EscapeFunction>
-  static void resolve(const Index& index, ql::span<const Id> ids,
-                      [[maybe_unused]] const LocalVocab& localVocab,
-                      ql::span<const size_t> positions, ResolveResult& results,
-                      const EscapeFunction& escape) {
-    ql::exportIds::resolveVocabIndexIds<RemoveQuotesAndAngleBrackets,
-                                        returnOnlyLiterals, EscapeFunction>(
-        index, ids, positions, results, escape);
-  }
-};
-struct NonVocabResolver {
-  template <bool RemoveQuotesAndAngleBrackets, bool returnOnlyLiterals,
-            typename EscapeFunction>
-  static void resolve(const Index& index, ql::span<const Id> ids,
-                      [[maybe_unused]] const LocalVocab& localVocab,
-                      ql::span<const size_t> positions, ResolveResult& results,
-                      const EscapeFunction& escape) {
-    ql::exportIds::resolveNonVocabIndexIds<RemoveQuotesAndAngleBrackets,
-                                           returnOnlyLiterals, EscapeFunction>(
-        index, ids, localVocab, positions, results, escape);
+  auto lookup() const {
+    return ql::exportIds::idsToStringAndTypeOrBorrowedWord(qec_->getIndex(),
+                                                           ids_, localVocab_);
   }
 };
 
-// Oracle test helper: holds the shared data; `Resolver` selects the batched
-// lookup under test. Verifies the batched lookup against the trusted per-ID
-// `idToStringAndType` path for every requested position, leaving all other
-// slots as `std::nullopt`.
-template <typename Resolver, typename EscapeFunction = ql::identity>
-struct ResolveOracle {
-  const Index& index;
-  ql::span<const Id> ids;
-  EscapeFunction escape;
-  const LocalVocab& localVocab = emptyLocalVocab();
-
-  template <bool RemoveQuotesAndAngleBrackets, bool returnOnlyLiterals>
-  void checkOne(ql::span<const size_t> positions) const {
-    SCOPED_TRACE(absl::StrCat(
-        "removeQuotesAndAngleBrackets=", RemoveQuotesAndAngleBrackets,
-        " returnOnlyLiterals=", returnOnlyLiterals));
-    ResolveResult results(ids.size());
-    Resolver::template resolve<RemoveQuotesAndAngleBrackets,
-                               returnOnlyLiterals>(index, ids, localVocab,
-                                                   positions, results, escape);
-    std::set<size_t> resolved(positions.begin(), positions.end());
-    for (size_t i = 0; i < ids.size(); ++i) {
-      if (resolved.count(i) != 0) {
-        auto expected =
-            ql::exportIds::idToStringAndType<RemoveQuotesAndAngleBrackets,
-                                             returnOnlyLiterals>(
-                index, ids[i], localVocab, escape);
-        EXPECT_EQ(results[i], expected);
-      } else {
-        EXPECT_EQ(results[i], std::nullopt);
-      }
+// `idsToStringAndTypeOrBorrowedWord` yields the same strings as calling
+// `idToStringAndType` for each ID individually, and `Undefined` yields
+// `std::nullopt`.
+// _____________________________________________________________________________
+TEST_F(ExportIdsBorrowedWordTest, matchesIndividualLookups) {
+  const auto actual = lookup();
+  ASSERT_EQ(actual.size(), ids_.size());
+  for (size_t i = 0; i < ids_.size(); ++i) {
+    SCOPED_TRACE(i);
+    const auto expected = ql::exportIds::idToStringAndType(
+        qec_->getIndex(), ids_[i], localVocab_);
+    ASSERT_EQ(actual[i].has_value(), expected.has_value());
+    if (!expected.has_value()) {
+      continue;
+    }
+    if (const auto* borrowed =
+            std::get_if<BorrowedVocabWord>(&actual[i].value())) {
+      EXPECT_EQ(borrowed->word(), expected.value().first);
+      EXPECT_EQ(expected.value().second, nullptr);
+    } else {
+      EXPECT_EQ(std::get<0>(actual[i].value()), expected.value());
     }
   }
-  // Run the check for all four combinations of the two template flags.
-  void checkAllFlagCombinations(ql::span<const size_t> positions) const {
-    checkOne<false, false>(positions);
-    checkOne<true, false>(positions);
-    checkOne<false, true>(positions);
-    checkOne<true, true>(positions);
-  }
-};
-
-// Small factories to hide complexity at the call sites.
-template <typename EscapeFunction>
-auto makeVocabOracle(const Index& index, ql::span<const Id> ids,
-                     const EscapeFunction& escape) {
-  return ResolveOracle<VocabResolver, EscapeFunction>{index, ids, escape};
 }
-template <typename EscapeFunction>
-auto makeNonVocabOracle(const Index& index, ql::span<const Id> ids,
-                        const LocalVocab& localVocab,
-                        const EscapeFunction& escape) {
-  return ResolveOracle<NonVocabResolver, EscapeFunction>{index, ids, escape,
-                                                         localVocab};
+
+// Exactly the words of the vocabulary that are not blank-node IRIs are
+// borrowed; the encoded values, the `LocalVocab` word, and the blank-node IRI
+// are copied.
+// _____________________________________________________________________________
+TEST_F(ExportIdsBorrowedWordTest, borrowsOnlyVocabularyWords) {
+  const auto actual = lookup();
+  ASSERT_EQ(actual.size(), ids_.size());
+  for (size_t i = 0; i < ids_.size(); ++i) {
+    if (!actual[i].has_value()) {
+      continue;
+    }
+    const bool isBorrowed =
+        std::holds_alternative<BorrowedVocabWord>(actual[i].value());
+    EXPECT_EQ(isBorrowed, ad_utility::contains(borrowedPositions_, i)) << i;
+  }
+  EXPECT_FALSE(std::holds_alternative<BorrowedVocabWord>(
+      actual[blankNodePosition_].value()));
+}
+
+// Empty span returns an empty vector.
+// _____________________________________________________________________________
+TEST(ExportIds, idsToStringAndTypeOrBorrowedWordEmptyInput) {
+  auto qec = ad_utility::testing::getQec("<s> <p> <o>");
+  LocalVocab localVocab{};
+  auto result = ql::exportIds::idsToStringAndTypeOrBorrowedWord(
+      qec->getIndex(), ql::span<const Id>{}, localVocab);
+  EXPECT_TRUE(result.empty());
 }
 
 // _____________________________________________________________________________
@@ -559,76 +514,10 @@ TEST(ExportIds, partitionIdPositions) {
                   {0, 2, 4}, {1, 3, 5});
 
   // Both partitions are stable, i.e. the positions are ascending even when the
-  // underlying vocabulary indices are not. `resolveVocabIndexIds` relies on
-  // this to scatter the batched lookup results back to the right slots.
+  // underlying vocabulary indices are not. `idsToStringAndTypeOrBorrowedWord`
+  // relies on this to scatter the batched lookup results back to the right
+  // slots.
   expectPartition({VocabId(9), IntId(0), VocabId(1)}, {0, 2}, {1});
-}
-
-// _____________________________________________________________________________
-// Resolve `VocabIndex` IDs and verify the batched lookup against the per-ID
-// path for every combination of the two template flags.
-TEST(ExportIds, resolveVocabIndexIds) {
-  using namespace ad_utility::testing;
-  std::string kg = "<s> <p> <o> . <s> <q> \"hello\" . <s> <p> \"world\"@en .";
-  auto qec = getQec(kg);
-  const Index& index = qec->getIndex();
-  auto getId = makeGetId(index);
-
-  std::vector<Id> ids{getId("<s>"), getId("<p>"), getId("<o>"),
-                      getId("\"hello\""), getId("\"world\"@en")};
-
-  auto oracle = makeVocabOracle(index, ids, escapeWithMarker);
-  auto check = [&](const std::vector<size_t>& positions) {
-    oracle.checkAllFlagCombinations(positions);
-  };
-
-  // Empty positions: early return, every slot stays `std::nullopt`.
-  check({});
-  // All positions resolved.
-  check({0, 1, 2, 3, 4});
-  // A subset: the untouched slots must remain `std::nullopt`.
-  check({1, 3});
-  // Positions given out of order (and not in underlying-vocab-index order) to
-  // exercise the scatter back to the correct result slot.
-  check({4, 0, 2});
-}
-
-// _____________________________________________________________________________
-// Resolve non-`VocabIndex` IDs (encoded values and a `LocalVocabIndex`) and
-// verify against the per-ID path for every combination of the two template
-// flags.
-TEST(ExportIds, resolveNonVocabIndexIds) {
-  using namespace ad_utility::testing;
-  auto qec = getQec("<s> <p> <o>");
-  const Index& index = qec->getIndex();
-
-  // Populate a `LocalVocab` with a literal so the `LocalVocabIndex` resolution
-  // path is exercised, not just the values encoded directly in the ID bits.
-  LocalVocab localVocab{};
-  auto localVocabIndex = localVocab.getIndexAndAddIfNotContained(
-      LocalVocabEntry::literalWithoutQuotes("localLit",
-                                            qec->getLocalVocabContext()));
-  Id localVocabId = Id::makeFromLocalVocabIndex(localVocabIndex);
-
-  std::vector<Id> ids{
-      Id::makeFromInt(42),
-      Id::makeFromDouble(3.14),
-      Id::makeUndefined(),
-      localVocabId,
-  };
-
-  auto oracle = makeNonVocabOracle(index, ids, localVocab, escapeWithMarker);
-  auto check = [&](const std::vector<size_t>& positions) {
-    oracle.checkAllFlagCombinations(positions);
-  };
-
-  // Empty positions: nothing is resolved.
-  check({});
-  // All positions: encoded int/double, `Undefined` (resolves to `nullopt`) and
-  // the local-vocab literal.
-  check({0, 1, 2, 3});
-  // A subset (`Undefined` + local literal); untouched slots stay `nullopt`.
-  check({2, 3});
 }
 
 }  // namespace
