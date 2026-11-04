@@ -9,6 +9,8 @@
 
 #include "engine/ConstructTripleGenerator.h"
 
+#include <type_traits>
+
 #include "engine/ConstructBatchEvaluator.h"
 #include "engine/ConstructDeduplicator.h"
 #include "engine/ConstructTemplatePreprocessor.h"
@@ -95,7 +97,10 @@ auto processTableBatches(TableWithRange table, BatchEvalContext context,
   const TableConstRefWithVocab tableWithVocab = table.tableWithVocab_;
   // The view does not have to start at row 0 of the table (for example, if
   // the OFFSET ends inside the table), so the row id of a batch is counted
-  // from the first row of the view.
+  // from the first row of the view. This relies on the rows of the view being
+  // consecutive, which its type guarantees.
+  static_assert(std::is_same_v<decltype(rowView),
+                               ql::ranges::iota_view<uint64_t, uint64_t>>);
   const size_t firstRow = *ql::ranges::begin(rowView);
   return ranges::views::chunk(std::move(rowView),
                               ConstructTripleGenerator::BATCH_SIZE) |
