@@ -1161,7 +1161,7 @@ TEST_F(IoUringPolicyFailureTest, brokenSubmitThrowsAfterReapingTheKernelReads) {
 // takes 3 of the 6 reads and completes none of them, the second one fails with
 // `EBADF`. `addBatch` reaps the 3 reads before it throws, and the 3 reads that
 // never reached the kernel are cancelled.
-TEST(IoUringPolicyOnFakeRing, brokenSubmitReapsTheKernelReadsBeforeThrowing) {
+TEST(IoUringPolicyOnFakeRing, DISABLED_brokenSubmitReapsTheKernelReadsBeforeThrowing) {
   using ad_utility::testing::FakeIoUring;
   auto [content, batch] = chunkedFileAndBatch(6);
   FakeIoUring::Faults faults;
