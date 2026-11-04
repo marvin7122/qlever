@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -511,6 +512,37 @@ TEST(IoUringManagerDrop, dropRunningManager) {
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
   EXPECT_THAT(logStream.str(), ifLogLevelIsCompiledIn<LogLevel::Enum::WARN>(
                                    ::testing::HasSubstr("still in flight")));
+}
+
+// `io_uring` reads take their byte count as `unsigned`, so a read of more than
+// `UINT_MAX` bytes must be rejected instead of silently truncated. The check
+// runs before any read is prepared, so no buffer of that size is needed, and
+// the rejected batch must leave the manager usable.
+TEST(IoUringManagerOversizedRead, oversizedReadThrowsAndLeavesManagerUsable) {
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime "
+                    "(e.g. blocked by seccomp inside Docker)";
+  }
+  using Manager = ad_utility::BatchManager<ad_utility::IoUringPolicy>;
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  Manager manager(64);
+
+  // A valid read followed by an oversized one: the whole batch is rejected.
+  std::string smallBuffer(4, '\0');
+  std::vector<size_t> numBytes{
+      4, std::numeric_limits<unsigned>::max() + size_t{1}};
+  std::vector<uint64_t> offsets{0, 0};
+  std::vector<char*> buffers{smallBuffer.data(), smallBuffer.data()};
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      std::ignore = manager.addBatch(fd, numBytes, offsets, buffers),
+      ::testing::HasSubstr("4294967295"));
+  EXPECT_EQ(smallBuffer, std::string(4, '\0'));
+
+  // Nothing was left behind: a normal batch still works.
+  ReadBatchForTesting batch;
+  batch.add({{8, 4}, {0, 4}, {12, 4}});
+  manager.wait(batch.submitTo(manager, fd));
+  EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
 }
 #endif
 
