@@ -31,6 +31,7 @@
 #include "util/http/UrlParser.h"
 #include "util/json.h"
 #include "util/metrics/Metrics.h"
+#include "util/views/ChunkedIotaView.h"
 
 using nlohmann::json;
 using namespace ad_utility::testing;
@@ -88,8 +89,9 @@ TEST(ServerTest, chooseBestFittingMediaType) {
 namespace {
 // Yield the `text` in pieces of 1000 bytes.
 cppcoro::generator<std::string> inPiecesOf1000(std::string text) {
-  for (size_t i = 0; i < text.size(); i += 1000) {
-    co_yield text.substr(i, 1000);
+  for (auto [begin, end] :
+       ad_utility::chunkedIotaView(size_t{0}, text.size(), size_t{1000})) {
+    co_yield text.substr(begin, end - begin);
   }
 }
 
@@ -110,11 +112,10 @@ TEST(ServerTest, compressBodyForQuery) {
   using ad_utility::content_encoding::CompressionMethod;
   boost::asio::thread_pool pool{2};
   std::string text;
-  for (size_t i = 0;
-       text.size() <
-       3 * ad_utility::streams::MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK;
-       ++i) {
-    absl::StrAppend(&text, "\"row\",", i, "\n");
+  size_t row = 0;
+  while (text.size() <
+         3 * ad_utility::streams::MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK) {
+    absl::StrAppend(&text, "\"row\",", row++, "\n");
   }
   for (auto method : {CompressionMethod::DEFLATE, CompressionMethod::GZIP}) {
     auto sequential = concatenate(

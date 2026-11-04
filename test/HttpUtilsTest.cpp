@@ -132,6 +132,7 @@ TEST(HttpUtils, CreateOkResponseFromGeneratorWithCompression) {
   EXPECT_EQ(decompressed, "Hello, World!");
 }
 
+// _____________________________________________________________________________
 // Test that `createOkResponse` compresses the body with the given
 // `CompressBody`, and only if the request asks for a compression.
 TEST(HttpUtils, CreateOkResponseFromGeneratorWithCustomCompression) {

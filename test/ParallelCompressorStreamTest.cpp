@@ -20,7 +20,9 @@
 #include <string>
 #include <vector>
 
+#include "backports/algorithm.h"
 #include "util/ParallelCompressorStream.h"
+#include "util/views/ChunkedIotaView.h"
 
 namespace {
 using ad_utility::content_encoding::CompressionMethod;
@@ -33,8 +35,9 @@ constexpr size_t minBlock = MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK;
 // Yield the `data` in pieces of `pieceSize` bytes (the last one may be
 // shorter). Nothing is yielded for empty `data`.
 cppcoro::generator<std::string> inPieces(std::string data, size_t pieceSize) {
-  for (size_t i = 0; i < data.size(); i += pieceSize) {
-    co_yield data.substr(i, pieceSize);
+  for (auto [begin, end] :
+       ad_utility::chunkedIotaView(size_t{0}, data.size(), pieceSize)) {
+    co_yield data.substr(begin, end - begin);
   }
 }
 
@@ -203,6 +206,7 @@ TEST_P(ParallelCompressorStream, large) {
   compressAndCheck(inPieces(text, 10 << 20), text);
 }
 
+// _____________________________________________________________________________
 // The blocks refer back into the previous block through their dictionary: for
 // a random string of 16 KiB that is repeated, only the first block contains a
 // copy of the string; every other block consists of references back into the
@@ -220,9 +224,11 @@ TEST_P(ParallelCompressorStream, blocksUseTheDictionary) {
   size_t numberOfBytesWithoutDictionary = 0;
   auto format = GetParam() == CompressionMethod::GZIP ? pc::StreamFormat::Gzip
                                                       : pc::StreamFormat::Zlib;
-  for (size_t i = 0; i < text.size(); i += minBlock) {
+  for (auto [begin, end] :
+       ad_utility::chunkedIotaView(size_t{0}, text.size(), minBlock)) {
     numberOfBytesWithoutDictionary +=
-        pc::compressBlock({text.substr(i, minBlock), std::string{}}, format)
+        pc::compressBlock({text.substr(begin, end - begin), std::string{}},
+                          format)
             .bytes_.size();
   }
   EXPECT_GT(numberOfBytesWithoutDictionary, 10 * unit.size());
@@ -237,11 +243,12 @@ TEST_P(ParallelCompressorStream, noneIsTheIdentity) {
   EXPECT_EQ(output, text);
 }
 
+// _____________________________________________________________________________
 // An exception from the input (in the server, for example, the cancellation
 // of the query) reaches the consumer, also while blocks are in flight.
 TEST_P(ParallelCompressorStream, exceptionInTheInputIsPropagated) {
   auto throwing = []() -> cppcoro::generator<std::string> {
-    for (size_t i = 0; i < 10; ++i) {
+    for ([[maybe_unused]] size_t i : ql::views::iota(size_t{0}, size_t{10})) {
       co_yield csvLikeText(minBlock);
     }
     throw std::runtime_error{"Operation was manually cancelled."};
@@ -259,6 +266,7 @@ cppcoro::generator<std::string> endlessInput(size_t& numberOfPiecesRead) {
   }
 }
 
+// _____________________________________________________________________________
 // The generator can be destroyed while blocks are in flight (in the server,
 // after a client disconnect), and it reads only a bounded number of pieces
 // ahead of its consumer.
@@ -269,7 +277,7 @@ TEST_P(ParallelCompressorStream, earlyDestruction) {
         endlessInput(numberOfPiecesRead), GetParam(), pool_.get_executor(), 4);
     // The header, and then two blocks.
     auto it = generator.begin();
-    for (size_t i = 0; i < 2; ++i) {
+    for ([[maybe_unused]] size_t i : ql::views::iota(size_t{0}, size_t{2})) {
       ASSERT_NE(it, generator.end());
       ++it;
     }
@@ -285,6 +293,7 @@ INSTANTIATE_TEST_SUITE_P(DeflateAndGzip, ParallelCompressorStream,
                          ::testing::Values(CompressionMethod::DEFLATE,
                                            CompressionMethod::GZIP));
 
+// _____________________________________________________________________________
 // The stream around the blocks: the header and trailer of an empty stream are
 // exactly what zlib writes for empty input at level 1 (except for the OS field
 // of the gzip header, which zlib sets to the actual system).
@@ -300,6 +309,7 @@ TEST(ParallelCompressorStreamFrame, emptyStream) {
             "\x00\x00\x00\x00\x00\x00\x00\x00"s);
 }
 
+// _____________________________________________________________________________
 // The combined checksum and the size in the trailer are those of the whole
 // input.
 TEST(ParallelCompressorStreamFrame, trailerOfSeveralBlocks) {
@@ -332,6 +342,7 @@ TEST(ParallelCompressorStreamFrame, trailerOfSeveralBlocks) {
   }
 }
 
+// _____________________________________________________________________________
 // The size in the gzip trailer is the number of uncompressed bytes modulo
 // 2^32, and the full sizes of the blocks enter the combination of the
 // checksums. The blocks are made up, as no test should compress 4 GiB.
@@ -346,7 +357,7 @@ TEST(ParallelCompressorStreamFrame, sizeModulo2To32) {
     bool isGzip = format == pc::StreamFormat::Gzip;
     pc::StreamFrame frame{format};
     // Two blocks of 2^31 + 3 bytes, so 2^32 + 6 bytes in total.
-    for (size_t i = 0; i < 2; ++i) {
+    for ([[maybe_unused]] size_t i : ql::views::iota(size_t{0}, size_t{2})) {
       frame.add({std::string{},
                  isGzip ? pc::Checksum{pc::Crc32{blockChecksum}}
                         : pc::Checksum{pc::Adler32{blockChecksum}},
@@ -374,6 +385,7 @@ TEST(ParallelCompressorStreamFrame, sizeModulo2To32) {
   }
 }
 
+// _____________________________________________________________________________
 // A block that was compressed for one format cannot be added to a stream of
 // the other format.
 TEST(ParallelCompressorStreamFrame, formatsCannotBeMixed) {
@@ -382,6 +394,7 @@ TEST(ParallelCompressorStreamFrame, formatsCannotBeMixed) {
       pc::compressBlock({"abc", std::string{}}, pc::StreamFormat::Gzip)));
 }
 
+// _____________________________________________________________________________
 // A compressed block is raw deflate data that ends with a sync flush (the
 // empty stored block `00 00 FF FF`), so it is byte-aligned and not final.
 TEST(ParallelCompressorStreamFrame, blockEndsWithSyncFlush) {

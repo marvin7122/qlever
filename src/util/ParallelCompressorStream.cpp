@@ -17,6 +17,7 @@
 #include <limits>
 #include <variant>
 
+#include "backports/algorithm.h"
 #include "util/Exception.h"
 #include "util/views/AsyncTransformView.h"
 
@@ -31,15 +32,15 @@ constexpr size_t MAX_NUMBER_OF_BYTES_PER_ZLIB_CALL =
 // Append the four bytes of the `value`, least significant byte first (the byte
 // order of the gzip trailer).
 void appendLittleEndian(std::string& out, uint32_t value) {
-  for (size_t i = 0; i < 4; ++i) {
+  for (size_t i : ql::views::iota(size_t{0}, size_t{4})) {
     out.push_back(static_cast<char>((value >> (8 * i)) & 0xFF));
   }
 }
 // Append the four bytes of the `value`, most significant byte first (the byte
 // order of the zlib trailer).
 void appendBigEndian(std::string& out, uint32_t value) {
-  for (size_t i = 4; i > 0; --i) {
-    out.push_back(static_cast<char>((value >> (8 * (i - 1))) & 0xFF));
+  for (size_t i : ql::views::iota(size_t{0}, size_t{4})) {
+    out.push_back(static_cast<char>((value >> (8 * (3 - i))) & 0xFF));
   }
 }
 
