@@ -117,8 +117,9 @@ bool isInFinalForm(const EvaluatedTermData& term, bool includeDataType) {
 }
 
 // Append `formatTerm(term, includeDataType)` to `out`. If `escapeLiteral` is
-// true, a term that is a literal (starts with ") is appended in the form of
-// `RdfEscaping::validRDFLiteralFromNormalized`.
+// true and `term` is a literal (either an encoded literal, which is always a
+// literal, or a term whose string starts with `"`), the term is appended in
+// the form of `RdfEscaping::validRDFLiteralFromNormalized`.
 void appendFormattedTerm(std::string& out, const EvaluatedTermData& term,
                          bool includeDataType, bool escapeLiteral) {
   if (!isInFinalForm(term, includeDataType)) {
@@ -139,11 +140,11 @@ void appendFormattedTerm(std::string& out, const EvaluatedTermData& term,
 
 // _____________________________________________________________________________
 std::string formatTerm(const EvaluatedTermData& term, bool includeDataType) {
+  const std::string_view str = term.rdfTermString();
   if (isInFinalForm(term, includeDataType)) {
-    return std::string{term.rdfTermString()};
+    return std::string{str};
   }
-  return absl::StrCat("\"", term.rdfTermString(), "\"^^<",
-                      term.rdfTermDataType(), ">");
+  return absl::StrCat("\"", str, "\"^^<", term.rdfTermDataType(), ">");
 }
 
 // _____________________________________________________________________________
