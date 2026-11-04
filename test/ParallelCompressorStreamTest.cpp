@@ -29,12 +29,12 @@
 namespace {
 // The parts of `compressStreamInParallel` that are exposed for testing.
 namespace pc = ad_utility::streams::detail::parallelCompression;
-// The minimal size of a block that `compressStreamInParallel` compresses on its
-// own (except for the last block). The tests choose the sizes of their inputs
-// and pieces relative to it, so that an input is one block, several blocks, or
-// blocks that end inside a piece.
+// The default minimal size of a block that `compressStreamInParallel`
+// compresses on its own (except for the last block). The tests choose the sizes
+// of their inputs and pieces relative to it, so that an input is one block,
+// several blocks, or blocks that end inside a piece.
 constexpr size_t minBlock =
-    ad_utility::streams::MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK;
+    ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE.getBytes();
 
 // Yield the `pieces` as they are (including empty ones).
 cppcoro::generator<std::string> yieldAll(std::vector<std::string> pieces) {
@@ -146,13 +146,15 @@ class ParallelCompressorStream
 
   // Compress the `input` on the `pool_`, and check that both decoders give
   // the `expected` bytes. Return the compressed bytes.
-  std::string compressAndCheck(cppcoro::generator<std::string> input,
-                               std::string_view expected,
-                               size_t maxNumberOfBlocksInFlight = 8) {
+  std::string compressAndCheck(
+      cppcoro::generator<std::string> input, std::string_view expected,
+      size_t maxNumberOfBlocksInFlight = 8,
+      ad_utility::MemorySize blockSize =
+          ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE) {
     auto compressed = ad_utility::testing::concatenate(
         ad_utility::streams::compressStreamInParallel(
             std::move(input), GetParam(), pool_.get_executor(),
-            maxNumberOfBlocksInFlight));
+            maxNumberOfBlocksInFlight, blockSize));
     EXPECT_EQ(inflateStrictly(compressed, GetParam(), expected.size()),
               expected);
     EXPECT_EQ(decompressWithBoost(compressed, GetParam()), expected);
@@ -240,13 +242,54 @@ TEST_P(ParallelCompressorStream, blocksUseTheDictionary) {
 }
 
 // _____________________________________________________________________________
+// The output is one valid stream that decompresses to the input for every
+// valid block size, including the smallest and the largest. A small block
+// size makes many blocks, so the output differs from that of the default.
+TEST_P(ParallelCompressorStream, blockSizeDoesNotChangeTheDecompressedBytes) {
+  namespace streams = ad_utility::streams;
+  auto text = csvLikeText(8 * minBlock + 17);
+  auto withDefault =
+      compressAndCheck(ad_utility::testing::inPieces(text, 1000), text, 8,
+                       streams::DEFAULT_COMPRESSION_BLOCK_SIZE);
+  for (auto blockSize : {streams::MIN_COMPRESSION_BLOCK_SIZE,
+                         ad_utility::MemorySize::bytes(40'000),
+                         streams::MAX_COMPRESSION_BLOCK_SIZE}) {
+    for (size_t pieceSize : {size_t{1000}, size_t{100'000}}) {
+      auto compressed = compressAndCheck(
+          ad_utility::testing::inPieces(text, pieceSize), text, 8, blockSize);
+      if (blockSize.getBytes() < minBlock) {
+        EXPECT_NE(compressed, withDefault) << blockSize;
+      }
+    }
+  }
+}
+
+// _____________________________________________________________________________
+// A block size outside of the valid range is rejected.
+TEST_P(ParallelCompressorStream, blockSizeOutsideOfTheRangeIsRejected) {
+  namespace streams = ad_utility::streams;
+  for (auto blockSize :
+       {ad_utility::MemorySize::bytes(
+            streams::MIN_COMPRESSION_BLOCK_SIZE.getBytes() - 1),
+        ad_utility::MemorySize::bytes(
+            streams::MAX_COMPRESSION_BLOCK_SIZE.getBytes() + 1)}) {
+    AD_EXPECT_THROW_WITH_MESSAGE(
+        streams::compressStreamInParallel(yieldAll({"x"}), GetParam(),
+                                          pool_.get_executor(), 1, blockSize)
+            .begin(),
+        ::testing::HasSubstr("minBlockSize"));
+  }
+}
+
+// _____________________________________________________________________________
 TEST_P(ParallelCompressorStream, noneIsTheIdentity) {
   auto text = csvLikeText(3 * minBlock);
   auto output = ad_utility::testing::concatenate(
       ad_utility::streams::compressStreamInParallel(
           ad_utility::testing::inPieces(text, 1000),
           ad_utility::content_encoding::CompressionMethod::NONE,
-          pool_.get_executor(), 2));
+          pool_.get_executor(), 2,
+          ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE));
   EXPECT_EQ(output, text);
 }
 
@@ -261,7 +304,8 @@ TEST_P(ParallelCompressorStream, exceptionInTheInputIsPropagated) {
     AD_THROW("Operation was manually cancelled.");
   };
   auto generator = ad_utility::streams::compressStreamInParallel(
-      throwing(), GetParam(), pool_.get_executor(), 4);
+      throwing(), GetParam(), pool_.get_executor(), 4,
+      ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE);
   AD_EXPECT_THROW_WITH_MESSAGE(
       ad_utility::testing::concatenate(std::move(generator)),
       ::testing::HasSubstr("Operation was manually cancelled."));
@@ -286,7 +330,8 @@ TEST_P(ParallelCompressorStream, earlyDestruction) {
   {
     auto generator = ad_utility::streams::compressStreamInParallel(
         endlessInput(numberOfPiecesRead), GetParam(), pool_.get_executor(),
-        maxNumberOfBlocksInFlight);
+        maxNumberOfBlocksInFlight,
+        ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE);
     // The header, and then the consumed blocks.
     auto it = generator.begin();
     for ([[maybe_unused]] size_t i :

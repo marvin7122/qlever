@@ -178,12 +178,11 @@ std::string StreamFrame::finalBlockAndTrailer() const {
 
 namespace {
 // _____________________________________________________________________________
-// Cut the `range` into `UncompressedBlock`s of at least
-// `MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK` bytes (except the last one),
-// each with the last `DICTIONARY_SIZE` bytes of the previous block as its
-// dictionary.
+// Cut the `range` into `UncompressedBlock`s of at least `minBlockSize` (which
+// is at least `DICTIONARY_SIZE`) bytes (except the last one), each with the
+// last `DICTIONARY_SIZE` bytes of the previous block as its dictionary.
 cppcoro::generator<UncompressedBlock> cutIntoBlocks(
-    cppcoro::generator<std::string> range) {
+    cppcoro::generator<std::string> range, size_t minBlockSize) {
   std::string dictionary;
   std::string bytes;
   auto makeBlock = [&dictionary, &bytes]() {
@@ -206,7 +205,7 @@ cppcoro::generator<UncompressedBlock> cutIntoBlocks(
     } else {
       bytes.append(piece);
     }
-    if (bytes.size() >= MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK) {
+    if (bytes.size() >= minBlockSize) {
       co_yield makeBlock();
     }
   }
@@ -221,9 +220,13 @@ cppcoro::generator<UncompressedBlock> cutIntoBlocks(
 cppcoro::generator<std::string> compressStreamInParallel(
     cppcoro::generator<std::string> range,
     content_encoding::CompressionMethod compressionMethod,
-    qlever::Executor executor, size_t maxNumberOfBlocksInFlight) {
+    qlever::Executor executor, size_t maxNumberOfBlocksInFlight,
+    ad_utility::MemorySize minBlockSize) {
   namespace pc = detail::parallelCompression;
   AD_CONTRACT_CHECK(maxNumberOfBlocksInFlight >= 1);
+  AD_CONTRACT_CHECK(
+      minBlockSize.getBytes() >= MIN_COMPRESSION_BLOCK_SIZE.getBytes() &&
+      minBlockSize.getBytes() <= MAX_COMPRESSION_BLOCK_SIZE.getBytes());
   if (compressionMethod == content_encoding::CompressionMethod::NONE) {
     for (std::string& piece : range) {
       co_yield piece;
@@ -239,7 +242,7 @@ cppcoro::generator<std::string> compressStreamInParallel(
   // When this generator is destroyed early (for example, after a client
   // disconnect), the view waits for the blocks in flight.
   ad_utility::AsyncTransformView compressedBlocks{
-      pc::cutIntoBlocks(std::move(range)),
+      pc::cutIntoBlocks(std::move(range), minBlockSize.getBytes()),
       [format](const pc::UncompressedBlock& block) {
         return pc::compressBlock(block, format);
       },

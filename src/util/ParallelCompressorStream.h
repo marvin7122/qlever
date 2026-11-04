@@ -29,8 +29,8 @@ namespace ad_utility::streams {
 // compression runs on the `executor`, for up to `maxNumberOfBlocksInFlight`
 // blocks at the same time, in the way of `pigz`:
 //
-// 1. The input is cut into blocks of at least
-//    `MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK` bytes (except the last one).
+// 1. The input is cut into blocks of at least `minBlockSize` (except the last
+//    one), see `DEFAULT_COMPRESSION_BLOCK_SIZE` for what a block is.
 // 2. Each block is compressed on its own into raw deflate data that ends with
 //    a sync flush (so it is byte-aligned and not final). The last 32 KiB of
 //    the input before the block are its dictionary, so the compression may
@@ -47,30 +47,65 @@ namespace ad_utility::streams {
 // IMPORTANT: As for `AsyncTransformView`, this generator must not be consumed
 // on a thread of the `executor`, and the execution context of the `executor`
 // has to outlive the generator. The `range` itself is read on the thread that
-// consumes the generator. `maxNumberOfBlocksInFlight` has to be at least 1.
+// consumes the generator. `maxNumberOfBlocksInFlight` has to be at least 1,
+// and `minBlockSize` has to lie between `MIN_COMPRESSION_BLOCK_SIZE` and
+// `MAX_COMPRESSION_BLOCK_SIZE` (else an `AD_CONTRACT_CHECK` fails).
 cppcoro::generator<std::string> compressStreamInParallel(
     cppcoro::generator<std::string> range,
     content_encoding::CompressionMethod compressionMethod,
-    qlever::Executor executor, size_t maxNumberOfBlocksInFlight);
-
-// The minimal size of a block (except the last one) that is compressed on its
-// own. It is the default block size of `pigz`. A piece of the input that is at
-// least this large becomes one block on its own (for example, each piece of
-// about 1 MiB of an export, the buffer of the `stream_generator`); smaller
-// pieces are joined until the block reaches this size.
-constexpr size_t MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK = 128 * 1024;
+    qlever::Executor executor, size_t maxNumberOfBlocksInFlight,
+    ad_utility::MemorySize minBlockSize);
 
 namespace detail::parallelCompression {
-// The parts of `compressStreamInParallel`, exposed for testing.
-
 // The size of the deflate window (32 KiB), which is the maximal distance of a
 // reference back into the previous input. (It is spelled in bytes, because the
 // `_kB` literal of `MemorySize` means 1000 bytes.)
 constexpr ad_utility::MemorySize DICTIONARY_SIZE =
     ad_utility::MemorySize::bytes(32 * 1024);
-static_assert(MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK >=
-                  DICTIONARY_SIZE.getBytes(),
-              "The dictionary of a block must lie in the previous block");
+}  // namespace detail::parallelCompression
+
+// A compression block is a run of consecutive pieces of the input that is
+// compressed on its own, by one task on the executor.
+// `compressStreamInParallel` joins pieces until the block has at least the
+// block size (a piece that is that large becomes one block on its own, for
+// example, each piece of about 1 MiB of an export, the buffer of the
+// `stream_generator`), so only the last block is smaller. The default block
+// size is the default of `pigz`, which balances three things:
+// - Compression ratio: a block starts with the last 32 KiB of the previous
+//   block as its dictionary, so a block boundary costs little, and the loss
+//   per boundary is bounded by that window. The relative loss is the larger,
+//   the closer the block size is to the window.
+// - Parallelism: the input of a response is compressed in parallel only if it
+//   has several blocks, so a smaller block size makes a short response use more
+//   threads.
+// - Memory: at most `maxNumberOfBlocksInFlight` blocks are in flight, each
+//   holding its input and an output buffer of `deflateBound` bytes, so the
+//   memory is about `maxNumberOfBlocksInFlight * 2 * block size`.
+// It is the runtime parameter `parallel-response-compression-block-size`. The
+// output is one valid zlib or gzip stream for every block size.
+constexpr ad_utility::MemorySize DEFAULT_COMPRESSION_BLOCK_SIZE =
+    ad_utility::MemorySize::bytes(128 * 1024);
+
+// The smallest valid block size: the dictionary of a block must lie in the
+// previous block, so every block that has a successor needs at least
+// `DICTIONARY_SIZE` bytes.
+constexpr ad_utility::MemorySize MIN_COMPRESSION_BLOCK_SIZE =
+    detail::parallelCompression::DICTIONARY_SIZE;
+
+// The largest valid block size. A larger block does not improve the ratio
+// noticeably (the window is only 32 KiB), but delays the first byte of the
+// response and multiplies the memory in flight: with the default of 6 threads
+// per query, 12 blocks of 16 MiB hold about 400 MiB.
+constexpr ad_utility::MemorySize MAX_COMPRESSION_BLOCK_SIZE =
+    ad_utility::MemorySize::bytes(16 * 1024 * 1024);
+
+static_assert(DEFAULT_COMPRESSION_BLOCK_SIZE.getBytes() >=
+                  MIN_COMPRESSION_BLOCK_SIZE.getBytes() &&
+              DEFAULT_COMPRESSION_BLOCK_SIZE.getBytes() <=
+                  MAX_COMPRESSION_BLOCK_SIZE.getBytes());
+
+namespace detail::parallelCompression {
+// The parts of `compressStreamInParallel`, exposed for testing.
 
 // The two formats around a deflate stream that `compressStreamInParallel`
 // writes (see `CompressionMethod`).

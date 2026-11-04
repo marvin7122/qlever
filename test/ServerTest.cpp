@@ -95,7 +95,7 @@ TEST(ServerTest, compressBodyForQuery) {
   std::string text;
   size_t row = 0;
   while (text.size() <
-         3 * ad_utility::streams::MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK) {
+         3 * ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE.getBytes()) {
     absl::StrAppend(&text, "\"row\",", row++, "\n");
   }
   // The body comes in pieces, as the body of a response does.
@@ -114,8 +114,9 @@ TEST(ServerTest, compressBodyForQuery) {
     auto sequential = ad_utility::testing::concatenate(
         ad_utility::streams::compressStream(body(), method));
     auto parallel = ad_utility::testing::concatenate(
-        ad_utility::streams::compressStreamInParallel(body(), method,
-                                                      pool.get_executor(), 1));
+        ad_utility::streams::compressStreamInParallel(
+            body(), method, pool.get_executor(), 1,
+            ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE));
     ASSERT_NE(sequential, parallel);
     EXPECT_EQ(compressWithServer(), sequential);
     auto cleanup = setRuntimeParameterForTest<

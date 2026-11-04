@@ -1128,11 +1128,15 @@ ad_utility::httpUtils::CompressBody Server::compressBodyForQuery(
   const size_t maxNumberOfBlocksInFlight =
       2 * getRuntimeParameter<&RuntimeParameters::maxNumThreadsPerQuery_>();
 
-  return [executor = std::move(executor), maxNumberOfBlocksInFlight](
+  const ad_utility::MemorySize blockSize = getRuntimeParameter<
+      &RuntimeParameters::parallelResponseCompressionBlockSize_>();
+
+  return [executor = std::move(executor), maxNumberOfBlocksInFlight, blockSize](
              cppcoro::generator<std::string> body,
              ad_utility::content_encoding::CompressionMethod method) {
     return ad_utility::streams::compressStreamInParallel(
-        std::move(body), method, executor, maxNumberOfBlocksInFlight);
+        std::move(body), method, executor, maxNumberOfBlocksInFlight,
+        blockSize);
   };
 }
 
