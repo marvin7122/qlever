@@ -86,22 +86,25 @@ class FsstDecoder {
     return size;
   }
 
-  // Decompress `str` into `buffer`, which is grown (never shrunk) to the
-  // maximal decompressed size, and return a view of the result in `buffer`.
-  std::string_view decompressIntoBuffer(std::string_view str,
-                                        std::string& buffer) const {
+  // Decompress `str` into `buffer`, which is first grown (never shrunk) to the
+  // worst-case size `8 * str.size()`, and return a view of the decompressed
+  // bytes in `buffer`, valid until `buffer` is changed.
+  [[nodiscard]] std::string_view decompressIntoBuffer(
+      std::string_view str, std::string& buffer) const {
     if (buffer.size() < 8 * str.size()) {
       buffer.resize(8 * str.size());
     }
-    return {buffer.data(), decompressInto(str, buffer)};
+    const size_t size = decompressInto(str, buffer);
+    return {buffer.data(), size};
   }
 
   // Like `decompress`, but the result is a view into `scratch`, valid until
   // `scratch` is used again.
-  std::string_view decompressWithScratch(
+  [[nodiscard]] std::string_view decompressWithScratch(
       std::string_view str, FsstDecompressionScratch& scratch) const {
     return decompressIntoBuffer(str, scratch[0]);
   }
+
   // Allow this type to be trivially serializable,
   CPP_template(typename T, typename U)(
       requires ql::concepts::same_as<T, FsstDecoder>)
@@ -149,7 +152,7 @@ class FsstRepeatedDecoder {
   // `scratch` (alternating, so that the input of a step is never the buffer it
   // writes to), instead of a new string. The result is a view into `scratch`,
   // valid until `scratch` is used again.
-  std::string_view decompressWithScratch(
+  [[nodiscard]] std::string_view decompressWithScratch(
       std::string_view str, FsstDecompressionScratch& scratch) const {
     std::string_view nextInput = str;
     size_t nextBuffer = 0;
@@ -159,6 +162,7 @@ class FsstRepeatedDecoder {
     }
     return nextInput;
   }
+
   // Allow this type to be trivially serializable,
   CPP_template_2(typename T, typename U)(
       requires ql::concepts::same_as<T, FsstRepeatedDecoder>)

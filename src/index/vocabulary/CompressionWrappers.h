@@ -56,8 +56,9 @@ template <typename T>
 CPP_concept CompressionWrapper = CPP_requires_ref(CompressionWrapper_, T);
 
 namespace detail {
-// A decoder that can decompress a word into reused buffers (see
-// `FsstRepeatedDecoder::decompressWithScratch`).
+// A decoder that can decompress a word into the reused buffers of an
+// `FsstDecompressionScratch` (see
+// `FsstRepeatedDecoder::decompressWithScratch`), returning a view into them.
 template <typename Decoder>
 CPP_requires(DecompressesWithScratch_,
              requires(const Decoder& decoder, std::string_view str,
@@ -94,11 +95,12 @@ struct DecoderMultiplexer {
     return decoders_.at(decoderIndex).decompress(compressed);
     ENABLE_CLANG_WARNINGS
   }
-  // Like `decompress`, but the result is a view into `scratch` (see
-  // `FsstRepeatedDecoder::decompressWithScratch`). Only for decoders that
-  // support it.
+  // Like `decompress`, but the result is a view into `scratch`, not an owning
+  // string: it is valid until `scratch` is passed to a decompression again or
+  // destroyed (see `FsstRepeatedDecoder::decompressWithScratch`). Only for
+  // decoders that support it.
   CPP_template_2(typename D = Decoder)(requires DecompressesWithScratch<D>)
-  std::string_view
+  [[nodiscard]] std::string_view
       decompressWithScratch(std::string_view compressed, size_t decoderIndex,
                             FsstDecompressionScratch& scratch) const {
     return decoders_.at(decoderIndex)

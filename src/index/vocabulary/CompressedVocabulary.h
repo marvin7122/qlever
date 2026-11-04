@@ -36,7 +36,9 @@ template <typename Vocabulary, typename Iterator>
 CPP_concept IterableVocabulary =
     CPP_requires_ref(IterableVocabulary_, Vocabulary, Iterator);
 
-// A compression wrapper that can decompress a word into reused buffers (see
+// A compression wrapper whose `decompressWithScratch(word, decoderIndex,
+// scratch)` decompresses into the reused buffers of an
+// `FsstDecompressionScratch` and returns a view into them (see
 // `DecoderMultiplexer::decompressWithScratch`).
 template <typename CompressionWrapper>
 CPP_requires(
@@ -776,6 +778,10 @@ class CompressedVocabulary {
          ::ranges::views::zip(compressedWords, indices)) {
       const std::string_view word = compressionWrapper_.decompressWithScratch(
           compressedWord, getDecoderIdx(index), scratch);
+      if (word.empty()) {
+        views.emplace_back();
+        continue;
+      }
       auto* target = static_cast<char*>(arena.allocate(word.size(), 1));
       std::memcpy(target, word.data(), word.size());
       views.emplace_back(target, word.size());

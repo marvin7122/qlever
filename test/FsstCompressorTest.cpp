@@ -372,17 +372,42 @@ TEST(FsstDecoder, decompressWithScratchMatchesDecompress) {
   std::vector<std::string> words{std::string(1000, 'a') + "bcdefg", "x", "",
                                  "the quick brown fox jumps over the lazy dog",
                                  std::string(2000, 'z')};
-  auto [buffer1, views1, decoder1] = FsstEncoder::compressAll(words);
-  auto [buffer2, views2, decoder2] = FsstEncoder::compressAll(views1);
-  FsstRepeatedDecoder<2> repeatedDecoder{std::array{decoder1, decoder2}};
+  auto [singleStageBuffer, singleStageViews, singleStageDecoder] =
+      FsstEncoder::compressAll(words);
+  // The second encoder compresses the output of the first one, so
+  // `FsstRepeatedDecoder` has to decode in reverse order (second decoder
+  // first).
+  auto [twoStageBuffer, twoStageViews, twoStageDecoder] =
+      FsstEncoder::compressAll(singleStageViews);
+  FsstRepeatedDecoder<2> repeatedDecoder{
+      std::array{singleStageDecoder, twoStageDecoder}};
 
   FsstDecompressionScratch scratch;
-  for (auto [compressed, word] : ::ranges::views::zip(views1, words)) {
-    EXPECT_EQ(decoder1.decompress(compressed), word);
-    EXPECT_EQ(decoder1.decompressWithScratch(compressed, scratch), word);
+  ASSERT_EQ(singleStageViews.size(), words.size());
+  for (auto [compressed, word] :
+       ::ranges::views::zip(singleStageViews, words)) {
+    EXPECT_EQ(singleStageDecoder.decompress(compressed), word);
+    EXPECT_EQ(singleStageDecoder.decompressWithScratch(compressed, scratch),
+              word);
   }
-  for (auto [compressed, word] : ::ranges::views::zip(views2, words)) {
+  ASSERT_EQ(twoStageViews.size(), words.size());
+  for (auto [compressed, word] : ::ranges::views::zip(twoStageViews, words)) {
     EXPECT_EQ(repeatedDecoder.decompress(compressed), word);
     EXPECT_EQ(repeatedDecoder.decompressWithScratch(compressed, scratch), word);
   }
+}
+
+// `decompressIntoBuffer` grows the buffer to the worst-case size of its input
+// and never shrinks it, and a shorter word decompressed into the grown buffer
+// is still correct.
+TEST(FsstDecoder, decompressIntoBufferGrowsAndReusesTheBuffer) {
+  std::vector<std::string> words{std::string(3000, 'q') + "end", "ab"};
+  auto [buffer, views, decoder] = FsstEncoder::compressAll(words);
+  ASSERT_EQ(views.size(), words.size());
+  std::string target;
+  EXPECT_EQ(decoder.decompressIntoBuffer(views[0], target), words[0]);
+  const size_t grownSize = target.size();
+  EXPECT_GE(grownSize, 8 * views[0].size());
+  EXPECT_EQ(decoder.decompressIntoBuffer(views[1], target), words[1]);
+  EXPECT_EQ(target.size(), grownSize);
 }
