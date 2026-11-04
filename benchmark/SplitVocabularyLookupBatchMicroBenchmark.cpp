@@ -28,6 +28,7 @@
 #include <filesystem>
 #include <random>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "global/Constants.h"
@@ -150,26 +151,36 @@ int main(int argc, char** argv) {
   auto batched = [&vocab](const std::vector<size_t>& batch) {
     return vocab.lookupBatch(batch);
   };
+  // The `lookupBatch` of the marker-0 vocabulary itself (only for batches
+  // without other markers): separates the cost of the split layer from the
+  // cost of the batched lookups below it.
+  auto underlying = [&vocab](const std::vector<size_t>& batch) {
+    return std::visit([&batch](const auto& v) { return v.lookupBatch(batch); },
+                      vocab.getUnderlyingVocabulary(0));
+  };
 
   std::mt19937_64 rng{42};
   int rc = 0;
   for (std::string_view pattern : {"sequential", "scattered", "mixed"}) {
     const Batches batches = makeBatches(pattern, numPlain, numGeo, rng);
+    std::vector<std::string_view> arms{"batched", "per-word"};
+    if (pattern != "mixed") arms.push_back("underlying");
     for (bool cold : {true, false}) {
       if (!cold) run(batches, batched);  // Warm up the page cache.
       for (size_t trial = 0; trial < numTrials; ++trial) {
-        for (size_t k = 0; k < 2; ++k) {
-          const bool batchedArm = (k + trial) % 2 == 0;
+        for (size_t k = 0; k < arms.size(); ++k) {
+          const std::string_view arm = arms[(k + trial) % arms.size()];
           if (cold) evict(dir);
-          auto [nsPerWord, checksum] =
-              batchedArm ? run(batches, batched) : run(batches, perWord);
+          auto [nsPerWord, checksum] = arm == "batched" ? run(batches, batched)
+                                       : arm == "per-word"
+                                           ? run(batches, perWord)
+                                           : run(batches, underlying);
           std::printf(
-              "RESULT pattern=%.*s cache=%s trial=%zu arm=%s "
+              "RESULT pattern=%.*s cache=%s trial=%zu arm=%.*s "
               "ns_per_word=%.2f checksum=%016llx\n",
               static_cast<int>(pattern.size()), pattern.data(),
-              cold ? "cold" : "warm", trial,
-              batchedArm ? "batched" : "per-word", nsPerWord,
-              static_cast<unsigned long long>(checksum));
+              cold ? "cold" : "warm", trial, static_cast<int>(arm.size()),
+              arm.data(), nsPerWord, static_cast<unsigned long long>(checksum));
           std::fflush(stdout);
         }
       }
