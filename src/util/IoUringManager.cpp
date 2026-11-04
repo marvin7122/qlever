@@ -110,12 +110,18 @@ class LiburingRing final : public IoUringInterface, public NoCopyNoMove {
     return true;
   }
 
-  size_t numberOfQueued() const override { return io_uring_sq_ready(&ring_); }
+  size_t numberOfQueued() const noexcept override {
+    return io_uring_sq_ready(&ring_);
+  }
 
   // `*kring_entries` exists in every liburing version, `ring_entries` only
   // since 2.3.
-  size_t sqCapacity() const override { return *ring_.sq.kring_entries; }
-  size_t cqCapacity() const override { return *ring_.cq.kring_entries; }
+  size_t sqCapacity() const noexcept override {
+    return *ring_.sq.kring_entries;
+  }
+  size_t cqCapacity() const noexcept override {
+    return *ring_.cq.kring_entries;
+  }
 
   int submit() override { return io_uring_submit(&ring_); }
 

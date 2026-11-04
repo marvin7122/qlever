@@ -18,7 +18,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -202,11 +201,11 @@ class IoUringInterface {
                            uint64_t offset, uint64_t requestId) = 0;
 
   // The number of prepared SQEs that the kernel has not taken yet.
-  virtual size_t numberOfQueued() const = 0;
+  virtual size_t numberOfQueued() const noexcept = 0;
 
   // Return the number of SQEs, and of CQEs, that the ring has room for.
-  virtual size_t sqCapacity() const = 0;
-  virtual size_t cqCapacity() const = 0;
+  virtual size_t sqCapacity() const noexcept = 0;
+  virtual size_t cqCapacity() const noexcept = 0;
 
   // `io_uring_submit`: hand the prepared SQEs to the kernel, which takes them
   // in the order in which they were prepared, possibly not all of them. Return
@@ -236,7 +235,8 @@ class IoUringInterface {
 // Return an `IoUringInterface` backed by liburing with (at least) `ringSize`
 // SQEs; liburing rounds the size up to a power of two. Throw if the ring
 // cannot be set up, for example because `io_uring_setup` is blocked by
-// seccomp, so that `makeBatchManager` falls back to synchronous reads.
+// seccomp, so that `ad_utility::makeBatchManager` falls back to synchronous
+// reads.
 std::unique_ptr<IoUringInterface> makeLiburingRing(unsigned ringSize);
 
 // Persistent io_uring manager that accepts multiple named batches of indices to
@@ -342,14 +342,14 @@ class IoUringPolicy : public NoCopyNoMove {
 
   // The requests (reads and no-ops) that the kernel has taken and whose
   // completion has not been reaped yet.
-  size_t numberOfRequestsInKernel() const {
+  size_t numberOfRequestsInKernel() const noexcept {
     return numberOfInFlightReads_ - numberOfQueuedReads_ +
            numberOfNoOpsInKernel_;
   }
 
   // Whether every slot of the ring holds a request: a read or a no-op that is
   // queued, in the kernel, or completed but not yet reaped.
-  bool ringIsFull() const {
+  bool ringIsFull() const noexcept {
     return numberOfInFlightReads_ + numberOfNoOpsQueued_ +
                numberOfNoOpsInKernel_ >=
            ringSize_;
