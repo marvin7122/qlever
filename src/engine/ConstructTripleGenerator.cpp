@@ -156,12 +156,15 @@ ConstructTripleGenerator::generateFormattedTriples(
                      rowOffset, config);
 
   // Append the formatted triples to one string until it holds at least
-  // `FORMATTED_CHUNK_BYTES`, instead of one string per triple.
+  // `FORMATTED_CHUNK_BYTES` (the size is checked before each triple is
+  // appended, so the last triple may push the string beyond it), instead of
+  // one string per triple.
   return InputRangeTypeErased<std::string>{
       ad_utility::InputRangeFromGetCallable{
           [triples = std::move(evaluatedTriples), mediaType,
            exhausted = false]() mutable -> std::optional<std::string> {
             std::string chunk;
+            chunk.reserve(FORMATTED_CHUNK_BYTES);
             while (!exhausted && chunk.size() < FORMATTED_CHUNK_BYTES) {
               auto triple = triples.get();
               if (!triple.has_value()) {
