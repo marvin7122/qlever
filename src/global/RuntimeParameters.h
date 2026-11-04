@@ -18,7 +18,6 @@
 // complete QLever instance.
 struct RuntimeParameters {
   using Bool = ad_utility::detail::parameterShortNames::Bool;
-  using Double = ad_utility::detail::parameterShortNames::Double;
   template <typename DurationTp>
   using Duration =
       ad_utility::detail::parameterShortNames::DurationParameter<DurationTp>;
@@ -300,8 +299,9 @@ struct RuntimeParameters {
   // The minimal hit rate of a window of the term cache (see above). Must be in
   // [0, 1]; 0 disables the check and keeps the cache on. The value is not
   // tuned.
-  Double selectExportTermCacheMinHitRate_{
-      0.25, "select-export-term-cache-min-hit-rate"};
+  ad_utility::detail::parameterShortNames::Double
+      selectExportTermCacheMinHitRate_{0.25,
+                                       "select-export-term-cache-min-hit-rate"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
