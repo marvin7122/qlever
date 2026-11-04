@@ -73,6 +73,9 @@ RuntimeParameters::RuntimeParameters() {
   add(disableCaching_);
   add(logLevel_);
   add(constructDeduplication_);
+  add(selectExportTermCacheMaxSize_);
+  add(selectExportTermCacheNumberOfLookupsPerWindow_);
+  add(selectExportTermCacheMinHitRate_);
 
   // Propagate runtime log level changes immediately to the global atomic in
   // Log.h. The action fires once immediately on registration, so the atomic is
@@ -104,6 +107,13 @@ RuntimeParameters::RuntimeParameters() {
   permutationWriterNumBlocksInFlight_.setParameterConstraint(
       mustBeStrictlyPositive);
   sortNumTasksInFlight_.setParameterConstraint(mustBeStrictlyPositive);
+  selectExportTermCacheMinHitRate_.setParameterConstraint(
+      [](double value, std::string_view parameterName) {
+        if (!(value >= 0.0 && value <= 1.0)) {
+          throw std::runtime_error{absl::StrCat(
+              "Parameter ", parameterName, " must be in [0, 1], was ", value)};
+        }
+      });
 }
 
 // _____________________________________________________________________________

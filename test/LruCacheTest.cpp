@@ -10,12 +10,17 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <list>
+#include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "util/GTestHelpers.h"
 #include "util/LruCache.h"
+#include "util/Views.h"
 
 namespace {
 // Copy a recency list `keys_` (MRU first) into a vector, for white-box
@@ -238,6 +243,144 @@ TEST(LRUCache, insertNewEntrySeatsKeyBeforeComputingValue) {
   // The returned reference aliases the stored value.
   EXPECT_EQ(&stored, &cache.cache_.find(7)->second.first);
   EXPECT_EQ((std::vector<int>{7}), GetKeysInOrder(cache.keys_));
+}
+
+// _____________________________________________________________________________
+TEST(LRUCache, insertAbsentInsertsAndEvictsWhenFull) {
+  LRUCache<int, std::string> cache(2);
+  EXPECT_EQ(cache.size(), 0u);
+  EXPECT_EQ(cache.insertAbsent(1, "one"), "one");
+  EXPECT_EQ(cache.insertAbsent(2, std::string{"two"}), "two");
+  EXPECT_EQ(cache.size(), 2u);
+  // `1` is the least recently used entry and is evicted.
+  const std::string& three = cache.insertAbsent(3, "three");
+  EXPECT_EQ(three, "three");
+  EXPECT_EQ(cache.size(), 2u);
+  EXPECT_FALSE(cache.tryGet(1));
+  EXPECT_EQ(cache.tryGet(2).value(), "two");
+  EXPECT_EQ(&cache.tryGet(3).value(), &three);
+}
+
+// _____________________________________________________________________________
+// The precondition of `insertAbsent` (the key is not in the cache) is checked
+// only with expensive checks, see `insertAbsent`.
+TEST(LRUCache, insertAbsentChecksThatTheKeyIsAbsent) {
+  if constexpr (ad_utility::areExpensiveChecksEnabled) {
+    LRUCache<int, std::string> cache(2);
+    cache.insertAbsent(1, "one");
+    AD_EXPECT_THROW_WITH_MESSAGE(cache.insertAbsent(1, "one again"),
+                                 ::testing::HasSubstr("!cache_.contains(key)"));
+    // The failed insertion changed nothing.
+    EXPECT_EQ(cache.size(), 1u);
+    EXPECT_EQ(cache.tryGet(1).value(), "one");
+  }
+}
+
+// _____________________________________________________________________________
+TEST(LRUCache, popLeastRecentlyUsedFollowsRecency) {
+  LRUCache<int, std::string> cache(3);
+  EXPECT_EQ(cache.popLeastRecentlyUsed(), std::nullopt);
+  cache.insertAbsent(1, "one");
+  cache.insertAbsent(2, "two");
+  cache.insertAbsent(3, "three");
+  // Make `1` the most recently used entry.
+  EXPECT_TRUE(cache.tryGet(1));
+  EXPECT_EQ(cache.popLeastRecentlyUsed(), "two");
+  EXPECT_EQ(cache.popLeastRecentlyUsed(), "three");
+  EXPECT_EQ(cache.size(), 1u);
+  EXPECT_FALSE(cache.tryGet(2));
+  // The cache is still consistent: new entries can be inserted.
+  cache.insertAbsent(2, "two again");
+  EXPECT_EQ(cache.popLeastRecentlyUsed(), "one");
+  EXPECT_EQ(cache.popLeastRecentlyUsed(), "two again");
+  EXPECT_EQ(cache.popLeastRecentlyUsed(), std::nullopt);
+  EXPECT_EQ(cache.size(), 0u);
+}
+
+// _____________________________________________________________________________
+TEST(LRUCache, hashTableKeepsItsCapacityUntilShrunk) {
+  LRUCache<int, int> cache(1000);
+  EXPECT_EQ(cache.hashTableCapacity(), 0u);
+  using Cache = LRUCache<int, int>;
+  EXPECT_EQ(Cache::numberOfBytesOfHashTable(0), 0u);
+  for (int i : ql::views::iota(0, 100)) {
+    cache.insertAbsent(i, i);
+  }
+  size_t capacity = cache.hashTableCapacity();
+  EXPECT_GE(capacity, 100u);
+  EXPECT_GT(Cache::numberOfBytesOfHashTable(capacity),
+            capacity * Cache::numberOfBytesPerHashTableSlot);
+  for ([[maybe_unused]] int i : ql::views::iota(0, 95)) {
+    EXPECT_TRUE(cache.popLeastRecentlyUsed().has_value());
+  }
+  // Removing entries does not shrink the table.
+  EXPECT_EQ(cache.hashTableCapacity(), capacity);
+  cache.shrinkHashTableToFit();
+  EXPECT_LT(cache.hashTableCapacity(), capacity);
+  EXPECT_GE(cache.hashTableCapacity(), 5u);
+  // The remaining entries are still there, in the same order.
+  for (int i : ql::views::iota(95, 100)) {
+    EXPECT_EQ(cache.popLeastRecentlyUsed(), i);
+  }
+}
+
+// _____________________________________________________________________________
+// `hashTableCapacityAfterOneMoreInsertion` is an upper bound of the capacity
+// after an insertion, while the table grows and while entries are inserted and
+// removed (which leaves deleted slots), and the table always grows to 2c + 1.
+// This pins the growth policy of the abseil in use for the slot of
+// `LRUCache<uint64_t, Value>`.
+template <typename Value>
+void checkHashTableCapacityAfterOneMoreInsertion() {
+  LRUCache<uint64_t, Value> cache(100'000);
+  uint64_t nextKey = 0;
+  size_t numberOfGrowths = 0;
+  auto insertAndCheck = [&]() {
+    size_t before = cache.hashTableCapacity();
+    size_t projected = cache.hashTableCapacityAfterOneMoreInsertion();
+    cache.insertAbsent(nextKey, Value{});
+    ++nextKey;
+    size_t after = cache.hashTableCapacity();
+    EXPECT_LE(after, projected) << "capacity before: " << before;
+    if (after != before) {
+      EXPECT_EQ(after, 2 * before + 1);
+      ++numberOfGrowths;
+    }
+  };
+  // Grow the table to a few thousand slots.
+  for ([[maybe_unused]] size_t i : ad_utility::integerRange(size_t{5000})) {
+    insertAndCheck();
+  }
+  // Churn: remove the least recently used entry and insert a new key, which
+  // leaves deleted slots behind, at different fill levels.
+  for (size_t keep : {4000u, 3000u, 100u, 10u}) {
+    while (cache.size() > keep) {
+      cache.popLeastRecentlyUsed();
+    }
+    for ([[maybe_unused]] size_t i : ad_utility::integerRange(size_t{20'000})) {
+      ASSERT_TRUE(cache.popLeastRecentlyUsed().has_value());
+      insertAndCheck();
+    }
+  }
+  EXPECT_GT(numberOfGrowths, 5u);
+}
+
+// _____________________________________________________________________________
+// A small slot.
+TEST(LRUCache,
+     hashTableCapacityAfterOneMoreInsertionIsAnUpperBoundForSmallSlot) {
+  checkHashTableCapacityAfterOneMoreInsertion<uint64_t>();
+}
+
+// _____________________________________________________________________________
+// The slot of the SELECT export's term cache: this value type is
+// `ql::exportIds::IdToStringAndTypeCache<>::Value`, which this test cannot name
+// because it does not link the index; `IdToStringAndTypeCacheTest` asserts
+// that the two types are the same.
+TEST(LRUCache,
+     hashTableCapacityAfterOneMoreInsertionIsAnUpperBoundForTermCacheSlot) {
+  checkHashTableCapacityAfterOneMoreInsertion<
+      std::optional<std::pair<std::string, const char*>>>();
 }
 
 }  // namespace ad_utility::util

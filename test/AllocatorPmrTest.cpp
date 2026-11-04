@@ -158,3 +158,17 @@ TEST(AllocatorPmr, FromResourceNoLimit) {
   ASSERT_NE(p, nullptr);
   alloc.deallocate(p, 10);
 }
+
+// _____________________________________________________________________________
+// Test that an allocator from a plain platform resource (which enforces no
+// limit) always succeeds to reserve memory without allocating it, counts
+// nothing, and releases nothing.
+TEST(AllocatorPmr, FromResourceNoLimitReservesWithoutCounting) {
+  ql::pmr::monotonic_buffer_resource platformPool;
+  auto alloc = makePmrAllocatorFromResource<int>(&platformPool);
+  EXPECT_TRUE(alloc.tryReserveWithoutAllocating(MemorySize::bytes(4)));
+  EXPECT_TRUE(alloc.tryReserveWithoutAllocating(MemorySize::max()));
+  EXPECT_EQ(alloc.amountMemoryLeft(), MemorySize::max());
+  alloc.releaseReservation(MemorySize::bytes(4));
+  EXPECT_EQ(alloc.amountMemoryLeft(), MemorySize::max());
+}

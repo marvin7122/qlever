@@ -16,6 +16,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 
+#include <memory>
 #include <optional>
 #include <string_view>
 
@@ -25,6 +26,7 @@
 #include "engine/ConstructTripleGenerator.h"
 #include "global/RuntimeParameters.h"
 #include "index/ExportIds.h"
+#include "index/IdToStringAndTypeCache.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/ConstexprUtils.h"
 #include "util/http/MediaTypes.h"
@@ -317,12 +319,24 @@ ExportQueryExecutionTrees::constructQueryResultBindingsToQLeverJSON(
 }
 
 // _____________________________________________________________________________
+// Configuration of the SELECT export term cache from the runtime parameters.
+static ql::exportIds::IdToStringAndTypeCacheConfig
+selectExportTermCacheConfig() {
+  return {
+      getRuntimeParameter<&RuntimeParameters::selectExportTermCacheMaxSize_>(),
+      getRuntimeParameter<
+          &RuntimeParameters::selectExportTermCacheNumberOfLookupsPerWindow_>(),
+      getRuntimeParameter<
+          &RuntimeParameters::selectExportTermCacheMinHitRate_>()};
+}
+
+// _____________________________________________________________________________
 // Create the row indicated by rowIndex from IdTable in QLeverJSON format.
 nlohmann::json idTableToQLeverJSONRow(
-    const QueryExecutionTree& qet,
     const QueryExecutionTree::ColumnIndicesAndTypes& columns,
     const LocalVocab& localVocab, const size_t rowIndex,
-    const IdTableView<0>& data) {
+    const IdTableView<0>& data,
+    ql::exportIds::IdToStringAndTypeCache<>& cache) {
   // We need the explicit `array` constructor for the special case of zero
   // variables.
   auto row = nlohmann::json::array();
@@ -332,8 +346,7 @@ nlohmann::json idTableToQLeverJSONRow(
       continue;
     }
     const auto& currentId = data(rowIndex, opt->columnIndex_);
-    const auto& optionalStringAndXsdType = ql::exportIds::idToStringAndType(
-        qet.getQec()->getIndex(), currentId, localVocab);
+    const auto& optionalStringAndXsdType = cache.get(currentId, localVocab);
     if (!optionalStringAndXsdType.has_value()) {
       row.emplace_back(nullptr);
       continue;
@@ -357,19 +370,24 @@ auto ExportQueryExecutionTrees::idTableToQLeverJSONBindings(
   AD_CORRECTNESS_CHECK(result != nullptr);
 
   auto rowIndicies = getRowIndices(limitAndOffset, *result, resultSize);
+  // One cache for the whole export, shared by all columns. It must outlive the
+  // lazily evaluated view below.
+  auto cache = std::make_shared<ql::exportIds::IdToStringAndTypeCache<>>(
+      qet.getQec()->getIndex(), selectExportTermCacheConfig(),
+      qet.getQec()->getAllocator());
   return std::move(rowIndicies) |
          ql::views::transform(
-             [&qet, columns = std::move(columns), result = std::move(result),
-              cancellationHandle =
-                  std::move(cancellationHandle)](const auto& tableWithView) {
+             [columns = std::move(columns), result = std::move(result),
+              cancellationHandle = std::move(cancellationHandle),
+              cache](const auto& tableWithView) {
                return ql::ranges::transform_view(
                    tableWithView.view_, [&](uint64_t rowIndex) {
                      cancellationHandle->throwIfCancelled();
                      const TableConstRefWithVocab tableWithVocab =
                          tableWithView.tableWithVocab_;
                      return idTableToQLeverJSONRow(
-                                qet, columns, tableWithVocab.localVocab(),
-                                rowIndex, tableWithVocab.idTable())
+                                columns, tableWithVocab.localVocab(), rowIndex,
+                                tableWithVocab.idTable(), *cache)
                          .dump();
                    });
              }) |
@@ -538,8 +556,21 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   STREAMABLE_YIELD(absl::StrJoin(variables, std::string_view{&separator, 1}));
   STREAMABLE_YIELD('\n');
 
-  constexpr auto& escapeFunction =
-      format == tsv ? RdfEscaping::escapeForTsv : RdfEscaping::escapeForCsv;
+  // A stateless functor (rather than a function pointer), so that the escape
+  // function is part of the type of the cache and its call can be inlined.
+  auto escapeFunction = [](std::string input) {
+    if constexpr (format == tsv) {
+      return RdfEscaping::escapeForTsv(std::move(input));
+    } else {
+      return RdfEscaping::escapeForCsv(std::move(input));
+    }
+  };
+  // One cache for the whole export, shared by all columns.
+  ql::exportIds::IdToStringAndTypeCache<
+      ql::exportIds::IdToStringAndTypeConversion<format == csv, false,
+                                                 decltype(escapeFunction)>>
+      cache{qet.getQec()->getIndex(), selectExportTermCacheConfig(),
+            qet.getQec()->getAllocator(), escapeFunction};
   uint64_t resultSize = 0;
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
@@ -548,10 +579,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
         if (selectedColumnIndices[j].has_value()) {
           const auto& val = selectedColumnIndices[j].value();
           Id id = pair.idTable()(i, val.columnIndex_);
-          auto optionalStringAndType =
-              ql::exportIds::idToStringAndType<format == csv>(
-                  qet.getQec()->getIndex(), id, pair.localVocab(),
-                  escapeFunction);
+          const auto& optionalStringAndType = cache.get(id, pair.localVocab());
           if (optionalStringAndType.has_value()) [[likely]] {
             STREAMABLE_YIELD(optionalStringAndType.value().first);
           }
@@ -569,14 +597,12 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
 
 // _____________________________________________________________________________
 // Convert a single ID to an XML binding of the given `variable`.
-template <typename IndexType, typename LocalVocabType>
-static std::string idToXMLBinding(std::string_view variable, Id id,
-                                  const IndexType& index,
-                                  const LocalVocabType& localVocab) {
+static std::string idToXMLBinding(
+    std::string_view variable, Id id, const LocalVocab& localVocab,
+    ql::exportIds::IdToStringAndTypeCache<>& cache) {
   using namespace std::string_view_literals;
   using namespace std::string_literals;
-  const auto& optionalValue =
-      ql::exportIds::idToStringAndType(index, id, localVocab);
+  const auto& optionalValue = cache.get(id, localVocab);
   if (!optionalValue.has_value()) {
     return ""s;
   }
@@ -680,6 +706,10 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream<
   auto selectedColumnIndices =
       qet.selectedVariablesToColumnIndices(selectClause, false);
   // TODO<joka921> we could prefilter for the nonexisting variables.
+  // One cache for the whole export, shared by all columns.
+  ql::exportIds::IdToStringAndTypeCache<> cache{qet.getQec()->getIndex(),
+                                                selectExportTermCacheConfig(),
+                                                qet.getQec()->getAllocator()};
   uint64_t resultSize = 0;
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
@@ -689,8 +719,8 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream<
         if (selectedColIdx.has_value()) {
           const auto& val = selectedColIdx.value();
           Id id = pair.idTable()(i, val.columnIndex_);
-          STREAMABLE_YIELD(idToXMLBinding(
-              val.variable_, id, qet.getQec()->getIndex(), pair.localVocab()));
+          STREAMABLE_YIELD(
+              idToXMLBinding(val.variable_, id, pair.localVocab(), cache));
         }
       }
       STREAMABLE_YIELD("\n  </result>");
@@ -728,12 +758,15 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream<
       qet.selectedVariablesToColumnIndices(selectClause, false);
   ql::erase(columns, std::nullopt);
 
+  // One cache for the whole export, shared by all columns.
+  ql::exportIds::IdToStringAndTypeCache<> cache{qet.getQec()->getIndex(),
+                                                selectExportTermCacheConfig(),
+                                                qet.getQec()->getAllocator()};
   auto getBinding = [&](const TableConstRefWithVocab& pair, const uint64_t& i) {
     auto binding = nlohmann::ordered_json::object();
     for (const auto& column : columns) {
       Id id = pair.idTable()(i, column->columnIndex_);
-      auto optionalStringAndType = ql::exportIds::idToStringAndType(
-          qet.getQec()->getIndex(), id, pair.localVocab());
+      const auto& optionalStringAndType = cache.get(id, pair.localVocab());
       if (optionalStringAndType.has_value()) [[likely]] {
         const auto& [stringValue, xsdType] = optionalStringAndType.value();
         binding[column->variable_] =

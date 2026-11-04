@@ -173,6 +173,23 @@ TYPED_TEST(AllocatorBackendTest, ChangeMemoryLimit) {
   EXPECT_EQ(alloc.amountMemoryLeft(), 16_B);
 }
 
+// _____________________________________________________________________________
+// Test that memory can be reserved without allocating it, that a reservation
+// fails without changing anything if not enough memory is left, and that it
+// can be released.
+TYPED_TEST(AllocatorBackendTest, ReserveWithoutAllocating) {
+  auto alloc = TypeParam::makeLimited(20_B);
+  EXPECT_TRUE(alloc.tryReserveWithoutAllocating(12_B));
+  EXPECT_EQ(alloc.amountMemoryLeft(), 8_B);
+  EXPECT_FALSE(alloc.tryReserveWithoutAllocating(9_B));
+  EXPECT_EQ(alloc.amountMemoryLeft(), 8_B);
+  // The reserved bytes are not available for allocations.
+  EXPECT_THROW(alloc.allocate(3),
+               ad_utility::detail::AllocationExceedsLimitException);
+  alloc.releaseReservation(12_B);
+  EXPECT_EQ(alloc.amountMemoryLeft(), 20_B);
+}
+
 // Test that increasing the memory limit beyond the maximal `MemorySize` throws
 // and changes nothing.
 TYPED_TEST(AllocatorBackendTest, IncreaseMemoryLimitOverflow) {

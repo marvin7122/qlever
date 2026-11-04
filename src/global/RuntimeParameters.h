@@ -284,6 +284,25 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // The maximal memory of the term cache of the SELECT export (see
+  // `ql::exportIds::IdToStringAndTypeCache`), including its bookkeeping. The
+  // default of 0 disables the cache, as does any size below about 3 KB.
+  MemorySizeParameter selectExportTermCacheMaxSize_{
+      ad_utility::MemorySize::bytes(0), "select-export-term-cache-max-size"};
+  // The number of hits and misses of the term cache after which its hit rate
+  // is checked. If the hit rate of such a window is below
+  // `select-export-term-cache-min-hit-rate`, the cache destroys its entries
+  // and computes every later term directly. 0 disables the check and keeps
+  // the cache on. The value is not tuned.
+  SizeT selectExportTermCacheNumberOfLookupsPerWindow_{
+      1 << 13, "select-export-term-cache-lookups-per-window"};
+  // The minimal hit rate of a window of the term cache (see above). Must be in
+  // [0, 1]; 0 disables the check and keeps the cache on. The value is not
+  // tuned.
+  ad_utility::detail::parameterShortNames::Double
+      selectExportTermCacheMinHitRate_{0.25,
+                                       "select-export-term-cache-min-hit-rate"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.

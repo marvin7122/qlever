@@ -216,6 +216,38 @@ class PmrAllocator {
     return MemorySize::max();
   }
 
+  // Count `n` bytes as used by this allocator and all of its copies without
+  // allocating them, for memory that is allocated elsewhere (for example by a
+  // container that does not use this allocator). Return false and change
+  // nothing if fewer than `n` bytes are left. `releaseReservation` undoes it.
+  // Unlike `allocate`, this does not call the `clearOnAllocation` hook. Same
+  // semantics as `AllocatorWithLimit::tryReserveWithoutAllocating`.
+  //
+  // An allocator whose resource is not a `LimitedMemoryResource` enforces no
+  // limit, so it always succeeds and counts nothing. Unlike
+  // `increaseMemoryLimit` and `decreaseMemoryLimit`, which throw for such an
+  // allocator because it has no limit that could be changed, this does not
+  // throw: an unlimited allocator always has the memory left, so "reserved"
+  // is the correct answer, and a caller that reserves memory for a cache
+  // works with any allocator.
+  [[nodiscard]] bool tryReserveWithoutAllocating(MemorySize n) noexcept {
+    auto* limited = dynamic_cast<LimitedMemoryResource*>(resource_);
+    return limited == nullptr || limited->tracker_.tryReserve(n);
+  }
+
+  // Return `n` bytes of a reservation made by `tryReserveWithoutAllocating`
+  // on this allocator or one of its copies to the shared budget. The caller
+  // must release only what it successfully reserved; nothing checks this.
+  // Like `deallocate`, this throws `std::overflow_error` if the free memory
+  // would exceed `MemorySize::max()`, so it is not `noexcept`. Same semantics
+  // as `AllocatorWithLimit::releaseReservation`; an allocator that enforces no
+  // limit counted nothing, so it releases nothing.
+  void releaseReservation(MemorySize n) {
+    if (auto* limited = dynamic_cast<LimitedMemoryResource*>(resource_)) {
+      limited->tracker_.release(n);
+    }
+  }
+
   // Increase or decrease the memory limit by `n`, with the same semantics as
   // the corresponding functions of `AllocatorWithLimit`. Throw if the
   // underlying resource is not a `LimitedMemoryResource`, because such a
