@@ -218,8 +218,8 @@ IoUringPolicy::~IoUringPolicy() {
   // destructor of `ring_`), so the kernel is no longer writing into any target
   // buffer once we return. Between two batches no read is queued (`addBatch`
   // submits or cancels all of them), so every in-flight read is in the kernel.
-  // Queued no-ops are never handed to the kernel; they refer to no buffer.
-  // The failures of batches that were never waited for are dropped.
+  // The no-ops that are still queued are not submitted here; they refer to no
+  // buffer. The failures of batches that were never waited for are dropped.
   ad_utility::terminateIfThrows(
       [this]() {
         while (numberOfRequestsInKernel() > 0) {
