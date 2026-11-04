@@ -566,8 +566,9 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
     }
   };
   // One cache for the whole export, shared by all columns.
-  ql::exportIds::IdToStringAndTypeCache<format == csv, false,
-                                        decltype(escapeFunction)>
+  ql::exportIds::IdToStringAndTypeCache<
+      ql::exportIds::IdToStringAndTypeConversion<format == csv, false,
+                                                 decltype(escapeFunction)>>
       cache{qet.getQec()->getIndex(), selectExportTermCacheConfig(),
             qet.getQec()->getAllocator(), escapeFunction};
   uint64_t resultSize = 0;

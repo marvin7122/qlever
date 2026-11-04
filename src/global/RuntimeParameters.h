@@ -18,6 +18,7 @@
 // complete QLever instance.
 struct RuntimeParameters {
   using Bool = ad_utility::detail::parameterShortNames::Bool;
+  using Double = ad_utility::detail::parameterShortNames::Double;
   template <typename DurationTp>
   using Duration =
       ad_utility::detail::parameterShortNames::DurationParameter<DurationTp>;
@@ -284,20 +285,23 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
-  // The term cache of the SELECT export (see
-  // `ql::exportIds::IdToStringAndTypeCache`). Its maximal memory, including
-  // the bookkeeping; the default of 0 disables it (as does any size below
-  // about 3 KB). After every window of that many hits and misses, the cache
-  // destroys its entries and computes every later term directly if the
-  // window's hit rate is below the minimum (a window of 0 or a minimum of 0
-  // keeps it on). The values of the window and the minimum are not tuned.
+  // The maximal memory of the term cache of the SELECT export (see
+  // `ql::exportIds::IdToStringAndTypeCache`), including its bookkeeping. The
+  // default of 0 disables the cache, as does any size below about 3 KB.
   MemorySizeParameter selectExportTermCacheMaxSize_{
       ad_utility::MemorySize::bytes(0), "select-export-term-cache-max-size"};
+  // The number of hits and misses of the term cache after which its hit rate
+  // is checked. If the hit rate of such a window is below
+  // `select-export-term-cache-min-hit-rate`, the cache destroys its entries
+  // and computes every later term directly. 0 disables the check and keeps
+  // the cache on. The value is not tuned.
   SizeT selectExportTermCacheNumberOfLookupsPerWindow_{
       1 << 13, "select-export-term-cache-lookups-per-window"};
-  ad_utility::detail::parameterShortNames::Double
-      selectExportTermCacheMinHitRate_{0.25,
-                                       "select-export-term-cache-min-hit-rate"};
+  // The minimal hit rate of a window of the term cache (see above). Must be in
+  // [0, 1]; 0 disables the check and keeps the cache on. The value is not
+  // tuned.
+  Double selectExportTermCacheMinHitRate_{
+      0.25, "select-export-term-cache-min-hit-rate"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE

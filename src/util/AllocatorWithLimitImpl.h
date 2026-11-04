@@ -164,9 +164,16 @@ class AllocatorWithLimit {
   // allocating them, for memory that is allocated elsewhere (for example by a
   // container that does not use this allocator). Return false and change
   // nothing if fewer than `n` bytes are left. `releaseReservation` undoes it.
+  // Unlike `allocate`, this does not call the `clearOnAllocation` hook.
   [[nodiscard]] bool tryReserveWithoutAllocating(MemorySize n) noexcept {
     return tracker_.tryReserve(n);
   }
+
+  // Return `n` bytes of a reservation made by `tryReserveWithoutAllocating`
+  // on this allocator or one of its copies to the shared budget. The caller
+  // must release only what it successfully reserved; nothing checks this.
+  // Like `deallocate`, this throws `std::overflow_error` if the free memory
+  // would exceed `MemorySize::max()`, so it is not `noexcept`.
   void releaseReservation(MemorySize n) { tracker_.release(n); }
 
   // Increase the memory limit that this allocator and all of its copies share

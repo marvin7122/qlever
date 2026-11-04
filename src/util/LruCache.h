@@ -50,33 +50,33 @@ class LRUCache {
 
   size_t capacity() const { return capacity_; }
 
-  // The number of entries in the cache.
-  size_t size() const { return cache_.size(); }
+  // Return the number of entries in the cache.
+  size_t size() const noexcept { return cache_.size(); }
 
-  // The number of slots of the hash table, which can be larger than `size()`:
-  // the table grows to about twice its capacity when it is 7/8 full, and does
-  // not shrink when entries are removed (see `shrinkHashTableToFit`).
-  size_t hashTableCapacity() const { return cache_.capacity(); }
+  // Return the number of slots of the hash table, which can be larger than
+  // `size()`: the table grows to about twice its capacity when it is 7/8 full,
+  // and does not shrink when entries are removed (see `shrinkHashTableToFit`).
+  size_t hashTableCapacity() const noexcept { return cache_.capacity(); }
 
-  // An upper estimate of the memory of a hash table with `capacity` slots: one
-  // slot (key, value and list iterator) and one control byte per slot of
-  // `absl::flat_hash_map`, plus at most 32 bytes for its cloned control bytes
-  // and its header. The list nodes and the heap memory of the values are not
-  // included.
+  // Return an upper estimate of the memory of a hash table with `capacity`
+  // slots: one slot (key, value and list iterator) and one control byte per
+  // slot of `absl::flat_hash_map` (`numberOfBytesPerHashTableSlot`), plus at
+  // most 32 bytes for its cloned control bytes and its header. The list nodes
+  // and the heap memory of the values are not included.
   static constexpr size_t numberOfBytesPerHashTableSlot =
       sizeof(typename decltype(cache_)::value_type) + 1;
-  static constexpr size_t numberOfBytesOfHashTable(size_t capacity) {
+  static constexpr size_t numberOfBytesOfHashTable(size_t capacity) noexcept {
     return capacity == 0 ? 0 : capacity * numberOfBytesPerHashTableSlot + 32;
   }
 
-  // An upper bound of `hashTableCapacity()` after one more insertion of a new
-  // key. `absl::flat_hash_map` grows from capacity `c` to `2c + 1` when it has
-  // no free slot left (deleted slots are not free). For `c > 16`, it grows
-  // only if more than 25/32 of the slots hold entries, and otherwise reuses
-  // the deleted slots in place. The test
-  // `LRUCache.hashTableCapacityAfterOneMoreInsertionIsAnUpperBound` checks
+  // Return an upper bound of `hashTableCapacity()` after one more insertion of
+  // a new key. `absl::flat_hash_map` grows from capacity `c` to `2c + 1` when
+  // it has no free slot left (deleted slots are not free). For `c > 16`, it
+  // grows only if more than 25/32 of the slots hold entries, and otherwise
+  // reuses the deleted slots in place. The tests
+  // `LRUCache.hashTableCapacityAfterOneMoreInsertionIsAnUpperBound*` check
   // this against the abseil in use.
-  size_t hashTableCapacityAfterOneMoreInsertion() const {
+  size_t hashTableCapacityAfterOneMoreInsertion() const noexcept {
     size_t capacity = cache_.capacity();
     bool mayGrow = capacity <= 16 || (cache_.size() + 1) * 32 > capacity * 25;
     return mayGrow ? 2 * capacity + 1 : capacity;
@@ -89,7 +89,8 @@ class LRUCache {
   // Check if `key` is in the cache. If found, move it to the front (most
   // recently used) and return a reference to the cached value wrapped in
   // `boost::optional`. If not found, return `boost::none`. Does not insert or
-  // compute anything.
+  // compute anything. The reference is invalidated by any later insertion or
+  // removal (which can rehash the table); use it before changing the cache.
   template <typename Key>
   boost::optional<const V&> tryGet(const Key& key) {
     auto cacheHitIterator = cache_.find(key);
@@ -147,7 +148,8 @@ class LRUCache {
   // reference to the stored value. If the cache is full, the least recently
   // used entry is evicted first. Unlike `insert` and `getOrCompute`, this does
   // not look up `key` first, which saves one lookup after a failed `tryGet`.
-  // Precondition: `key` is not in the cache.
+  // Precondition: `key` is not in the cache. This is only checked with
+  // expensive checks, because a check would cost the lookup that this saves.
   template <typename Key, typename Value>
   const V& insertAbsent(Key&& key, Value&& value) {
     AD_EXPENSIVE_CHECK(!cache_.contains(key));

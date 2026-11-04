@@ -246,7 +246,7 @@ std::optional<std::pair<std::string, const char*>> idToStringAndType(
 // Both the SELECT export (`IdToStringAndTypeCache`) and the CONSTRUCT export
 // (`IdCache` in `ConstructBatchEvaluator`) use this to decide what they may
 // cache.
-inline bool canBeCachedForWholeExport(Id id) {
+inline constexpr bool canBeCachedForWholeExport(Id id) noexcept {
   return id.getDatatype() != Datatype::LocalVocabIndex;
 }
 
