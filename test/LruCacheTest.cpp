@@ -18,7 +18,9 @@
 #include <variant>
 #include <vector>
 
+#include "util/GTestHelpers.h"
 #include "util/LruCache.h"
+#include "util/Views.h"
 
 namespace {
 // Copy a recency list `keys_` (MRU first) into a vector, for white-box
@@ -260,6 +262,21 @@ TEST(LRUCache, insertAbsentInsertsAndEvictsWhenFull) {
 }
 
 // _____________________________________________________________________________
+// The precondition of `insertAbsent` (the key is not in the cache) is checked
+// only with expensive checks, see `insertAbsent`.
+TEST(LRUCache, insertAbsentChecksThatTheKeyIsAbsent) {
+  if constexpr (ad_utility::areExpensiveChecksEnabled) {
+    LRUCache<int, std::string> cache(2);
+    cache.insertAbsent(1, "one");
+    AD_EXPECT_THROW_WITH_MESSAGE(cache.insertAbsent(1, "one again"),
+                                 ::testing::HasSubstr("!cache_.contains(key)"));
+    // The failed insertion changed nothing.
+    EXPECT_EQ(cache.size(), 1u);
+    EXPECT_EQ(cache.tryGet(1).value(), "one");
+  }
+}
+
+// _____________________________________________________________________________
 TEST(LRUCache, popLeastRecentlyUsedFollowsRecency) {
   LRUCache<int, std::string> cache(3);
   EXPECT_EQ(cache.popLeastRecentlyUsed(), std::nullopt);
@@ -286,15 +303,15 @@ TEST(LRUCache, hashTableKeepsItsCapacityUntilShrunk) {
   EXPECT_EQ(cache.hashTableCapacity(), 0u);
   using Cache = LRUCache<int, int>;
   EXPECT_EQ(Cache::numberOfBytesOfHashTable(0), 0u);
-  for (int i = 0; i < 100; ++i) {
+  for (int i : ql::views::iota(0, 100)) {
     cache.insertAbsent(i, i);
   }
   size_t capacity = cache.hashTableCapacity();
   EXPECT_GE(capacity, 100u);
   EXPECT_GT(Cache::numberOfBytesOfHashTable(capacity),
             capacity * Cache::numberOfBytesPerHashTableSlot);
-  for (int i = 0; i < 95; ++i) {
-    cache.popLeastRecentlyUsed();
+  for ([[maybe_unused]] int i : ql::views::iota(0, 95)) {
+    EXPECT_TRUE(cache.popLeastRecentlyUsed().has_value());
   }
   // Removing entries does not shrink the table.
   EXPECT_EQ(cache.hashTableCapacity(), capacity);
@@ -302,7 +319,7 @@ TEST(LRUCache, hashTableKeepsItsCapacityUntilShrunk) {
   EXPECT_LT(cache.hashTableCapacity(), capacity);
   EXPECT_GE(cache.hashTableCapacity(), 5u);
   // The remaining entries are still there, in the same order.
-  for (int i = 95; i < 100; ++i) {
+  for (int i : ql::views::iota(95, 100)) {
     EXPECT_EQ(cache.popLeastRecentlyUsed(), i);
   }
 }
@@ -311,8 +328,8 @@ TEST(LRUCache, hashTableKeepsItsCapacityUntilShrunk) {
 // `hashTableCapacityAfterOneMoreInsertion` is an upper bound of the capacity
 // after an insertion, while the table grows and while entries are inserted and
 // removed (which leaves deleted slots), and the table always grows to 2c + 1.
-// This pins the growth policy of the abseil in use, for a small slot and for
-// the slot of the SELECT export's term cache (`IdToStringAndTypeCache`).
+// This pins the growth policy of the abseil in use for the slot of
+// `LRUCache<uint64_t, Value>`.
 template <typename Value>
 void checkHashTableCapacityAfterOneMoreInsertion() {
   LRUCache<uint64_t, Value> cache(100'000);
@@ -331,7 +348,7 @@ void checkHashTableCapacityAfterOneMoreInsertion() {
     }
   };
   // Grow the table to a few thousand slots.
-  for (int i = 0; i < 5000; ++i) {
+  for ([[maybe_unused]] size_t i : ad_utility::integerRange(size_t{5000})) {
     insertAndCheck();
   }
   // Churn: remove the least recently used entry and insert a new key, which
@@ -340,16 +357,28 @@ void checkHashTableCapacityAfterOneMoreInsertion() {
     while (cache.size() > keep) {
       cache.popLeastRecentlyUsed();
     }
-    for (int i = 0; i < 20'000; ++i) {
-      cache.popLeastRecentlyUsed();
+    for ([[maybe_unused]] size_t i : ad_utility::integerRange(size_t{20'000})) {
+      ASSERT_TRUE(cache.popLeastRecentlyUsed().has_value());
       insertAndCheck();
     }
   }
   EXPECT_GT(numberOfGrowths, 5u);
 }
 
-TEST(LRUCache, hashTableCapacityAfterOneMoreInsertionIsAnUpperBound) {
+// _____________________________________________________________________________
+// A small slot.
+TEST(LRUCache,
+     hashTableCapacityAfterOneMoreInsertionIsAnUpperBoundForSmallSlot) {
   checkHashTableCapacityAfterOneMoreInsertion<uint64_t>();
+}
+
+// _____________________________________________________________________________
+// The slot of the SELECT export's term cache: this value type is
+// `ql::exportIds::IdToStringAndTypeCache<>::Value`, which this test cannot name
+// because it does not link the index; `IdToStringAndTypeCacheTest` asserts
+// that the two types are the same.
+TEST(LRUCache,
+     hashTableCapacityAfterOneMoreInsertionIsAnUpperBoundForTermCacheSlot) {
   checkHashTableCapacityAfterOneMoreInsertion<
       std::optional<std::pair<std::string, const char*>>>();
 }

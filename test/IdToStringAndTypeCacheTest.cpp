@@ -11,13 +11,18 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <optional>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "index/IdToStringAndTypeCache.h"
 #include "rdfTypes/RdfEscaping.h"
 #include "util/AllocatorTestHelpers.h"
+#include "util/GTestHelpers.h"
 #include "util/IndexTestHelpers.h"
+#include "util/Views.h"
 
 namespace {
 
@@ -26,15 +31,24 @@ using ad_utility::testing::makeAllocator;
 using ql::exportIds::idToStringAndType;
 using Cache = ql::exportIds::IdToStringAndTypeCache<>;
 using Config = ql::exportIds::IdToStringAndTypeCacheConfig;
+using ad_utility::integerRange;
+
+// `LruCacheTest` pins the growth policy of the hash table for this value type
+// (it cannot use this type itself, because it does not link the index).
+static_assert(
+    std::is_same_v<Cache::Value,
+                   std::optional<std::pair<std::string, const char*>>>);
 
 // A cache that is large enough for every test and never switches itself off.
 const Config largeCache{MemorySize::megabytes(64), 0, 0.0};
 
-// An index with the IRIs `<a0>`, ..., `<a{n-1}>`, and a function that returns
-// the `Id` of `<ai>`.
+// Return `{qec, getId}`: `qec` is a `QueryExecutionContext*` that owns an
+// index with the IRIs `<a0>`, ..., `<a{n-1}>`, and `getId(i)` returns the `Id`
+// of `<ai>` in that index. The context of `getQec` lives until the end of the
+// test program, so `getId` never outlives the index.
 auto makeIndexWithIris(size_t n) {
   std::string kg;
-  for (size_t i = 0; i < n; ++i) {
+  for (size_t i : integerRange(n)) {
     absl::StrAppend(&kg, "<s> <p> <a", i, "> .\n");
   }
   auto qec = ad_utility::testing::getQec(kg);
@@ -65,7 +79,7 @@ TEST(IdToStringAndTypeCache, MatchesDirectAndHits) {
   Cache cache{index, largeCache, makeAllocator()};
   // The first pass populates the cache, the second pass must hit on every
   // vocabulary term.
-  for (int pass = 0; pass < 2; ++pass) {
+  for (size_t pass : integerRange(2u)) {
     for (const auto& ids : {vocabIds, bitEncodedIds}) {
       for (Id id : ids) {
         EXPECT_EQ(cache.get(id, localVocab),
@@ -113,7 +127,7 @@ TEST(IdToStringAndTypeCache, CachesSecondaryVocabTerms) {
   LocalVocab localVocab{};
   Id id = Id::makeFromSecondaryVocabIndex(SecondaryVocabIndex::make(0));
   Cache cache{index, largeCache, makeAllocator()};
-  for (int pass = 0; pass < 2; ++pass) {
+  for ([[maybe_unused]] size_t pass : integerRange(2u)) {
     const auto& value = cache.get(id, localVocab);
     EXPECT_EQ(value, idToStringAndType(index, id, localVocab));
     ASSERT_TRUE(value.has_value());
@@ -132,9 +146,11 @@ TEST(IdToStringAndTypeCache, AppliesItsConversion) {
   LocalVocab localVocab{};
   Id id = ad_utility::testing::makeGetId(index)("\"a\tb\"");
   auto escape = &RdfEscaping::escapeForTsv;
-  ql::exportIds::IdToStringAndTypeCache<false, false, decltype(escape)> cache{
-      index, largeCache, makeAllocator(), escape};
-  for (int pass = 0; pass < 2; ++pass) {
+  ql::exportIds::IdToStringAndTypeCache<
+      ql::exportIds::IdToStringAndTypeConversion<false, false,
+                                                 decltype(escape)>>
+      cache{index, largeCache, makeAllocator(), escape};
+  for ([[maybe_unused]] size_t pass : integerRange(2u)) {
     EXPECT_EQ(cache.get(id, localVocab),
               (idToStringAndType<false, false>(index, id, localVocab, escape)));
   }
@@ -156,12 +172,12 @@ TEST(IdToStringAndTypeCache, BypassesLocalVocabIds) {
       Id::makeFromLocalVocabIndex(localVocab.getIndexAndAddIfNotContained(
           LocalVocabEntry::literalWithoutQuotes("localLit",
                                                 qec->getLocalVocabContext())));
-  for (int pass = 0; pass < 2; ++pass) {
+  for (size_t pass : integerRange(2u)) {
     const auto& cached = cache.get(localVocabId, localVocab);
     EXPECT_EQ(cached, idToStringAndType(index, localVocabId, localVocab))
         << "Mismatch, pass " << pass;
     ASSERT_TRUE(cached.has_value());
-    EXPECT_THAT(cached->first, ::testing::HasSubstr("localLit"));
+    EXPECT_EQ(cached->first, "\"localLit\"");
   }
   EXPECT_EQ(cache.statistics().numberOfLocalVocabLookups_, 2u);
   EXPECT_EQ(cache.statistics().numberOfLookups(), 2u);
@@ -183,10 +199,14 @@ TEST(IdToStringAndTypeCache, LocalVocabIdEqualToCachedIdDoesNotHit) {
           LocalVocabEntry::literalWithoutQuotes("hello",
                                                 qec->getLocalVocabContext())));
   ASSERT_EQ(localVocabId, vocabId);
-  EXPECT_EQ(cache.get(vocabId, localVocab),
-            idToStringAndType(index, vocabId, localVocab));
-  EXPECT_EQ(cache.get(localVocabId, localVocab),
-            idToStringAndType(index, localVocabId, localVocab));
+  const auto& fromVocab = cache.get(vocabId, localVocab);
+  EXPECT_EQ(fromVocab, idToStringAndType(index, vocabId, localVocab));
+  ASSERT_TRUE(fromVocab.has_value());
+  EXPECT_EQ(fromVocab->first, "\"hello\"");
+  const auto& fromLocalVocab = cache.get(localVocabId, localVocab);
+  EXPECT_EQ(fromLocalVocab, idToStringAndType(index, localVocabId, localVocab));
+  ASSERT_TRUE(fromLocalVocab.has_value());
+  EXPECT_EQ(fromLocalVocab->first, "\"hello\"");
   EXPECT_EQ(cache.statistics().numberOfHits_, 0u);
   EXPECT_EQ(cache.statistics().numberOfMisses_, 1u);
   EXPECT_EQ(cache.statistics().numberOfLocalVocabLookups_, 1u);
@@ -197,22 +217,32 @@ TEST(IdToStringAndTypeCache, LocalVocabIdEqualToCachedIdDoesNotHit) {
 // too small for 16 entries, disables the cache: every lookup is computed
 // directly.
 TEST(IdToStringAndTypeCache, SmallMaxSizeDisables) {
+  // The sizes below are on both sides of the smallest size that enables the
+  // cache (about 3 KB).
+  static_assert(1000 < Cache::minNumberOfBytesToEnable);
+  static_assert(Cache::minNumberOfBytesToEnable <=
+                MemorySize::kilobytes(64).getBytes());
   auto [qec, getId] = makeIndexWithIris(1);
   const Index& index = qec->getIndex();
   LocalVocab localVocab{};
+  const auto budget = MemorySize::megabytes(1);
   for (auto maxSize : {MemorySize::bytes(0), MemorySize::bytes(1000)}) {
-    Cache cache{index, Config{maxSize, 0, 0.0}, makeAllocator()};
+    Cache cache{index, Config{maxSize, 0, 0.0}, makeAllocator(budget)};
     EXPECT_FALSE(cache.isEnabled());
-    for (int i = 0; i < 3; ++i) {
+    for ([[maybe_unused]] size_t i : integerRange(3u)) {
       EXPECT_EQ(cache.get(getId(0), localVocab),
                 idToStringAndType(index, getId(0), localVocab));
     }
     EXPECT_EQ(cache.statistics().numberOfLookupsWhileDisabled_, 3u);
     EXPECT_EQ(cache.statistics().numberOfLookups(), 3u);
   }
-  Cache enabled{index, Config{MemorySize::kilobytes(64), 0, 0.0},
-                makeAllocator()};
+  auto allocator = makeAllocator(budget);
+  Cache enabled{index, Config{MemorySize::kilobytes(64), 0, 0.0}, allocator};
   EXPECT_TRUE(enabled.isEnabled());
+  EXPECT_EQ(enabled.get(getId(0), localVocab),
+            idToStringAndType(index, getId(0), localVocab));
+  EXPECT_GT(enabled.memoryUsed(), MemorySize::bytes(0));
+  EXPECT_EQ(allocator.amountMemoryLeft(), budget - enabled.memoryUsed());
 }
 
 // _____________________________________________________________________________
@@ -225,7 +255,7 @@ TEST(IdToStringAndTypeCache, EvictsToStayWithinMaxSize) {
   const auto maxSize = MemorySize::kilobytes(8);
   Cache cache{index, Config{maxSize, 0, 0.0}, makeAllocator()};
   ASSERT_TRUE(cache.isEnabled());
-  for (size_t i = 0; i < 200; ++i) {
+  for (size_t i : integerRange(size_t{200})) {
     EXPECT_EQ(cache.get(getId(i), localVocab),
               idToStringAndType(index, getId(i), localVocab));
     EXPECT_LE(cache.memoryUsed(), maxSize);
@@ -239,16 +269,22 @@ TEST(IdToStringAndTypeCache, EvictsToStayWithinMaxSize) {
   EXPECT_EQ(cache.statistics().numberOfMisses_, 201u);
 }
 
+}  // namespace
+
+namespace ql::exportIds {
 // _____________________________________________________________________________
 // The memory of the entries and of the hash table stays within the maximal
 // size, also when large terms evict many small ones (the hash table does not
-// shrink by itself when entries are removed).
+// shrink by itself when entries are removed). The large terms evict so many
+// small ones that the cache shrinks its hash table (the branch with
+// `shrinkHashTableToFit` in `reserveAndMakeRoomForEntry`). Outside the
+// anonymous namespace, because it is a friend of the cache.
 TEST(IdToStringAndTypeCache, HashTableCountsForTheMaxSize) {
   std::string kg;
-  for (size_t i = 0; i < 300; ++i) {
+  for (size_t i : integerRange(size_t{300})) {
     absl::StrAppend(&kg, "<s> <p> <a", i, "> .\n");
   }
-  for (size_t i = 0; i < 20; ++i) {
+  for (size_t i : integerRange(size_t{20})) {
     absl::StrAppend(&kg, "<s> <q> \"", std::string(400, 'x'), i, "\" .\n");
   }
   auto qec = ad_utility::testing::getQec(kg);
@@ -265,19 +301,28 @@ TEST(IdToStringAndTypeCache, HashTableCountsForTheMaxSize) {
     EXPECT_EQ(allocator.amountMemoryLeft(),
               MemorySize::megabytes(1) - cache.memoryUsed());
   };
-  for (size_t i = 0; i < 300; ++i) {
+  for (size_t i : integerRange(size_t{300})) {
     check(getId(absl::StrCat("<a", i, ">")));
   }
-  for (size_t i = 0; i < 20; ++i) {
+  ASSERT_TRUE(cache.cache_.has_value());
+  const size_t capacityAfterSmallTerms = cache.cache_->hashTableCapacity();
+  for (size_t i : integerRange(size_t{20})) {
     check(getId(absl::StrCat("\"", std::string(400, 'x'), i, "\"")));
   }
-  EXPECT_EQ(cache.statistics().numberOfTermsNotCachedForLackOfMemory_, 0u);
+  // Without the shrink, the capacity could only stay the same or grow.
+  ASSERT_TRUE(cache.cache_.has_value());
+  EXPECT_LT(cache.cache_->hashTableCapacity(), capacityAfterSmallTerms);
+  EXPECT_EQ(cache.statistics().numberOfLookupsNotCachedForLackOfMemory_, 0u);
   EXPECT_EQ(cache.statistics().numberOfMisses_, 320u);
 }
+}  // namespace ql::exportIds
+
+namespace {
 
 // _____________________________________________________________________________
 // A term that is larger than 1/16 of the maximal size is returned but not
-// cached, and does not count for the hit rate.
+// cached, and does not count for the hit rate. Such lookups are counted in
+// `numberOfLookupsNotCachedForLackOfMemory_`, once per lookup.
 TEST(IdToStringAndTypeCache, DoesNotCacheTermsLargerThanOneSixteenth) {
   std::string longLiteral(600, 'x');
   auto qec = ad_utility::testing::getQec(
@@ -290,12 +335,12 @@ TEST(IdToStringAndTypeCache, DoesNotCacheTermsLargerThanOneSixteenth) {
   // 1/16 of 8 kB is 500 bytes. A window of one lookup with a minimal hit rate
   // of 1 switches the cache off on the first miss.
   Cache cache{index, Config{MemorySize::kilobytes(8), 1, 1.0}, makeAllocator()};
-  for (int pass = 0; pass < 2; ++pass) {
+  for ([[maybe_unused]] size_t pass : integerRange(2u)) {
     EXPECT_EQ(cache.get(longId, localVocab),
               idToStringAndType(index, longId, localVocab));
   }
   EXPECT_TRUE(cache.isEnabled());
-  EXPECT_EQ(cache.statistics().numberOfTermsNotCachedForLackOfMemory_, 2u);
+  EXPECT_EQ(cache.statistics().numberOfLookupsNotCachedForLackOfMemory_, 2u);
   EXPECT_EQ(cache.memoryUsed(), MemorySize::bytes(0));
   // The short term is cached; its miss completes the window and switches the
   // cache off, and its value is still returned correctly.
@@ -317,8 +362,9 @@ TEST(IdToStringAndTypeCache, ReservesMemoryFromTheBudget) {
   auto allocator = makeAllocator(budget);
   {
     Cache cache{index, largeCache, allocator};
-    for (size_t i = 0; i < 10; ++i) {
-      cache.get(getId(i), localVocab);
+    for (size_t i : integerRange(size_t{10})) {
+      EXPECT_EQ(cache.get(getId(i), localVocab),
+                idToStringAndType(index, getId(i), localVocab));
     }
     EXPECT_GT(cache.memoryUsed(), MemorySize::bytes(0));
     EXPECT_EQ(allocator.amountMemoryLeft(), budget - cache.memoryUsed());
@@ -334,7 +380,7 @@ TEST(IdToStringAndTypeCache, ReservesMemoryFromTheBudget) {
     EXPECT_EQ(cache.get(getId(0), localVocab),
               idToStringAndType(index, getId(0), localVocab));
     EXPECT_TRUE(cache.isEnabled());
-    EXPECT_EQ(cache.statistics().numberOfTermsNotCachedForLackOfMemory_, 1u);
+    EXPECT_EQ(cache.statistics().numberOfLookupsNotCachedForLackOfMemory_, 1u);
     EXPECT_EQ(cache.memoryUsed(), MemorySize::bytes(0));
     EXPECT_EQ(smallAllocator.amountMemoryLeft(), MemorySize::bytes(60));
   }
@@ -342,11 +388,11 @@ TEST(IdToStringAndTypeCache, ReservesMemoryFromTheBudget) {
   // A budget that is used up: nothing is cached, and nothing is reserved.
   auto emptyAllocator = makeAllocator(MemorySize::bytes(0));
   Cache cache{index, largeCache, emptyAllocator};
-  for (int pass = 0; pass < 2; ++pass) {
+  for ([[maybe_unused]] size_t pass : integerRange(2u)) {
     EXPECT_EQ(cache.get(getId(0), localVocab),
               idToStringAndType(index, getId(0), localVocab));
   }
-  EXPECT_EQ(cache.statistics().numberOfTermsNotCachedForLackOfMemory_, 2u);
+  EXPECT_EQ(cache.statistics().numberOfLookupsNotCachedForLackOfMemory_, 2u);
   EXPECT_EQ(cache.memoryUsed(), MemorySize::bytes(0));
   EXPECT_EQ(emptyAllocator.amountMemoryLeft(), MemorySize::bytes(0));
 }
@@ -361,7 +407,7 @@ TEST(IdToStringAndTypeCache, SwitchesOffOnLowHitRate) {
   auto allocator = makeAllocator(MemorySize::megabytes(1));
   Cache cache{index, Config{MemorySize::megabytes(1), 4, 0.5}, allocator};
   // All distinct: the first window of 4 lookups has no hits.
-  for (size_t i = 0; i < 10; ++i) {
+  for (size_t i : integerRange(size_t{10})) {
     EXPECT_EQ(cache.get(getId(i), localVocab),
               idToStringAndType(index, getId(i), localVocab));
     EXPECT_EQ(cache.isEnabled(), i < 3) << i;
@@ -380,10 +426,16 @@ TEST(IdToStringAndTypeCache, ChecksEveryWindow) {
   auto [qec, getId] = makeIndexWithIris(10);
   const Index& index = qec->getIndex();
   LocalVocab localVocab{};
-  Cache cache{index, Config{MemorySize::megabytes(1), 4, 0.5}, makeAllocator()};
-  // Two distinct terms in 12 lookups: 2 misses in the first window, then hits.
-  // Distinct integers in between do not count.
-  for (size_t i = 0; i < 12; ++i) {
+  const auto budget = MemorySize::megabytes(1);
+  auto allocator = makeAllocator(budget);
+  Cache cache{index, Config{MemorySize::megabytes(1), 4, 0.5}, allocator};
+  // Iteration `i` looks up `<a{i % 2}>` and then the integer `i`, so the
+  // sequence is `<a0>`, 0, `<a1>`, 1, `<a0>`, 2, `<a1>`, 3, ... (24 lookups).
+  // The integers are bit-encoded and do not count for the window, so the 12
+  // IRI lookups form three windows of 4: miss, miss, hit, hit (50 %, which is
+  // not below the minimum), then two windows of 4 hits. In total: 2 misses and
+  // 10 hits.
+  for (size_t i : integerRange(size_t{12})) {
     EXPECT_EQ(cache.get(getId(i % 2), localVocab),
               idToStringAndType(index, getId(i % 2), localVocab));
     Id integer = Id::makeFromInt(static_cast<int64_t>(i));
@@ -394,6 +446,7 @@ TEST(IdToStringAndTypeCache, ChecksEveryWindow) {
   EXPECT_EQ(cache.statistics().numberOfHits_, 10u);
   EXPECT_EQ(cache.statistics().numberOfMisses_, 2u);
   EXPECT_EQ(cache.statistics().numberOfBitEncodedLookups_, 12u);
+  EXPECT_EQ(allocator.amountMemoryLeft(), budget - cache.memoryUsed());
   // A window with one hit (25 % < 50 %) switches the cache off at its end.
   for (size_t i : {0, 5, 6, 7}) {
     EXPECT_TRUE(cache.isEnabled());
@@ -403,6 +456,7 @@ TEST(IdToStringAndTypeCache, ChecksEveryWindow) {
   EXPECT_FALSE(cache.isEnabled());
   EXPECT_EQ(cache.statistics().numberOfHits_, 11u);
   EXPECT_EQ(cache.statistics().numberOfMisses_, 5u);
+  EXPECT_EQ(allocator.amountMemoryLeft(), budget);
 }
 
 }  // namespace

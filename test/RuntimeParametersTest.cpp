@@ -11,6 +11,9 @@
 #include <gtest/gtest.h>
 
 #include <limits>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "global/RuntimeParameters.h"
 #include "util/GTestHelpers.h"
@@ -113,6 +116,10 @@ TEST(RuntimeParameters, sortNumTasksInFlightIsStrictlyPositive) {
   EXPECT_EQ(params.sortNumTasksInFlight_.get(), 1u);
 }
 
+// _____________________________________________________________________________
+// Test that `select-export-term-cache-min-hit-rate` accepts exactly the values
+// in [0, 1], both via `set` and via `setFromString` (the path of
+// `--set-runtime-parameter`), and that a rejected value changes nothing.
 TEST(RuntimeParameters, selectExportTermCacheMinHitRateIsInUnitInterval) {
   RuntimeParameters params;
   auto& parameter = params.selectExportTermCacheMinHitRate_;
@@ -121,22 +128,24 @@ TEST(RuntimeParameters, selectExportTermCacheMinHitRateIsInUnitInterval) {
   for (double value : {0.0, 0.5, 1.0}) {
     EXPECT_NO_THROW(parameter.set(value));
     EXPECT_DOUBLE_EQ(parameter.get(), value);
-    EXPECT_NO_THROW(
-        params.setFromString(parameter.name(), std::to_string(value)));
+  }
+  for (auto [string, value] : std::vector<std::pair<std::string, double>>{
+           {"0.0", 0.0}, {"0.5", 0.5}, {"0.333", 0.333}, {"1.0", 1.0}}) {
+    EXPECT_NO_THROW(params.setFromString(parameter.name(), string));
     EXPECT_DOUBLE_EQ(parameter.get(), value);
   }
 
+  auto isOutOfRange = AllOf(HasSubstr(parameter.name()), HasSubstr("[0, 1]"));
   for (double value : {-0.1, 1.1, std::numeric_limits<double>::infinity(),
                        -std::numeric_limits<double>::infinity(),
                        std::numeric_limits<double>::quiet_NaN()}) {
-    AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
-        parameter.set(value),
-        AllOf(HasSubstr(parameter.name()), HasSubstr("[0, 1]")),
-        std::runtime_error);
+    AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(parameter.set(value), isOutOfRange,
+                                          std::runtime_error);
     EXPECT_DOUBLE_EQ(parameter.get(), 1.0);
+  }
+  for (std::string string : {"-0.1", "1.1", "2.5", "NaN"}) {
     AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
-        params.setFromString(parameter.name(), std::to_string(value)),
-        AllOf(HasSubstr(parameter.name()), HasSubstr("[0, 1]")),
+        params.setFromString(parameter.name(), string), isOutOfRange,
         std::runtime_error);
     EXPECT_DOUBLE_EQ(parameter.get(), 1.0);
   }

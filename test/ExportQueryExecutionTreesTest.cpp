@@ -20,6 +20,7 @@
 #include "util/ParseableDuration.h"
 #include "util/ParsedQueryTestHelpers.h"
 #include "util/RuntimeParametersTestHelpers.h"
+#include "util/Views.h"
 
 using namespace std::string_literals;
 using namespace std::chrono_literals;
@@ -202,15 +203,22 @@ enum class TermCacheConfigs {
   All
 };
 
-// Call `run()` once for each configuration of `configs`, which must all give
-// the same result. `run` is called with `true` for the default configuration
-// and `false` for the others.
+using TermCacheConfig = ql::exportIds::IdToStringAndTypeCacheConfig;
+
+// Call `run(config, isDefault)` once for each configuration of `configs`, which
+// must all give the same result. The first configuration is always the default
+// of `RuntimeParameters` (`isDefault` is `true` only for it). It is read from
+// `RuntimeParameters` and not hard-coded, so that the tests keep covering the
+// default if it changes.
 template <typename Run>
 void forEachTermCacheConfig(const Run& run,
                             TermCacheConfigs configs = TermCacheConfigs::All) {
-  using Config = ql::exportIds::IdToStringAndTypeCacheConfig;
+  using Config = TermCacheConfig;
   using ad_utility::MemorySize;
   const RuntimeParameters defaults;
+  // The documentation of `TermCacheConfigs` and the tests rely on the default
+  // being a disabled cache.
+  EXPECT_EQ(defaults.selectExportTermCacheMaxSize_.get(), MemorySize::bytes(0));
   const Config defaultConfig{
       defaults.selectExportTermCacheMaxSize_.get(),
       defaults.selectExportTermCacheNumberOfLookupsPerWindow_.get(),
@@ -237,7 +245,7 @@ void forEachTermCacheConfig(const Run& run,
     auto minHitRate = setRuntimeParameterForTest<
         &RuntimeParameters::selectExportTermCacheMinHitRate_>(
         config.minHitRate_);
-    run(isDefault);
+    run(config, isDefault);
     isDefault = false;
   }
 }
@@ -254,7 +262,7 @@ void runSelectQueryTestCase(
       &RuntimeParameters::sparqlResultsJsonWithTime_>(false);
   auto trace = generateLocationTrace(l, "runSelectQueryTestCase");
   forEachTermCacheConfig(
-      [&](bool isDefaultConfig) {
+      [&](const TermCacheConfig&, bool isDefaultConfig) {
         runSelectQueryTestCaseImpl(testCase, useTextIndex, isDefaultConfig);
       },
       TermCacheConfigs::DefaultAndEnabled);
@@ -1529,7 +1537,7 @@ TEST(ExportQueryExecutionTrees, TextRecordWithQuotes) {
 
   // This is the only test with text records (`TextRecordIndex` `Id`s), so it
   // runs with every configuration of the term cache.
-  forEachTermCacheConfig([&](bool) {
+  forEachTermCacheConfig([&](const TermCacheConfig&, bool) {
     // The TSV export writes the text verbatim.
     EXPECT_EQ(runQueryStreamableResult(config, query, tsv),
               absl::StrCat("?o\n", text, "\n"));
@@ -2312,8 +2320,9 @@ TEST(ExportQueryExecutionTrees, EncodedIriManagerUsage) {
   auto qet = qp.createExecutionTree(parsedQuery);
 
   // This is the only test with encoded IRIs (`EncodedVal` `Id`s), so it runs
-  // with every configuration of the term cache.
-  forEachTermCacheConfig([&](bool) {
+  // with every configuration of the term cache on purpose, including those
+  // that evict entries or switch the cache off.
+  forEachTermCacheConfig([&](const TermCacheConfig&, bool) {
     // Export as XML and verify encoded IRIs are properly converted back
     ad_utility::Timer timer{ad_utility::Timer::Started};
     auto cancellationHandle2 =
@@ -2397,8 +2406,10 @@ class FreshLocalVocabPerBlock : public ValuesForTesting {
   std::vector<std::string> words_;
   Id y_;
 
-  // The table that `ValuesForTesting` uses for the width and the variable to
-  // column map. The result is created by `computeResult` below. The last
+  // The table that `ValuesForTesting` uses for the width (two columns, for
+  // `?x` and `?y`) and the variable to column map. Its content is never
+  // exported, because `computeResult` below is overridden and creates the
+  // result. The result is created by `computeResult` below. The last
   // argument of the constructor (`unlikelyToFitInCache`) keeps the lazy
   // result out of the query cache, which would keep every `LocalVocab` alive.
   static std::vector<IdTable> placeholderTables(Id y) {
@@ -2423,9 +2434,13 @@ class FreshLocalVocabPerBlock : public ValuesForTesting {
     auto blocks =
         words_ | ql::views::transform([context, y = y_](const std::string& w) {
           LocalVocab localVocab;
+          auto entry = LocalVocabEntry::literalWithoutQuotes(w, *context);
+          // The expectations below rely on the word being a plain literal.
+          EXPECT_TRUE(entry.isLiteral());
+          EXPECT_EQ(entry.toStringRepresentation(),
+                    absl::StrCat("\"", w, "\""));
           Id x = Id::makeFromLocalVocabIndex(
-              localVocab.getIndexAndAddIfNotContained(
-                  LocalVocabEntry::literalWithoutQuotes(w, *context)));
+              localVocab.getIndexAndAddIfNotContained(std::move(entry)));
           return Result::IdTableVocabPair{
               makeIdTableFromVector({{x, y}, {x, y}}), std::move(localVocab)};
         });
@@ -2434,6 +2449,7 @@ class FreshLocalVocabPerBlock : public ValuesForTesting {
 };
 }  // namespace
 
+// _____________________________________________________________________________
 // The export of a lazy result whose blocks each have their own `LocalVocab`,
 // with every configuration of the term cache. This is the case for which the
 // term cache must not cache `LocalVocabIndex` `Id`s (see
@@ -2446,7 +2462,7 @@ TEST(ExportQueryExecutionTrees, LazyResultWithLocalVocabPerBlock) {
   auto qec = ad_utility::testing::getQec("<s> <p> <y> .");
   Id y = ad_utility::testing::makeGetId(qec->getIndex())("<y>");
   std::vector<std::string> words;
-  for (size_t i = 0; i < 20; ++i) {
+  for (size_t i : ad_utility::integerRange(20u)) {
     words.push_back(absl::StrCat("word", i < 10 ? "0" : "", i));
   }
   auto exportAs = [&](ad_utility::MediaType mediaType) {
@@ -2478,7 +2494,7 @@ TEST(ExportQueryExecutionTrees, LazyResultWithLocalVocabPerBlock) {
   }
   auto cleanup = setRuntimeParameterForTest<
       &RuntimeParameters::sparqlResultsJsonWithTime_>(false);
-  forEachTermCacheConfig([&](bool) {
+  forEachTermCacheConfig([&](const TermCacheConfig&, bool) {
     using enum ad_utility::MediaType;
     EXPECT_EQ(exportAs(tsv), expectedTsv);
     EXPECT_EQ(exportAs(csv), expectedCsv);
@@ -2487,14 +2503,22 @@ TEST(ExportQueryExecutionTrees, LazyResultWithLocalVocabPerBlock) {
     auto sparqlJsonResult = nlohmann::json::parse(exportAs(sparqlJson));
     const auto& bindings = sparqlJsonResult["results"]["bindings"];
     ASSERT_EQ(bindings.size(), 2 * words.size());
-    for (size_t i = 0; i < bindings.size(); ++i) {
-      EXPECT_EQ(bindings[i]["x"]["value"], words[i / 2]);
+    for (size_t i : ad_utility::integerRange(bindings.size())) {
+      EXPECT_EQ(bindings[i]["x"],
+                makeJSONBinding(std::nullopt, "literal", words[i / 2]));
+      EXPECT_EQ(bindings[i]["y"], makeJSONBinding(std::nullopt, "uri", "y"));
     }
-    auto xml = exportAs(sparqlXml);
+    std::string expectedXml = makeXMLHeader({"x", "y"});
     for (const auto& word : words) {
-      EXPECT_THAT(xml,
-                  HasSubstr(absl::StrCat("<literal>", word, "</literal>")));
+      for (int row = 0; row < 2; ++row) {
+        absl::StrAppend(&expectedXml, "\n  <result>\n    <binding name=\"x\">",
+                        "<literal>", word,
+                        "</literal></binding>\n    <binding name=\"y\">",
+                        "<uri>y</uri></binding>\n  </result>");
+      }
     }
+    absl::StrAppend(&expectedXml, xmlTrailer);
+    EXPECT_EQ(exportAs(sparqlXml), expectedXml);
   });
 }
 
@@ -2523,7 +2547,7 @@ TEST(ExportQueryExecutionTrees, SecondaryVocabTerms) {
   };
   auto cleanup = setRuntimeParameterForTest<
       &RuntimeParameters::sparqlResultsJsonWithTime_>(false);
-  forEachTermCacheConfig([&](bool) {
+  forEachTermCacheConfig([&](const TermCacheConfig&, bool) {
     using enum ad_utility::MediaType;
     EXPECT_EQ(exportAs(tsv), "?o\n<zzz>\n<o>\n<zzz>\n");
     EXPECT_EQ(exportAs(csv), "o\nzzz\no\nzzz\n");
@@ -2534,9 +2558,14 @@ TEST(ExportQueryExecutionTrees, SecondaryVocabTerms) {
         makeExpectedSparqlJSON({makeJSONBinding(std::nullopt, "uri", "zzz"),
                                 makeJSONBinding(std::nullopt, "uri", "o"),
                                 makeJSONBinding(std::nullopt, "uri", "zzz")}));
-    auto xml = exportAs(sparqlXml);
-    EXPECT_THAT(xml, HasSubstr("<uri>zzz</uri>"));
-    EXPECT_THAT(xml, HasSubstr("<uri>o</uri>"));
+    std::string expectedXml = makeXMLHeader({"o"});
+    for (std::string_view uri : {"zzz", "o", "zzz"}) {
+      absl::StrAppend(&expectedXml,
+                      "\n  <result>\n    <binding name=\"o\"><uri>", uri,
+                      "</uri></binding>\n  </result>");
+    }
+    absl::StrAppend(&expectedXml, xmlTrailer);
+    EXPECT_EQ(exportAs(sparqlXml), expectedXml);
   });
 }
 

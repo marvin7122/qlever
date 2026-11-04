@@ -173,6 +173,7 @@ TYPED_TEST(AllocatorBackendTest, ChangeMemoryLimit) {
   EXPECT_EQ(alloc.amountMemoryLeft(), 16_B);
 }
 
+// _____________________________________________________________________________
 // Test that memory can be reserved without allocating it, that a reservation
 // fails without changing anything if not enough memory is left, and that it
 // can be released.
