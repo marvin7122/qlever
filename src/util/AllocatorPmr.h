@@ -216,6 +216,19 @@ class PmrAllocator {
     return MemorySize::max();
   }
 
+  // Count `n` bytes as used without allocating them, with the same semantics
+  // as the corresponding functions of `AllocatorWithLimit`. An allocator whose
+  // resource enforces no limit always succeeds and releases nothing.
+  [[nodiscard]] bool tryReserveWithoutAllocating(MemorySize n) noexcept {
+    auto* limited = dynamic_cast<LimitedMemoryResource*>(resource_);
+    return limited == nullptr || limited->tracker_.tryReserve(n);
+  }
+  void releaseReservation(MemorySize n) {
+    if (auto* limited = dynamic_cast<LimitedMemoryResource*>(resource_)) {
+      limited->tracker_.release(n);
+    }
+  }
+
   // Increase or decrease the memory limit by `n`, with the same semantics as
   // the corresponding functions of `AllocatorWithLimit`. Throw if the
   // underlying resource is not a `LimitedMemoryResource`, because such a
