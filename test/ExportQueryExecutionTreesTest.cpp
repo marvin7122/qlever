@@ -468,6 +468,10 @@ ad_utility::testing::TestIndexConfig makeConfigWithManyRows(
   // With the default of 2 triples per batch of the test indexes, the index
   // builder would keep more than the usual limit of 1,024 files open.
   config.additionalSettings = {{"num-triples-per-batch", "10000"}};
+  // The parser constructs a new tokenizer (and compiles its regexes) for each
+  // buffer, so the default of 1 kB for the test indexes would make the index
+  // build of these 11 MB take very long in a debug build.
+  config.parserBufferSize = ad_utility::MemorySize::megabytes(16);
   return config;
 }
 
