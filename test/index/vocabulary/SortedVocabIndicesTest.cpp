@@ -143,9 +143,10 @@ TEST(SortedVocabIndices, RankDirectoryIfSmaller) {
 // _____________________________________________________________________________
 TEST(SortedVocabIndices, RankDirectoryChecksTheIndices) {
   using Storage = SortedVocabIndices::Storage;
-  // Not strictly ascending.
+  // Not strictly ascending (a duplicate; with a descending pair such as
+  // `{4, 2}`, the first index would already be outside `[0, endIndex())`).
   AD_EXPECT_THROW_WITH_MESSAGE(
-      SortedVocabIndices(Storage{std::vector<uint64_t>{4, 2}},
+      SortedVocabIndices(Storage{std::vector<uint64_t>{1, 1, 3}},
                          PositionLookup::RankDirectory),
       ::testing::HasSubstr("previous.value() < element"));
   // `endIndex()` would overflow.
