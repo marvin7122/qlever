@@ -18,6 +18,16 @@ on:
   # maintainer asks for it with `/open-code-review-fanout`, and never again
   # on its own. The ready_for_review / reopened / `ocr-ready` label triggers
   # are gone, so no PR state change or label starts a (re-)review.
+  # Label trigger 2026-11-04: adding the `deep-review` label asks for ONE
+  # fan-out of the PR's current head. A label event runs the workflow file of
+  # the PR's base branch, and many bases (feature branches, review-base/*)
+  # carry no copy or an old one, so no label trigger lives here. The
+  # dispatcher deep-review-label.yml on master polls for the label, checks
+  # who added it, the one-run-per-head rule and the daily cap, and then has
+  # the OCR fan-out App post the `/open-code-review-fanout` command with a
+  # `deep-review-request` marker. That comment is the only bot comment that
+  # passes the guards below (the App's id and the marker); its run removes
+  # the label when it ends (job `deep-review-label`).
   issue_comment:
     types: [created]
 
@@ -33,6 +43,9 @@ concurrency:
   # Same for command-looking comments the review job would reject (bots and
   # outsiders): they must not occupy the global queue or displace a
   # legitimate pending review.
+  # The one exception is the relay comment of the deep-review-label.yml
+  # dispatcher (posted by the OCR fan-out App with a deep-review-request
+  # marker): it is a real review and queues in the global group.
   # Same for labels other than ocr-ready: a routine label change must not
   # disturb a running or queued fan-out (Qodo/Greptile/Cubic on PR 259).
   # Real reviews share ONE global group and queue (cancel-in-progress false):
@@ -49,6 +62,10 @@ concurrency:
     github.event_name == 'issue_comment' &&
     (startsWith(github.event.comment.body, '/open-code-review-fanout') ||
     startsWith(github.event.comment.body, '@open-code-review-fanout')) &&
+    !(github.event.comment.user.type == 'Bot' &&
+    vars.OCR_FANOUT_APP_ID != '' &&
+    github.event.comment.performed_via_github_app.id == vars.OCR_FANOUT_APP_ID &&
+    contains(github.event.comment.body, '<!-- deep-review-request sha=')) &&
     (github.event.comment.user.type == 'Bot' ||
     (github.event.comment.author_association != 'MEMBER' &&
     github.event.comment.author_association != 'OWNER' &&
@@ -79,6 +96,13 @@ concurrency:
 # list prices in USD per 1 M tokens; the cache-hit price is a repository
 # variable because its real value is unclear.
 env:
+  # True for a run started by the deep-review label (the dispatcher's relay
+  # comment, see the `on:` comment above).
+  OCR_DEEP_REVIEW_RELAY: >-
+    ${{ github.event.comment.user.type == 'Bot' &&
+    vars.OCR_FANOUT_APP_ID != '' &&
+    github.event.comment.performed_via_github_app.id == vars.OCR_FANOUT_APP_ID &&
+    contains(github.event.comment.body, '<!-- deep-review-request sha=') }}
   OCR_REVIEW_BUDGET_USD: ${{ vars.OCR_REVIEW_BUDGET_USD || '1.00' }}
   OCR_PRICE_INPUT_PER_M: '0.14'
   OCR_PRICE_CACHE_HIT_PER_M: ${{ vars.OCR_PRICE_CACHE_HIT_PER_M || '0.0028' }}
@@ -116,7 +140,13 @@ jobs:
        github.event.comment.author_association == 'OWNER' ||
        github.event.comment.author_association == 'COLLABORATOR') &&
       (startsWith(github.event.comment.body, '/open-code-review-fanout') ||
-       startsWith(github.event.comment.body, '@open-code-review-fanout'))
+       startsWith(github.event.comment.body, '@open-code-review-fanout')) ||
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/open-code-review-fanout') &&
+      (github.event.comment.user.type == 'Bot' &&
+       vars.OCR_FANOUT_APP_ID != '' &&
+       github.event.comment.performed_via_github_app.id == vars.OCR_FANOUT_APP_ID &&
+       contains(github.event.comment.body, '<!-- deep-review-request sha='))
     runs-on: ubuntu-latest
     timeout-minutes: 130
     outputs:
@@ -130,16 +160,37 @@ jobs:
             .opencodereview/stage0_ci_gate.py
           sparse-checkout-cone-mode: false
           fetch-depth: 1
+      # A label run reviews the head that was labelled, not a later one: if
+      # the PR moved while the run waited in the global queue, stop here
+      # (re-adding the label requests the new head). A failed check leaves
+      # `stale` unset, so the review runs (fail open, as in the legs).
+      - name: Check the labelled head is still the PR head
+        id: fresh
+        if: env.OCR_DEEP_REVIEW_RELAY == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          want="$(printf '%s' "$BODY" | sed -n 's/.*<!-- deep-review-request sha=\([0-9a-f]\{40\}\).*/\1/p' | head -n1)"
+          live="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)"
+          if [ -n "$want" ] && [ -n "$live" ] && [ "$want" != "$live" ]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            gh pr comment "$PR_NUMBER" -R "$REPO" --body "The \`deep-review\` fan-out for head \`${want:0:7}\` did not start: the PR head moved to \`${live:0:7}\` while it waited in the queue. Re-add the label to review the new head."
+          fi
       # First, so that an empty account stops the review within seconds
       # instead of after the wait for CI.
       - name: Check that the LLM account can pay for the review
         id: balance
+        if: steps.fresh.outputs.stale != 'true'
         env:
           OCR_LLM_URL: ${{ vars.OCR_LLM_URL }}
           OCR_LLM_AUTH_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
         run: python3 .opencodereview/stage0_balance.py '${{ runner.temp }}/stage0-balance.md'
       - name: Report why the review stopped (LLM account)
-        if: steps.balance.outputs.ok != 'true'
+        if: steps.fresh.outputs.stale != 'true' && steps.balance.outputs.ok != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -780,3 +831,33 @@ jobs:
             '${{ needs.select-rules.outputs.num_chunks }}' '${{ runner.temp }}/spend.md'
           gh pr comment '${{ github.event.issue.number }}' -R '${{ github.repository }}' \
             --body-file '${{ runner.temp }}/spend.md'
+
+  # A label run (deep-review-label.yml) ends by removing the `deep-review`
+  # label, whatever the outcome, so re-adding it requests a new run. The
+  # dispatcher allows one label run per head commit.
+  deep-review-label:
+    needs: [stage0-ci, stage1-deterministic, select-rules, review-fanout-project-rules, review-spend]
+    if: >-
+      always() &&
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/open-code-review-fanout') &&
+      (github.event.comment.user.type == 'Bot' &&
+       vars.OCR_FANOUT_APP_ID != '' &&
+       github.event.comment.performed_via_github_app.id == vars.OCR_FANOUT_APP_ID &&
+       contains(github.event.comment.body, '<!-- deep-review-request sha='))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Remove the deep-review label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          # 404: the label is already gone (removed by hand or by the dispatcher).
+          if ! out="$(gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/deep-review" 2>&1)"; then
+            case "$out" in
+              *"Not Found"*|*404*) echo "label already removed" ;;
+              *) echo "$out"; exit 1 ;;
+            esac
+          fi

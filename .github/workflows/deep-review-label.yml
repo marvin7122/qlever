@@ -1,0 +1,250 @@
+name: Deep review label (fan-out dispatcher)
+
+# Label trigger 2026-11-04: adding the `deep-review` label to a PR (drafts
+# included) asks for ONE OpenCodeReview fan-out of the PR's current head
+# (ocr-review-fanout-project-rules.yml).
+#
+# Why a poller and not `pull_request_target: labeled`: a label event runs the
+# workflow file of the PR's BASE branch. Many fork PRs are based on feature
+# branches without any OCR workflow (PR 378 on
+# fix/iouring-drain-before-rethrow-v3) or on review-base/* branches with an old
+# copy, so a label trigger would silently do nothing or run outdated logic.
+# Scheduled runs always use master's file. The poll only reacts to the label;
+# no PR state or idle time ever starts a review.
+#
+# Why a relay comment and not `workflow_dispatch`: the fan-out (and the pinned
+# review action) take the PR from the issue_comment payload. Dispatching would
+# mean rewriting both; instead the OCR fan-out App posts the usual
+# `/open-code-review-fanout` command with a `deep-review-request` marker.
+# Comments made with the job's GITHUB_TOKEN start no workflow; App comments
+# do. The fan-out accepts exactly this bot comment (App id + marker), queues it
+# in its global concurrency group (`queue: max`) like any review, keeps every
+# budget, and removes the label when the run ends.
+#
+# Rules per labelled open PR, oldest label first:
+#   1. The label counts only if its latest `labeled` event comes from a human
+#      with write, maintain or admin permission; otherwise the label is removed
+#      with a comment.
+#   2. One request per head commit: an earlier relay for this head, or a
+#      maintainer's `/open-code-review-fanout` comment since this head was
+#      pushed, means the label is removed with a comment (no second run). A
+#      relay posted after the label is this label's own run: nothing to do.
+#   3. Daily cap: at most DEEP_REVIEW_DAILY_CAP relays per UTC day across the
+#      repository. Beyond it the label stays (one comment per PR and day) and
+#      the request is served by the first poll after 00:00 UTC, in label order;
+#      removing the label withdraws it.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      probe:
+        description: Only check that the App token can comment; change nothing
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+# Polls never overlap, so the cap count and the per-head check see every
+# earlier relay.
+concurrency:
+  group: deep-review-label-dispatch
+  cancel-in-progress: false
+
+env:
+  DEEP_REVIEW_LABEL: deep-review
+  DEEP_REVIEW_DAILY_CAP: '6'
+
+jobs:
+  plan:
+    if: ${{ !inputs.probe }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      relays: ${{ steps.plan.outputs.relays }}
+    steps:
+      - name: Decide which labelled PRs get a fan-out
+        id: plan
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          APP_ID: ${{ vars.OCR_FANOUT_APP_ID }}
+        with:
+          script: |
+            const LABEL = process.env.DEEP_REVIEW_LABEL;
+            const CAP = Number(process.env.DEEP_REVIEW_DAILY_CAP);
+            const APP_ID = Number(process.env.APP_ID || 0);
+            const MARK = '<!-- deep-review-request sha=';
+            const { owner, repo } = context.repo;
+            const today = new Date().toISOString().slice(0, 10);
+            const midnight = `${today}T00:00:00Z`;
+            const relays = [];
+            core.setOutput('relays', '[]');
+            if (!APP_ID) {
+              core.warning('vars.OCR_FANOUT_APP_ID is not set: no relay possible, nothing done.');
+              return;
+            }
+            const isRelay = (c) => (c.body || '').includes(MARK) && c.user?.type === 'Bot' &&
+              c.performed_via_github_app?.id === APP_ID;
+            const relaySha = (c) => ((c.body || '').match(/<!-- deep-review-request sha=([0-9a-f]{40})/) || [])[1];
+            const isCommand = (c) => /^[\/@]open-code-review-fanout/.test(c.body || '') &&
+              c.user?.type !== 'Bot' && ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(c.author_association);
+            const comment = (n, body) => github.rest.issues.createComment({ owner, repo, issue_number: n, body });
+            const unlabel = async (n) => {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number: n, name: LABEL });
+              } catch (e) {
+                if (e.status !== 404) throw e;
+              }
+            };
+            const latest = (xs, key) => xs.reduce((a, x) => (!a || x[key] >= a[key] ? x : a), null);
+
+            const issues = await github.paginate(github.rest.issues.listForRepo,
+              { owner, repo, state: 'open', labels: LABEL, per_page: 100 });
+            const prs = issues.filter((i) => i.pull_request);
+            if (!prs.length) {
+              core.info(`No open PR carries the ${LABEL} label.`);
+              return;
+            }
+
+            // Relays posted today across the repository (daily cap).
+            const recent = await github.paginate(github.rest.issues.listCommentsForRepo,
+              { owner, repo, since: midnight, per_page: 100 });
+            let used = recent.filter((c) => isRelay(c) && c.created_at >= midnight).length;
+            core.info(`${used} of ${CAP} label-triggered fan-outs relayed today (UTC).`);
+
+            const items = [];
+            for (const pr of prs) {
+              const timeline = await github.paginate(github.rest.issues.listEventsForTimeline,
+                { owner, repo, issue_number: pr.number, per_page: 100 });
+              const labeled = latest(timeline.filter((e) => e.event === 'labeled' && e.label?.name === LABEL), 'created_at');
+              if (!labeled) {
+                core.warning(`#${pr.number}: no labeled event for ${LABEL}; skipped.`);
+                continue;
+              }
+              items.push({ number: pr.number, labeled, timeline });
+            }
+            items.sort((a, b) => a.labeled.created_at.localeCompare(b.labeled.created_at));
+
+            for (const { number: n, labeled, timeline } of items) {
+              const actor = labeled.actor;
+              let permission = 'none';
+              if (actor && actor.type !== 'Bot') {
+                try {
+                  const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: actor.login });
+                  permission = data.role_name || data.permission;
+                } catch (e) {
+                  if (e.status !== 404) throw e;
+                }
+              }
+              core.info(`#${n}: ${LABEL} added by ${actor?.login} (${actor?.type}, ${permission}) at ${labeled.created_at}`);
+              if (!actor || actor.type === 'Bot' || !['admin', 'maintain', 'write'].includes(permission)) {
+                await unlabel(n);
+                await comment(n, `The \`${LABEL}\` label from ${actor?.login ?? 'an unknown actor'} was removed: only maintainers with write access can request a fan-out, never bots.`);
+                continue;
+              }
+
+              const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: n });
+              const sha = pr.head.sha;
+              const short = sha.slice(0, 7);
+              // When this head arrived: its committer date, or a later force push.
+              const committed = timeline.find((e) => e.event === 'committed' && e.sha === sha);
+              let since = committed?.committer?.date;
+              if (!since) {
+                const { data: c } = await github.rest.git.getCommit({ owner, repo, commit_sha: sha });
+                since = c.committer.date;
+              }
+              const push = latest(timeline.filter((e) => e.event === 'head_ref_force_pushed'), 'created_at');
+              if (push && push.created_at > since) since = push.created_at;
+              since = new Date(since).toISOString().replace(/\.\d{3}Z$/, 'Z');
+
+              const comments = await github.paginate(github.rest.issues.listComments,
+                { owner, repo, issue_number: n, per_page: 100 });
+              const prior = comments.filter((c) => (isRelay(c) && relaySha(c) === sha) ||
+                (isCommand(c) && c.created_at >= since));
+              const last = prior[prior.length - 1];
+              if (last) {
+                if (isRelay(last) && last.created_at >= labeled.created_at) {
+                  core.info(`#${n}: this label's fan-out for ${short} is queued or running (${last.html_url}).`);
+                  continue;
+                }
+                await unlabel(n);
+                await comment(n, `No new fan-out: one was already requested for head \`${short}\` ([comment](${last.html_url}) at ${last.created_at}). After a new push, re-add \`${LABEL}\` to review the new head.`);
+                core.info(`#${n}: already requested for ${short}; label removed.`);
+                continue;
+              }
+
+              if (used >= CAP) {
+                const mark = `<!-- deep-review-cap:${today} -->`;
+                if (!comments.some((c) => (c.body || '').includes(mark))) {
+                  await comment(n, `${mark}\nDaily cap reached: ${used} of ${CAP} label-triggered fan-outs already started today (UTC). The \`${LABEL}\` label stays and the fan-out starts with the first poll after 00:00 UTC; remove the label to withdraw the request.`);
+                }
+                core.info(`#${n}: daily cap reached; waiting for tomorrow.`);
+                continue;
+              }
+              used += 1;
+              relays.push({ number: n, sha, by: actor.login, at: labeled.created_at });
+              core.info(`#${n}: relay the fan-out for ${short}.`);
+            }
+            core.setOutput('relays', JSON.stringify(relays));
+
+  relay:
+    needs: plan
+    if: ${{ needs.plan.outputs.relays != '[]' && needs.plan.outputs.relays != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Comments made with GITHUB_TOKEN start no workflow, App comments do.
+      - name: Mint a token of the OCR fan-out App
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.OCR_FANOUT_APP_ID }}
+          private-key: ${{ secrets.OCR_FANOUT_APP_PRIVATE_KEY }}
+          owner: marvin7122
+          repositories: qlever
+          permission-issues: write
+      - name: Post the fan-out commands
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          RELAYS: ${{ needs.plan.outputs.relays }}
+        with:
+          github-token: ${{ steps.app.outputs.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const label = process.env.DEEP_REVIEW_LABEL;
+            for (const r of JSON.parse(process.env.RELAYS)) {
+              const body = [
+                '/open-code-review-fanout',
+                '',
+                `<!-- deep-review-request sha=${r.sha} -->`,
+                `Requested by the \`${label}\` label (added by ${r.by} at ${r.at}) for head \`${r.sha.slice(0, 7)}\`. ` +
+                  'The fan-out removes the label when it ends.',
+              ].join('\n');
+              const { data } = await github.rest.issues.createComment({ owner, repo, issue_number: r.number, body });
+              core.info(`#${r.number}: ${data.html_url}`);
+            }
+
+  # Manual check (workflow_dispatch with probe): the App token can be minted
+  # with issues: write. Posts nothing.
+  probe:
+    if: ${{ inputs.probe }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Mint a token of the OCR fan-out App
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.OCR_FANOUT_APP_ID }}
+          private-key: ${{ secrets.OCR_FANOUT_APP_PRIVATE_KEY }}
+          owner: marvin7122
+          repositories: qlever
+          permission-issues: write
+      - name: Report the App
+        env:
+          SLUG: ${{ steps.app.outputs.app-slug }}
+        run: echo "App ${SLUG} can comment on marvin7122/qlever (issues write)."
