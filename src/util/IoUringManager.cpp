@@ -261,15 +261,12 @@ void IoUringPolicy::addBatch(
           // The ring has no free slot, so make room: submit what we have
           // prepared so far and block until enough completions have been
           // drained.
-          if (numberOfInFlightReads_ + numberOfNoOpsQueued_ +
-                  numberOfNoOpsInKernel_ >=
-              ringSize_) {
+          if (ringIsFull()) {
             submitFailure = submitQueued();
             if (submitFailure.has_value()) {
               break;
             }
-            while (numberOfInFlightReads_ + numberOfNoOpsInKernel_ >=
-                   ringSize_) {
+            while (ringIsFull()) {
               drainOneCqe();
             }
           }
@@ -335,7 +332,7 @@ std::optional<std::string> IoUringPolicy::submitQueued() {
   while (numberOfQueuedReads_ + numberOfNoOpsQueued_ > 0) {
     const int result = ring_->submit();
     if (result > 0) {
-      onTaken(static_cast<size_t>(result));
+      onSqesTaken(static_cast<size_t>(result));
       // Only a failure that persists cancels the reads.
       numberOfRetries = 0;
       continue;
@@ -369,7 +366,7 @@ std::optional<std::string> IoUringPolicy::submitQueued() {
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::onTaken(size_t numberOfTakenSqes) {
+void IoUringPolicy::onSqesTaken(size_t numberOfTakenSqes) {
   // The kernel takes the SQEs in queue order, and the queued no-ops precede
   // the queued reads.
   const size_t numberOfTakenNoOps =

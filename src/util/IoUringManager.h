@@ -262,6 +262,11 @@ class IoUringPolicy : public NoCopyNoMove {
  public:
   using BatchHandle = uint64_t;
 
+  // How often in a row an `io_uring_submit` that fails with `EAGAIN` or
+  // `ENOMEM` (or takes no SQE) is retried, after a back-off, before the queued
+  // reads are cancelled.
+  static constexpr unsigned MAX_SUBMIT_RETRIES = 16;
+
  private:
   // The request id of a no-op (the no-ops of cancelled reads keep this id). The
   // reads get their ids from a counter that starts at 0, so no read gets this
@@ -270,11 +275,6 @@ class IoUringPolicy : public NoCopyNoMove {
   // no-op would never be reaped.
   static constexpr uint64_t NO_OP_REQUEST_ID =
       std::numeric_limits<uint64_t>::max() - 1;
-
-  // How often in a row an `io_uring_submit` that fails with `EAGAIN` or
-  // `ENOMEM` (or takes no SQE) is retried, after a back-off, before the queued
-  // reads are cancelled.
-  static constexpr unsigned MAX_SUBMIT_RETRIES = 16;
 
   std::unique_ptr<IoUringInterface> ring_;
   // The most requests (reads and no-ops) that the policy keeps in the ring.
@@ -347,6 +347,14 @@ class IoUringPolicy : public NoCopyNoMove {
            numberOfNoOpsInKernel_;
   }
 
+  // Whether every slot of the ring holds a request: a read or a no-op that is
+  // queued, in the kernel, or completed but not yet reaped.
+  bool ringIsFull() const {
+    return numberOfInFlightReads_ + numberOfNoOpsQueued_ +
+               numberOfNoOpsInKernel_ >=
+           ringSize_;
+  }
+
   // Wait for one CQE and update the in-flight bookkeeping. A failed or short
   // read is recorded in its batch, not thrown, so that the caller can reap the
   // batch's other reads first. Retries an interrupted wait and terminates if
@@ -364,7 +372,7 @@ class IoUringPolicy : public NoCopyNoMove {
 
   // The kernel took `numberOfTakenSqes` SQEs: first the queued no-ops, then
   // reads.
-  void onTaken(size_t numberOfTakenSqes);
+  void onSqesTaken(size_t numberOfTakenSqes);
 
   // Rewrite the queued reads into no-ops and forget them.
   void cancelQueuedReads();
