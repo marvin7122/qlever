@@ -472,6 +472,11 @@ ad_utility::testing::TestIndexConfig makeConfigWithManyRows(
   // buffer, so the default of 1 kB for the test indexes would make the index
   // build of these 11 MB take very long in a debug build.
   config.parserBufferSize = ad_utility::MemorySize::megabytes(16);
+  // The consistency check of the test indexes is quadratic in the number of
+  // blocks for this many subjects, so use larger blocks than the default of 2
+  // rows. The lazy scans of the tests still yield many blocks of fewer rows
+  // than a chunk.
+  config.rowsPerBlock = 1000;
   return config;
 }
 
