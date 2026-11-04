@@ -259,6 +259,7 @@ TEST_F(ConstructTripleGeneratorTest, rowOffsetAccumulatesAcrossTables) {
                           matchTriple("_:u4_x", "<p>", "<o>")));
 }
 
+// _____________________________________________________________________________
 // An OFFSET of 2 that ends inside the first table, as `getRowIndices` produces
 // it: the view of the first table starts at row 2, and the `rowOffset` is the
 // OFFSET. The rows get the consecutive ids 2, 3 and 4, so that the blank nodes
