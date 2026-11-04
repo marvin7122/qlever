@@ -12,6 +12,8 @@
 
 #include <gmock/gmock.h>
 
+#include <array>
+
 #include "engine/IndexScan.h"
 #include "index/ExportIds.h"
 #include "index/LocalVocabEntry.h"
@@ -258,63 +260,96 @@ TEST(ExportIds, GetLiteralOrIriFromVocabIndexWithEncodedIris) {
   }
 }
 
-// _____________________________________________________________________________
+// The input of the tests of `idsToStringAndTypeOrBorrowedWord`. The IDs are not
+// sorted, and the `VocabIndex` IDs are interspersed with other IDs, so the
+// results have to be scattered back to their positions.
+class ExportIdsBorrowedWordTest : public ::testing::Test {
+ protected:
+  // The positions in `ids_` of the `VocabIndex` IDs whose words are borrowed.
+  static constexpr std::array<size_t, 5> borrowedPositions_{0, 2, 4, 7, 9};
+  // The position in `ids_` of the `VocabIndex` ID of a blank-node IRI, which
+  // is serialized as a different string and thus not borrowed.
+  static constexpr size_t blankNodePosition_ = 5;
+
+  QueryExecutionContext* qec_ = nullptr;
+  LocalVocab localVocab_;
+  std::vector<Id> ids_;
+
+  void SetUp() override {
+    const std::string blankNodeIri =
+        absl::StrCat(QLEVER_INTERNAL_BLANK_NODE_IRI_PREFIX, "_:b0>");
+    qec_ = ad_utility::testing::getQec(
+        absl::StrCat("<s> <p> <o> . <s> <q> \"hello\"@en . ", blankNodeIri,
+                     " <p> 42 . <s> <p> 3.14 ."));
+    auto getId = ad_utility::testing::makeGetId(qec_->getIndex());
+    const Id idLocal =
+        Id::makeFromLocalVocabIndex(localVocab_.getIndexAndAddIfNotContained(
+            LocalVocabEntry::literalWithoutQuotes(
+                "local", qec_->getLocalVocabContext())));
+    ids_ = {getId("<q>"),
+            Id::makeFromInt(42),
+            getId("<s>"),
+            idLocal,
+            getId("\"hello\"@en"),
+            getId(blankNodeIri),
+            Id::makeUndefined(),
+            getId("<o>"),
+            Id::makeFromDouble(3.14),
+            getId("<p>")};
+  }
+
+  auto lookup() const {
+    return ql::exportIds::idsToStringAndTypeOrBorrowedWord(qec_->getIndex(),
+                                                           ids_, localVocab_);
+  }
+};
+
 // `idsToStringAndTypeOrBorrowedWord` yields the same strings as calling
-// `idToStringAndType` for each ID individually, and borrows exactly the words
-// of the vocabulary that are not blank-node IRIs. The IDs are not sorted, and
-// the `VocabIndex` IDs are interspersed with other IDs, so the results have to
-// be scattered back to their positions.
-TEST(ExportIds, idsToStringAndTypeOrBorrowedWordMatchesIndividualLookups) {
-  const std::string blankNodeIri =
-      absl::StrCat(QLEVER_INTERNAL_BLANK_NODE_IRI_PREFIX, "_:b0>");
-  auto qec = ad_utility::testing::getQec(
-      absl::StrCat("<s> <p> <o> . <s> <q> \"hello\"@en . ", blankNodeIri,
-                   " <p> 42 . <s> <p> 3.14 ."));
-  const Index& index = qec->getIndex();
-  auto getId = ad_utility::testing::makeGetId(index);
-  LocalVocab localVocab;
-  const Id idLocal =
-      Id::makeFromLocalVocabIndex(localVocab.getIndexAndAddIfNotContained(
-          LocalVocabEntry::literalWithoutQuotes("local",
-                                                qec->getLocalVocabContext())));
-  const Id idBlankNode = getId(blankNodeIri);
-
-  const std::vector<Id> ids{getId("<q>"),
-                            Id::makeFromInt(42),
-                            getId("<s>"),
-                            idLocal,
-                            getId("\"hello\"@en"),
-                            idBlankNode,
-                            Id::makeUndefined(),
-                            getId("<o>"),
-                            Id::makeFromDouble(3.14),
-                            getId("<p>")};
-  const auto actual =
-      ql::exportIds::idsToStringAndTypeOrBorrowedWord(index, ids, localVocab);
-
-  ASSERT_EQ(actual.size(), ids.size());
-  for (size_t i = 0; i < ids.size(); ++i) {
-    const auto expected =
-        ql::exportIds::idToStringAndType(index, ids[i], localVocab);
-    ASSERT_EQ(actual[i].has_value(), expected.has_value()) << i;
-    if (!actual[i].has_value()) {
+// `idToStringAndType` for each ID individually, and `Undefined` yields
+// `std::nullopt`.
+// _____________________________________________________________________________
+TEST_F(ExportIdsBorrowedWordTest, matchesIndividualLookups) {
+  const auto actual = lookup();
+  ASSERT_EQ(actual.size(), ids_.size());
+  for (size_t i = 0; i < ids_.size(); ++i) {
+    SCOPED_TRACE(i);
+    const auto expected = ql::exportIds::idToStringAndType(
+        qec_->getIndex(), ids_[i], localVocab_);
+    ASSERT_EQ(actual[i].has_value(), expected.has_value());
+    if (!expected.has_value()) {
       continue;
     }
-    const bool isBorrowable =
-        ids[i].getDatatype() == Datatype::VocabIndex && ids[i] != idBlankNode;
-    const auto* borrowed = std::get_if<BorrowedVocabWord>(&actual[i].value());
-    ASSERT_EQ(borrowed != nullptr, isBorrowable) << i;
-    if (borrowed != nullptr) {
-      EXPECT_EQ(borrowed->word(), expected.value().first) << i;
-      EXPECT_EQ(expected.value().second, nullptr) << i;
+    if (const auto* borrowed =
+            std::get_if<BorrowedVocabWord>(&actual[i].value())) {
+      EXPECT_EQ(borrowed->word(), expected.value().first);
+      EXPECT_EQ(expected.value().second, nullptr);
     } else {
-      EXPECT_EQ(std::get<0>(actual[i].value()), expected.value()) << i;
+      EXPECT_EQ(std::get<0>(actual[i].value()), expected.value());
     }
   }
 }
 
+// Exactly the words of the vocabulary that are not blank-node IRIs are
+// borrowed; the encoded values, the `LocalVocab` word, and the blank-node IRI
+// are copied.
 // _____________________________________________________________________________
+TEST_F(ExportIdsBorrowedWordTest, borrowsOnlyVocabularyWords) {
+  const auto actual = lookup();
+  ASSERT_EQ(actual.size(), ids_.size());
+  for (size_t i = 0; i < ids_.size(); ++i) {
+    if (!actual[i].has_value()) {
+      continue;
+    }
+    const bool isBorrowed =
+        std::holds_alternative<BorrowedVocabWord>(actual[i].value());
+    EXPECT_EQ(isBorrowed, ad_utility::contains(borrowedPositions_, i)) << i;
+  }
+  EXPECT_FALSE(std::holds_alternative<BorrowedVocabWord>(
+      actual[blankNodePosition_].value()));
+}
+
 // Empty span returns an empty vector.
+// _____________________________________________________________________________
 TEST(ExportIds, idsToStringAndTypeOrBorrowedWordEmptyInput) {
   auto qec = ad_utility::testing::getQec("<s> <p> <o>");
   LocalVocab localVocab{};
