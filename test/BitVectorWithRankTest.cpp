@@ -128,8 +128,10 @@ TEST(BitVectorWithRank, LastPartialBlock) {
       values.push_back(universeSize - 1);
     }
     expectRanksOfAllValues(values, universeSize);
+    // Explicitly: the last value of the universe, in the last partial block.
     BitVectorWithRank set{values, universeSize};
-    EXPECT_EQ(set.numberOfBytes(), 3 * 64);
+    EXPECT_EQ(set.rankIfContained(universeSize - 1),
+              std::optional<uint64_t>{values.size() - 1});
   }
 }
 
@@ -192,14 +194,20 @@ TEST(BitVectorWithRank, Move) {
   BitVectorWithRank set{values, 1001};
   BitVectorWithRank moved{std::move(set)};
   EXPECT_EQ(moved.rankIfContained(500), std::optional<uint64_t>{1});
+  // 1001 values span 3 blocks.
+  EXPECT_EQ(moved.numberOfBytes(), 3 * 64);
   // A moved-from set is the empty set over the empty universe.
   EXPECT_EQ(set.universeSize(), 0);
+  EXPECT_EQ(set.numberOfBytes(), 0);
   EXPECT_EQ(set.rankIfContained(500), std::nullopt);
   BitVectorWithRank assigned;
   assigned = std::move(moved);
   EXPECT_EQ(assigned.rankIfContained(1000), std::optional<uint64_t>{2});
   EXPECT_EQ(assigned.rankIfContained(999), std::nullopt);
+  EXPECT_EQ(assigned.rankIfContained(1001), std::nullopt);
+  EXPECT_EQ(assigned.numberOfBytes(), 3 * 64);
   EXPECT_EQ(moved.universeSize(), 0);
+  EXPECT_EQ(moved.numberOfBytes(), 0);
   EXPECT_EQ(moved.rankIfContained(500), std::nullopt);
   static_assert(!std::is_copy_constructible_v<BitVectorWithRank>);
   static_assert(!std::is_copy_assignable_v<BitVectorWithRank>);

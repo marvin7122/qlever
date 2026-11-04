@@ -144,8 +144,10 @@ TEST(SortedVocabIndices, RankDirectoryIfSmaller) {
 TEST(SortedVocabIndices, RankDirectoryChecksTheIndices) {
   using Storage = SortedVocabIndices::Storage;
   // Not strictly ascending.
-  EXPECT_ANY_THROW(SortedVocabIndices(Storage{std::vector<uint64_t>{4, 2}},
-                                      PositionLookup::RankDirectory));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      SortedVocabIndices(Storage{std::vector<uint64_t>{4, 2}},
+                         PositionLookup::RankDirectory),
+      ::testing::HasSubstr("previous.value() < element"));
   // `endIndex()` would overflow.
   AD_EXPECT_THROW_WITH_MESSAGE(
       SortedVocabIndices(

@@ -253,14 +253,17 @@ TEST(VocabularyInternalExternal, RankDirectoryOfInternalVocabulary) {
         &RuntimeParameters::vocabularyInternalRankDirectory_>(useRankDirectory);
     const auto vocab =
         createVocabulary("RankDirectoryOfInternalVocabulary")(words);
-    // `[0, 1000)` fits in 3 blocks of 448 indices.
+    // `[0, 1000)` spans 3 blocks of 448 indices (3 * 64 bytes), much less than
+    // the 8 bytes of each of the 501 indices in RAM, so the parameter alone
+    // decides whether the directory is built.
     EXPECT_EQ(vocab.internalVocab().numberOfBytesOfRankDirectory(),
               useRankDirectory ? 3 * 64 : 0);
     for (const size_t index : {0, 1, 2, 447, 448, 449, 998, 999}) {
       EXPECT_EQ(isInternal(vocab, index), index == 0 || index % 2 == 1)
           << index;
-      EXPECT_EQ(vocab[index], words[index]);
     }
+    testAccessOperatorForUnorderedVocabulary(
+        createVocabulary("RankDirectoryOfInternalVocabularyAccess"));
     checkLookupBatch(
         vocab, ::ranges::to_vector(ql::views::iota(size_t{0}, words.size())));
     checkLookupBatch(vocab, std::vector<size_t>{999, 0, 448, 447, 2, 449});

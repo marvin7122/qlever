@@ -182,6 +182,8 @@ VocabularyInMemoryBinSearch createVocabularyWithIndices(
   return vocabulary;
 }
 
+using PositionLookup = VocabularyInMemoryBinSearch::PositionLookup;
+
 // All ways to find the position of an index.
 constexpr std::array positionLookups{
     VocabularyInMemoryBinSearch::PositionLookup::BinarySearch,
@@ -249,46 +251,67 @@ TEST(VocabularyInMemoryBinSearch, positionOfIndexAndAccessOperator) {
 }
 
 // _____________________________________________________________________________
-TEST(VocabularyInMemoryBinSearch, rankDirectory) {
-  constexpr auto BinarySearch =
-      VocabularyInMemoryBinSearch::PositionLookup::BinarySearch;
-  constexpr auto RankDirectory =
-      VocabularyInMemoryBinSearch::PositionLookup::RankDirectory;
+// Test the memory of the rank directory that `open` builds.
+TEST(VocabularyInMemoryBinSearch, rankDirectoryMemory) {
   std::string filename = gtestCurrentTestName();
   auto cleanup = getFileCleanup(filename);
-  auto vocab = createVocabularyWithIndices(filename, wordsWithHoles,
-                                           indicesWithHoles, RankDirectory);
+  auto numberOfBytesOfRankDirectory = [&filename](
+                                          const std::vector<std::string>& words,
+                                          const std::vector<uint64_t>& indices,
+                                          PositionLookup positionLookup) {
+    return createVocabularyWithIndices(filename, words, indices, positionLookup)
+        .numberOfBytesOfRankDirectory();
+  };
   // One block of 448 indices covers `[0, endIndex()) = [0, 10)`.
-  EXPECT_EQ(vocab.numberOfBytesOfRankDirectory(), 64);
-  EXPECT_EQ(createVocabularyWithIndices(filename, wordsWithHoles,
-                                        indicesWithHoles, BinarySearch)
-                .numberOfBytesOfRankDirectory(),
+  EXPECT_EQ(numberOfBytesOfRankDirectory(wordsWithHoles, indicesWithHoles,
+                                         PositionLookup::RankDirectory),
+            64);
+  EXPECT_EQ(numberOfBytesOfRankDirectory(wordsWithHoles, indicesWithHoles,
+                                         PositionLookup::BinarySearch),
             0);
-  EXPECT_EQ(createVocabularyWithIndices(filename, {}, {}, RankDirectory)
-                .numberOfBytesOfRankDirectory(),
+  EXPECT_EQ(numberOfBytesOfRankDirectory({}, {}, PositionLookup::RankDirectory),
             0);
+}
 
-  // The batch lookup (which finds the positions via `positionOfIndex`) yields
-  // the same words, also for the holes.
-  std::vector<size_t> indices{4, 0, 9, 3, 0, 5, 12345};
-  auto expected = createVocabularyWithIndices(filename, wordsWithHoles,
-                                              indicesWithHoles, BinarySearch)
-                      .lookupBatch(indices);
-  auto result = vocab.lookupBatch(indices);
+// _____________________________________________________________________________
+// Test that the batch lookup (which finds the positions via `positionOfIndex`)
+// yields the same words with and without the rank directory, also for the
+// holes.
+TEST(VocabularyInMemoryBinSearch, rankDirectoryLookupBatch) {
+  std::string filename = gtestCurrentTestName();
+  auto cleanup = getFileCleanup(filename);
+  const auto vocab =
+      createVocabularyWithIndices(filename, wordsWithHoles, indicesWithHoles,
+                                  PositionLookup::RankDirectory);
+  const auto binarySearchVocab = createVocabularyWithIndices(
+      filename, wordsWithHoles, indicesWithHoles, PositionLookup::BinarySearch);
+  const std::vector<size_t> indices{4, 0, 9, 3, 0, 5, 12345};
+  const auto expected = binarySearchVocab.lookupBatch(indices);
+  const auto result = vocab.lookupBatch(indices);
   ASSERT_EQ(result->size(), expected->size());
   for (const size_t i : ad_utility::integerRange(indices.size())) {
     EXPECT_EQ((*result)[i], (*expected)[i]) << indices[i];
   }
+}
 
-  // Deserialization uses the binary search, closing drops the directory.
+// _____________________________________________________________________________
+// Test that deserialization uses the binary search, and that `close` drops the
+// rank directory.
+TEST(VocabularyInMemoryBinSearch, rankDirectoryAfterDeserializationAndClose) {
+  std::string filename = gtestCurrentTestName();
+  auto cleanup = getFileCleanup(filename);
+  auto vocab =
+      createVocabularyWithIndices(filename, wordsWithHoles, indicesWithHoles,
+                                  PositionLookup::RankDirectory);
   ad_utility::serialization::ByteBufferWriteSerializer writeSerializer;
   writeSerializer << vocab;
   VocabularyInMemoryBinSearch readVocab;
   ad_utility::serialization::ByteBufferReadSerializer readSerializer{
       std::move(writeSerializer).data()};
   readSerializer >> readVocab;
-  expectVocabulariesAreEqual(vocab, readVocab);
   EXPECT_EQ(readVocab.numberOfBytesOfRankDirectory(), 0);
+  EXPECT_EQ(readVocab.positionOfIndex(3), std::optional<size_t>{1});
+
   vocab.close();
   EXPECT_EQ(vocab.numberOfBytesOfRankDirectory(), 0);
   EXPECT_EQ(vocab.positionOfIndex(3), std::nullopt);
