@@ -249,6 +249,7 @@ PartitionedIdPositions partitionIdPositions(ql::span<const Id> ids);
 inline VocabBatchLookupResult lookupVocabIndexIds(
     const Index& index, ql::span<const Id> ids,
     ql::span<const size_t> positions) {
+  AD_CONTRACT_CHECK(!positions.empty());
   AD_EXPENSIVE_CHECK(ql::ranges::all_of(positions, [&ids](size_t i) {
     return ids[i].getDatatype() == Datatype::VocabIndex;
   }));
@@ -271,10 +272,43 @@ inline VocabBatchLookupResult lookupVocabIndexIds(
 using StringAndTypeOrBorrowedWord =
     std::variant<std::pair<std::string, const char*>, BorrowedVocabWord>;
 
+// Resolve the `VocabIndex` `Id`s at `positions` (not empty) in one batched
+// lookup and store the results in the same positions of `results`: a word that
+// is its own serialized form becomes a `BorrowedVocabWord`, a blank-node IRI
+// becomes the `(string, type)` pair.
+inline void resolveVocabIndexIdsBorrowed(
+    const Index& index, ql::span<const Id> ids,
+    ql::span<const size_t> positions,
+    std::vector<std::optional<StringAndTypeOrBorrowedWord>>& results) {
+  auto vocabWords = lookupVocabIndexIds(index, ids, positions);
+  // `vocabWords` is in the same order as `positions`.
+  for (const auto& [positionInBatch, i] :
+       ::ranges::views::enumerate(positions)) {
+    const auto literalOrIri = LiteralOrIriView::fromStringRepresentation(
+        (*vocabWords)[positionInBatch]);
+    if (literalOrIri.isIri() &&
+        blankNodeIriToString(literalOrIri.getIri()).has_value()) {
+      results[i] = literalOrIriToStringAndType(literalOrIri).value();
+      continue;
+    }
+    // The documented invariant of `BorrowedVocabWord`: the word is the
+    // string of the pair that `idToStringAndType` would return, with type
+    // `nullptr`.
+    AD_EXPENSIVE_CHECK(
+        literalOrIriToStringAndType(literalOrIri).value() ==
+        (std::pair<std::string, const char*>{
+            std::string{(*vocabWords)[positionInBatch]}, nullptr}));
+    results[i] =
+        BorrowedVocabWord{vocabWords, static_cast<size_t>(positionInBatch)};
+  }
+}
+
 // Batch variant of `idToStringAndType` with the default template arguments
 // (quotes and angle brackets are kept, nothing is escaped): the words of all
 // `VocabIndex` `Id`s are looked up in one batch, and a word that is its own
 // serialized form yields a `BorrowedVocabWord` instead of a copy of the word.
+// Each `BorrowedVocabWord` shares the ownership of the batch-lookup result, so
+// the returned entries are valid independently of each other.
 // The `VocabIndex` `Id`s need not be contiguous in `ids` (`LocalVocabIndex`
 // `Id`s may be interspersed even when `ids` is sorted), so each `Id`'s
 // datatype is checked. All other `Id`s yield the pair: the encoded values,
@@ -292,24 +326,9 @@ idsToStringAndTypeOrBorrowedWord(const Index& index, ql::span<const Id> ids,
       results[i] = std::move(stringAndType.value());
     }
   }
-
-  if (positions.vocabIndexIndices_.empty()) {
-    return results;
-  }
-  auto vocabWords =
-      lookupVocabIndexIds(index, ids, positions.vocabIndexIndices_);
-  // `vocabWords` is in the same order as `positions.vocabIndexIndices_`.
-  for (const auto& [positionInBatch, i] :
-       ::ranges::views::enumerate(positions.vocabIndexIndices_)) {
-    const auto literalOrIri = LiteralOrIriView::fromStringRepresentation(
-        (*vocabWords)[positionInBatch]);
-    if (literalOrIri.isIri() &&
-        blankNodeIriToString(literalOrIri.getIri()).has_value()) {
-      results[i] = literalOrIriToStringAndType(literalOrIri).value();
-    } else {
-      results[i] =
-          BorrowedVocabWord{vocabWords, static_cast<size_t>(positionInBatch)};
-    }
+  if (!positions.vocabIndexIndices_.empty()) {
+    resolveVocabIndexIdsBorrowed(index, ids, positions.vocabIndexIndices_,
+                                 results);
   }
   return results;
 }
