@@ -191,10 +191,15 @@ TEST(BitVectorWithRank, Move) {
   BitVectorWithRank set{values, 1001};
   BitVectorWithRank moved{std::move(set)};
   EXPECT_EQ(moved.rankIfContained(500), std::optional<uint64_t>{1});
+  // A moved-from set is the empty set over the empty universe.
+  EXPECT_EQ(set.universeSize(), 0);
+  EXPECT_EQ(set.rankIfContained(500), std::nullopt);
   BitVectorWithRank assigned;
   assigned = std::move(moved);
   EXPECT_EQ(assigned.rankIfContained(1000), std::optional<uint64_t>{2});
   EXPECT_EQ(assigned.rankIfContained(999), std::nullopt);
+  EXPECT_EQ(moved.universeSize(), 0);
+  EXPECT_EQ(moved.rankIfContained(500), std::nullopt);
   static_assert(!std::is_copy_constructible_v<BitVectorWithRank>);
   static_assert(!std::is_copy_assignable_v<BitVectorWithRank>);
 }

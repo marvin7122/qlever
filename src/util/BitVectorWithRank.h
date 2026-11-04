@@ -21,6 +21,7 @@
 #include "backports/span.h"
 #include "util/Exception.h"
 #include "util/NoCopyNoMove.h"
+#include "util/ResetWhenMoved.h"
 
 namespace ad_utility {
 
@@ -59,7 +60,9 @@ class BitVectorWithRank : public ad_utility::NoCopy {
   static_assert(sizeof(Block) == 64);
 
   std::vector<Block> blocks_;
-  uint64_t universeSize_ = 0;
+  // Reset when moved, so that a moved-from set is the empty set over the empty
+  // universe (like `blocks_`, which is then empty).
+  ad_utility::ResetWhenMoved<uint64_t, 0> universeSize_;
 
  public:
   // The empty set over the empty universe.
