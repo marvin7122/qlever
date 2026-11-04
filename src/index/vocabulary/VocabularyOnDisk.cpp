@@ -283,7 +283,9 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
   std::vector<char*> targets(numIndices);
   for (auto&& [fileOffset, index, target, offsetPair] :
        ::ranges::views::zip(fileOffsets, indices, targets, offsetPairs)) {
-    AD_CONTRACT_CHECK(index < size());
+    // `lookupBatch` has checked `index < size()`, so the multiplication cannot
+    // overflow.
+    AD_EXPENSIVE_CHECK(index < size());
     fileOffset = index * sizeof(uint64_t);
     target = reinterpret_cast<char*>(&offsetPair);
   }
@@ -328,22 +330,45 @@ VocabBatchLookupResult VocabularyOnDisk::readStrings(
 VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
-  AD_CONTRACT_CHECK(ioManagers_ != nullptr,
+  AD_CONTRACT_CHECK(batchManagers_ != nullptr,
                     "`open()` must be called before `lookupBatch()`");
+  // Check the indices before a manager is taken (and possibly created).
+  AD_CONTRACT_CHECK(
+      ql::ranges::all_of(indices,
+                         [this](size_t index) { return index < size(); }),
+      "An index of `lookupBatch()` is not smaller than the size of the "
+      "vocabulary");
 
-  auto manager = ioManagers_->pop().value();
-  // Return the `manager` to the pool on every exit path (including exceptions,
-  // e.g. an out-of-range index in phase 1), so we never leak an `IoManager`
-  // (and its io_uring buffers) out of the pool.
-  absl::Cleanup returnManager{[this, &manager]() {
+  // Take an idle manager, or create one (with io_uring if it is compiled in,
+  // and its setup succeeds and has not failed before for this vocabulary).
+  auto& managers = *batchManagers_;
+  auto makeManager = [&managers]() {
+    // `makeBatchManager` clears `tryIoUring` if it built a synchronous manager
+    // (because the io_uring setup failed, or io_uring is not compiled in).
+    // This is the only place where `preferIoUring_` becomes false. The member
+    // is atomic, so it cannot be passed by reference itself.
+    bool tryIoUring = managers.preferIoUring_;
+    auto manager = ad_utility::makeBatchManager(tryIoUring);
+    if (!tryIoUring) {
+      managers.preferIoUring_ = false;
+    }
+    return manager;
+  };
+  std::unique_ptr<ad_utility::BatchManagerBase> manager =
+      managers.pool_.take(makeManager);
+
+  // Give the manager back on every exit path. Also after a failed read it can
+  // be reused, because `IoUringPolicy` collects all reads of a batch from the
+  // kernel before it throws, and `SyncIoPolicy` keeps no state between
+  // batches.
+  absl::Cleanup giveBack{[&managers, &manager]() {
     ad_utility::terminateIfThrows(
-        [this, &manager]() { ioManagers_->push(std::move(manager)); },
-        "returning the `IoManager` to the pool in "
-        "`VocabularyOnDisk::lookupBatch`");
+        [&managers, &manager]() {
+          managers.pool_.giveBack(std::move(manager));
+        },
+        "giving a batch manager back in `VocabularyOnDisk::lookupBatch`");
   }};
-
-  auto offsetPairs = readOffsetPairs(*manager, indices);
-  return readStrings(*manager, offsetPairs);
+  return readStrings(*manager, readOffsetPairs(*manager, indices));
 }
 
 // _____________________________________________________________________________
@@ -438,12 +463,6 @@ void VocabularyOnDisk::open(const std::string& filename) {
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
 
-  // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
-  ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
-      std::unique_ptr<ad_utility::BatchManagerBase>>>(
-      NUM_VOCAB_BATCH_IO_MANAGERS);
-  bool preferIoUring = true;
-  for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
-  }
+  // The managers of `lookupBatch` are created by the lookups that need them.
+  batchManagers_ = std::make_unique<BatchManagers>();
 }

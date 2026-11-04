@@ -12,18 +12,24 @@
 #include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
 
+#include <array>
+#include <condition_variable>
+#include <mutex>
 #include <optional>
 #include <random>
+#include <vector>
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
+#include "backports/filesystem.h"
 #include "global/Constants.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/File.h"
 #include "util/Forward.h"
 #include "util/MmapVector.h"
+#include "util/Views.h"
 #include "util/jthread.h"
 
 namespace {
@@ -112,10 +118,14 @@ class VocabularyOnDiskHandle {
   VocabularyOnDisk* operator->() { return &vocabulary_; }
 };
 
+// The name of the words file that `createVocabularyFromWords` writes.
+std::string vocabularyFilenameOfCurrentTest() {
+  return absl::StrCat(gtestCurrentTestName(), ".dat");
+}
+
 VocabularyOnDiskHandle createVocabularyFromWords(
     const std::vector<std::string>& words) {
-  return VocabularyOnDiskHandle{absl::StrCat(gtestCurrentTestName(), ".dat"),
-                                words};
+  return VocabularyOnDiskHandle{vocabularyFilenameOfCurrentTest(), words};
 }
 
 // Words of different lengths that are distinct for each `prefix`.
@@ -310,11 +320,109 @@ TEST(VocabularyOnDisk, LookupBatchEmptyThrows) {
   EXPECT_ANY_THROW(vocab->lookupBatch(ql::span<const size_t>{}));
 }
 
-// An out-of-range index in a batch must throw.
+// _____________________________________________________________________________
+// An out-of-range index in a batch must throw, before a manager is created.
 TEST(VocabularyOnDisk, LookupBatchOutOfRangeIndexThrows) {
   auto vocab = createExampleVocabulary();
   std::array<size_t, 2> indices{0, 99};
   EXPECT_ANY_THROW(vocab->lookupBatch(indices));
+  EXPECT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 0u);
+}
+
+// _____________________________________________________________________________
+// A lookup gives its manager back, so sequential lookups share one manager.
+TEST(VocabularyOnDisk, LookupBatchReusesItsManager) {
+  auto vocab = createExampleVocabulary();
+  EXPECT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 0u);
+  std::array<size_t, 3> indices{4, 0, 2};
+  for ([[maybe_unused]] size_t round : ad_utility::integerRange(size_t{10})) {
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+    EXPECT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 1u);
+  }
+}
+
+// _____________________________________________________________________________
+// A lookup whose batch has one short read throws and gives its manager back,
+// and the next lookup reuses that manager. `IoUringPolicy` collects all reads
+// of the failed batch before it throws, and `SyncIoPolicy` keeps no state
+// between batches, so the manager is clean.
+TEST(VocabularyOnDisk, LookupBatchReusesTheManagerAfterAFailedRead) {
+  const auto words = makeWords(10);
+  auto vocab = createVocabularyFromWords(words);
+  std::array<size_t, 2> firstWords{0, 1};
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, vocab->lookupBatch(firstWords), firstWords);
+  ASSERT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 1u);
+
+  // Cut off the last byte of the words file, so that of the ten reads of the
+  // following batch, only the read of the last word is short.
+  const auto filename = vocabularyFilenameOfCurrentTest();
+  ql::filesystem::resize_file(filename,
+                              ql::filesystem::file_size(filename) - 1);
+  auto allWords = stridedIndices(0, words.size(), 1);
+  EXPECT_ANY_THROW(vocab->lookupBatch(allWords));
+  EXPECT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 1u);
+
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, vocab->lookupBatch(firstWords), firstWords);
+  EXPECT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 1u);
+}
+
+// _____________________________________________________________________________
+// Many threads look up words of the same vocabulary at the same time. Every
+// result is correct, and the pool holds at most one manager per thread.
+TEST(VocabularyOnDisk, LookupBatchFromManyThreadsAtOnce) {
+  constexpr size_t numberOfWords = 200;
+  constexpr size_t numberOfThreads = 32;
+  constexpr size_t numberOfRoundsPerThread = 20;
+  auto vocab = createVocabularyFromWords(makeWords(numberOfWords));
+  // Every seventh word, in descending order.
+  auto indices = stridedIndices(0, numberOfWords, 7);
+  ql::ranges::reverse(indices);
+  // All threads start their lookups at the same time: each waits until all
+  // threads have arrived.
+  std::mutex mutex;
+  std::condition_variable allArrived;
+  size_t numberOfArrivedThreads = 0;
+  auto arriveAndWait = [&]() {
+    std::unique_lock lock{mutex};
+    if (++numberOfArrivedThreads == numberOfThreads) {
+      allArrived.notify_all();
+    }
+    allArrived.wait(
+        lock, [&]() { return numberOfArrivedThreads == numberOfThreads; });
+  };
+  {
+    std::vector<ad_utility::JThread> threads;
+    for ([[maybe_unused]] size_t t :
+         ad_utility::integerRange(numberOfThreads)) {
+      threads.emplace_back([&vocab, &indices, &arriveAndWait]() {
+        arriveAndWait();
+        for ([[maybe_unused]] size_t round :
+             ad_utility::integerRange(numberOfRoundsPerThread)) {
+          vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+              *vocab, vocab->lookupBatch(indices), indices);
+        }
+      });
+    }
+  }
+  EXPECT_GE(vocab->numberOfIdleBatchManagersForTesting(), 1u);
+  EXPECT_LE(vocab->numberOfIdleBatchManagersForTesting(), numberOfThreads);
+}
+
+// _____________________________________________________________________________
+// After the io_uring setup has failed once (simulated here), new managers are
+// synchronous. Their lookups are correct, and they are reused like the others.
+TEST(VocabularyOnDisk, LookupBatchWithSynchronousManagers) {
+  auto vocab = createVocabularyFromWords(makeWords(50));
+  vocab->disableIoUringForTesting();
+  auto indices = stridedIndices(0, 50, 3);
+  for ([[maybe_unused]] size_t round : ad_utility::integerRange(size_t{3})) {
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+    EXPECT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 1u);
+  }
 }
 
 // Test that `lookupBatch` on a vocabulary that was never opened fails with a
