@@ -41,9 +41,9 @@ enum class PositionLookup {
 
 // The strictly ascending vocabulary indices of the words of a vocabulary with
 // holes (see `VocabularyInMemoryBinSearch`), together with the lookup from an
-// index to its position among them (see `PositionLookup`). The rank directory
-// is built from the indices in the constructor, and the indices cannot be
-// changed afterwards, so the two always agree.
+// index to its position among them (see `PositionLookup`). If there is a rank
+// directory, it is built from the indices in the constructor, and the indices
+// cannot be changed afterwards, so the two always agree.
 class SortedVocabIndices : public ad_utility::NoCopy {
  public:
   using Storage = ad_utility::OwnedOrViewedVector<uint64_t>;

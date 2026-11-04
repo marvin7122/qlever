@@ -137,7 +137,8 @@ class BitVectorWithRank : public ad_utility::NoCopy {
   // The number of set bits in `bits` at the offsets `[from, to)`. Touches at
   // most 4 words if `to - from <= middleBit`.
   static uint64_t popcountRange(const Bits& bits, uint64_t from, uint64_t to) {
-    // Runs up to twice per query, so the check is only active in debug builds.
+    // Runs up to twice per query, so this is an expensive check (only active in
+    // debug builds or with `AD_ENABLE_EXPENSIVE_CHECKS`).
     AD_EXPENSIVE_CHECK(from <= to && to <= numberOfBitsPerBlock);
     if (from == to) {
       return 0;

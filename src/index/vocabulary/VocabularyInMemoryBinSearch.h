@@ -113,7 +113,9 @@ class VocabularyInMemoryBinSearch
   // Read the vocabulary from a file. The file must have been created using a
   // `WordWriter`. The `positionLookup` decides how `positionOfIndex` (and hence
   // every lookup by index) works: a binary search, or a constant-time rank
-  // directory that costs 8/7 bits of memory per index in `[0, endIndex())`.
+  // directory that costs 8/7 bits of memory per index in `[0, endIndex())`
+  // (with `PositionLookup::RankDirectoryIfSmaller` only if that is less than
+  // the memory of the indices).
   void open(const std::string& fileName, PositionLookup positionLookup);
 
   // The `open` of the generic vocabulary interface, with
