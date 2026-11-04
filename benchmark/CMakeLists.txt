@@ -30,6 +30,10 @@ if (NOT _NO_BENCHMARK)
     # Add benchmarks after here.
     addAndLinkBenchmark(BenchmarkExamples)
 
+    # A plain executable with its own `main` (not the benchmark framework).
+    add_executable(SplitVocabularyLookupBatchMicroBenchmark SplitVocabularyLookupBatchMicroBenchmark.cpp)
+    qlever_target_link_libraries(SplitVocabularyLookupBatchMicroBenchmark vocabulary)
+
     addAndLinkBenchmark(JoinAlgorithmBenchmark testUtil memorySize)
 
     addAndLinkBenchmark(BlockIndirectSortBenchmark)
