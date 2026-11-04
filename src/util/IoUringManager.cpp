@@ -12,6 +12,7 @@
 
 #include <unistd.h>
 
+#include <limits>
 #include <stdexcept>
 
 #include "util/Exception.h"
@@ -104,6 +105,16 @@ void IoUringPolicy::addBatch(int fd,
 
   if (numReadRequestsToPerform == 0) {
     return;
+  }
+
+  // `io_uring_prep_read` takes the byte count as `unsigned`, so a larger read
+  // would be silently truncated. Reject such reads before any SQE is prepared,
+  // so a rejected batch leaves the ring and the batch bookkeeping untouched.
+  constexpr size_t maxBytesPerRead = std::numeric_limits<unsigned>::max();
+  for (size_t numBytes : numBytesToReadPerRequest) {
+    AD_CONTRACT_CHECK(numBytes <= maxBytesPerRead,
+                      "A single io_uring read must not exceed 4294967295 bytes "
+                      "(`UINT_MAX`)");
   }
   numInFlightReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
 
