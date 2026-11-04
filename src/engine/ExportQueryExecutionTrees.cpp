@@ -17,7 +17,6 @@
 #include <absl/strings/str_replace.h>
 
 #include <optional>
-#include <range/v3/view/enumerate.hpp>
 #include <string_view>
 
 #include "backports/StartsWithAndEndsWith.h"
@@ -147,8 +146,9 @@ ExportQueryExecutionTrees::csvOrTsvRows(
     if (stop.isRequested()) {
       return lines;
     }
-    for (const auto& [j, column] : ::ranges::views::enumerate(columns)) {
-      if (j > 0) {
+    for (const auto& column : columns) {
+      // A separator before every column except the first.
+      if (&column != columns.data()) {
         lines.push_back(separator);
       }
       if (!column.has_value()) {
@@ -162,6 +162,11 @@ ExportQueryExecutionTrees::csvOrTsvRows(
       }
     }
     lines.push_back('\n');
+    if (row == *rows.begin() && rows.size() > 1) {
+      // The size of the first row is the estimate for every row, so a chunk of
+      // uniform rows allocates once.
+      lines.reserve(lines.size() * rows.size());
+    }
     cancellationHandle.throwIfCancelled();
   }
   return lines;
@@ -668,12 +673,16 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
         // that nobody reads. The destructor of the view waits for them.
         const auto allocator = qec.getAllocator().template as<char>();
         auto serializeChunk =
-            [&qec, &selectedColumnIndices, &table = pair, &cancellationHandle,
+            [&qec,
+             columns =
+                 ql::span<const std::optional<
+                     QueryExecutionTree::VariableAndColumnIndex>>{
+                     selectedColumnIndices},
+             table = pair, &cancellationHandle,
              &allocator](ql::ranges::iota_view<uint64_t, uint64_t> rows,
                          ad_utility::AsyncTransformStopFlag stop) {
-              return csvOrTsvRows<format>(qec.getIndex(), selectedColumnIndices,
-                                          table, rows, allocator,
-                                          *cancellationHandle, stop);
+              return csvOrTsvRows<format>(qec.getIndex(), columns, table, rows,
+                                          allocator, *cancellationHandle, stop);
             };
         const size_t maxNumberOfChunksInFlight =
             2 *

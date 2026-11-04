@@ -432,6 +432,8 @@ class CountingExecutor {
 // parallel export would be serialized one after the other. Not copyable or
 // movable, because `qec_` points to the caches.
 struct MultiThreadQec : ad_utility::NoCopyNoMove {
+  // Public, because the destructor of NoCopyNoMove is protected.
+  ~MultiThreadQec() = default;
   QueryResultCache cache_{};
   NamedResultCache namedCache_{};
   // The number of tasks that have been run on the executor of `qec_`.

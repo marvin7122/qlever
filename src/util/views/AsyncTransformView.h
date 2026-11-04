@@ -20,6 +20,7 @@
 
 #include "backports/algorithm.h"
 #include "backports/asio.h"
+#include "backports/concepts.h"
 #include "util/Exception.h"
 #include "util/Iterators.h"
 #include "util/NoCopyNoMove.h"
@@ -32,7 +33,7 @@ namespace detail::asyncTransformView {
 // True iff the `Transformation` takes the stop flag of the view (see NOTE 5
 // below) as its second argument.
 template <typename Transformation, typename Element>
-constexpr bool takesStopFlag =
+CPP_concept takesStopFlag =
     std::is_invocable_v<const Transformation&, Element, AsyncTransformStopFlag>;
 
 // The type that the view stores and yields for an `Element`: the decayed return
@@ -135,7 +136,9 @@ class AsyncTransformView
         transformation_{std::move(transformation)},
         maxNumElementsInFlight_{maxNumElementsInFlight},
         queue_{std::move(executor), maxNumElementsInFlight,
-               "The tasks of an `AsyncTransformView`"} {}
+               "The tasks of an `AsyncTransformView`"} {
+    AD_CONTRACT_CHECK(maxNumElementsInFlight > 0);
+  }
 
   // Tell the pending tasks that their results are no longer needed (see
   // NOTE 5). The members are destroyed after this, and the `queue_` (which is
