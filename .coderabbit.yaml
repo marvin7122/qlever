@@ -1,5 +1,7 @@
 reviews:
   profile: assertive
+  auto_review:
+    drafts: true
   path_instructions:
     - path: "src/**/*.{h,hpp,cpp,cc,cxx}"
       instructions: |
