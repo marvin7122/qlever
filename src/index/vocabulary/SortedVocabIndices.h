@@ -51,48 +51,63 @@ class SortedVocabIndices : public ad_utility::NoCopy {
 
  private:
   Storage storage_;
-  // Only set for `PositionLookup::RankDirectory`.
+  // Only set if the constructor built a rank directory.
   std::optional<ad_utility::BitVectorWithRank> rankDirectory_;
 
  public:
-  // No indices.
+  //____________________________________________________________________________
+  // Create an object without indices, so that every index is a hole.
   SortedVocabIndices() = default;
 
-  // The `storage` of the indices (strictly ascending, which is only checked
-  // for `PositionLookup::RankDirectory`), with the given `positionLookup`.
-  SortedVocabIndices(Storage storage, PositionLookup positionLookup)
-      : storage_{std::move(storage)} {
+  //____________________________________________________________________________
+  // Take the strictly ascending `indices` (owned or viewed) and set up the
+  // lookup of positions given by `positionLookup`. The ascending order is only
+  // checked when a rank directory is built.
+  SortedVocabIndices(Storage indices, PositionLookup positionLookup)
+      : storage_{std::move(indices)} {
     if (positionLookup == PositionLookup::RankDirectoryIfSmaller) {
       positionLookup = isRankDirectorySmaller() ? PositionLookup::RankDirectory
                                                 : PositionLookup::BinarySearch;
     }
     if (positionLookup == PositionLookup::RankDirectory) {
-      const auto indices = view();
+      const auto indexView = view();
       // `endIndex()` would overflow otherwise. Vocabulary indices are much
       // smaller.
-      AD_CONTRACT_CHECK(indices.empty() ||
-                        indices.back() < std::numeric_limits<uint64_t>::max());
-      rankDirectory_.emplace(indices, endIndex());
+      AD_CONTRACT_CHECK(indexView.empty() ||
+                        indexView.back() <
+                            std::numeric_limits<uint64_t>::max());
+      rankDirectory_.emplace(indexView, endIndex());
     }
   }
 
-  // The indices, no matter whether they are owned or only viewed.
+  //____________________________________________________________________________
+  // Return the indices, no matter whether they are owned or only viewed. For
+  // viewed indices, the returned view is valid as long as the memory they were
+  // viewed from (see `OwnedOrViewedVector`).
   View view() const { return storage_.view(); }
 
-  // The underlying storage, for serialization.
+  //____________________________________________________________________________
+  // Return the underlying storage, for serialization.
   const Storage& storage() const { return storage_; }
 
-  // One more than the largest index, or `0` if there are no indices.
+  //____________________________________________________________________________
+  // Return one more than the largest index, or `0` if there are no indices.
   uint64_t endIndex() const {
     const auto indices = view();
     return indices.empty() ? 0 : indices.back() + 1;
   }
 
-  // The position of `index` among the indices, or `std::nullopt` if it is not
-  // contained (a hole, or at least `endIndex()`).
+  //____________________________________________________________________________
+  // Return the position of `index` among the indices (an offset into them, not
+  // a vocabulary index), or `std::nullopt` if it is not contained (a hole, or
+  // at least `endIndex()`).
   std::optional<size_t> positionOf(uint64_t index) const {
     if (rankDirectory_.has_value()) {
-      return rankDirectory_->rankIfContained(index);
+      const auto rank = rankDirectory_->rankIfContained(index);
+      if (!rank.has_value()) {
+        return std::nullopt;
+      }
+      return static_cast<size_t>(rank.value());
     }
     const auto indices = view();
     const auto it = ql::ranges::lower_bound(indices, index);
@@ -102,14 +117,16 @@ class SortedVocabIndices : public ad_utility::NoCopy {
     return std::nullopt;
   }
 
-  // The number of bytes of the rank directory, `0` if there is none.
+  //____________________________________________________________________________
+  // Return the number of bytes of the rank directory, `0` if there is none.
   size_t numberOfBytesOfRankDirectory() const {
     return rankDirectory_.has_value() ? rankDirectory_->numberOfBytes() : 0;
   }
 
  private:
-  // Whether a rank directory over `[0, endIndex())` takes fewer bytes than the
-  // indices (see `PositionLookup::RankDirectoryIfSmaller`).
+  //____________________________________________________________________________
+  // Return whether a rank directory over `[0, endIndex())` takes fewer bytes
+  // than the indices (see `PositionLookup::RankDirectoryIfSmaller`).
   bool isRankDirectorySmaller() const {
     const auto indices = view();
     return !indices.empty() &&

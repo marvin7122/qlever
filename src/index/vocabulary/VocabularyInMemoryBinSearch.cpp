@@ -35,11 +35,14 @@ void VocabularyInMemoryBinSearch::open(const string& fileName,
     idFile >> indices;
     ad_utility::Timer timer{ad_utility::Timer::Started};
     indices_ = Indices{std::move(indices), positionLookup};
+
     if (numberOfBytesOfRankDirectory() > 0) {
-      AD_LOG_INFO << "Rank directory over the " << indices_.view().size()
-                  << " vocabulary indices in [0, " << endIndex()
-                  << "): " << numberOfBytesOfRankDirectory() << " bytes, "
-                  << timer.msecs().count() << " ms" << std::endl;
+      const auto indexView = indices_.view();
+      AD_LOG_INFO << "Built the rank directory over the " << indexView.size()
+                  << " vocabulary indices in [0, " << endIndex() << ") in "
+                  << timer.msecs().count()
+                  << " ms: " << numberOfBytesOfRankDirectory() << " bytes"
+                  << std::endl;
     }
   }
 }

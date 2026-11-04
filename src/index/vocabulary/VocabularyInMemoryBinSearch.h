@@ -60,8 +60,10 @@ class VocabularyInMemoryBinSearch
   // either as an owned vector (after `open()`, or after reading from a
   // regular, non-zero-copy serializer), or as a non-owning view into
   // externally-owned memory (after `fromZeroCopyDeserializer`). Only `open()`
-  // can request the rank directory (see `PositionLookup`), all other ways of
-  // setting the indices use the binary search.
+  // can request a rank directory (see `PositionLookup`). Deserialization and
+  // `fromZeroCopyDeserializer` always create `Indices` with
+  // `PositionLookup::BinarySearch` and never build the (possibly large)
+  // directory, so `numberOfBytesOfRankDirectory()` is `0` after them.
   std::shared_ptr<const Words> words_ = std::make_shared<const Words>();
   Indices indices_;
 
@@ -99,8 +101,8 @@ class VocabularyInMemoryBinSearch
   // only viewed.
   IndicesView indices() const { return indices_.view(); }
 
-  // The number of bytes of the rank directory, `0` if there is none (see
-  // `open`).
+  // Return the number of bytes of the rank directory, `0` if there is none
+  // (see `open`).
   size_t numberOfBytesOfRankDirectory() const {
     return indices_.numberOfBytesOfRankDirectory();
   }

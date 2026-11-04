@@ -288,7 +288,8 @@ struct RuntimeParameters {
   // (`VocabularyInternalExternal`) also builds a rank directory over the
   // indices of these words (see `ad_utility::BitVectorWithRank`), if the
   // directory is smaller than these indices (see
-  // `PositionLookup::RankDirectoryIfSmaller`). Looking up whether an index is
+  // `ad_utility::vocabulary::PositionLookup::RankDirectoryIfSmaller` in
+  // `SortedVocabIndices.h`). Looking up whether an index is
   // in RAM, and where, then reads one cache line instead of doing a binary
   // search over these indices. The directory costs 8/7 bits per index of the
   // whole vocabulary, not per word in RAM. Set it to false to measure the
