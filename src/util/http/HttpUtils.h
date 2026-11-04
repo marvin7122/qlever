@@ -122,7 +122,12 @@ http::request<http::string_body, Fields> getStringBodyRequest(
 using ResponseT = http::response<streamable_body>;
 
 // A function that compresses a response body with a `CompressionMethod` (see
-// `streams::compressStream`).
+// `streams::compressStream`): it takes ownership of the body and returns a lazy
+// generator whose concatenated output is the body compressed with the method
+// (or the body unchanged for `CompressionMethod::NONE`). The returned generator
+// may use the state that the function captured (for example, an executor), so
+// that state has to stay valid until the generator is fully consumed or
+// destroyed, which for a response is when it has been sent.
 using CompressBody = std::function<cppcoro::generator<std::string>(
     cppcoro::generator<std::string>, content_encoding::CompressionMethod)>;
 
@@ -141,7 +146,9 @@ Body compressSequentially(Body body,
 
 // Assign the generator to the body of the response. If a supported
 // compression is specified in the request, the body is compressed with
-// `compressBody` and the corresponding response headers are set.
+// `compressBody` and the corresponding response headers are set. The state
+// that `compressBody` uses has to outlive the response body (see
+// `CompressBody`).
 //
 // NOTE: The body is advanced on the executor that is passed to the
 // `HttpMessageSender` when sending the response, so (potentially expensive)

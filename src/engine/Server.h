@@ -395,9 +395,12 @@ class Server {
       const ParsedQuery& parsedQuery);
   FRIEND_TEST(ServerTest, chooseBestFittingMediaType);
 
+  // ___________________________________________________________________________
   // The compression of the response to a query: with
   // `parallel-response-compression`, `streams::compressStreamInParallel` on
-  // the `executor` of the query, otherwise the sequential default.
+  // the `executor` of the query, otherwise the sequential default. The
+  // execution context of the `executor` has to outlive the compressed body
+  // (which holds for the executor of the `QueryExecutionContext`).
   static ad_utility::httpUtils::CompressBody compressBodyForQuery(
       qlever::Executor executor);
   FRIEND_TEST(ServerTest, compressBodyForQuery);

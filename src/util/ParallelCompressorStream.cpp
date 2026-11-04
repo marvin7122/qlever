@@ -29,6 +29,7 @@ namespace {
 constexpr size_t MAX_NUMBER_OF_BYTES_PER_ZLIB_CALL =
     std::numeric_limits<uInt>::max();
 
+// _____________________________________________________________________________
 // Append the four bytes of the `value`, least significant byte first (the byte
 // order of the gzip trailer).
 void appendLittleEndian(std::string& out, uint32_t value) {
@@ -36,6 +37,8 @@ void appendLittleEndian(std::string& out, uint32_t value) {
     out.push_back(static_cast<char>((value >> (8 * i)) & 0xFF));
   }
 }
+
+// _____________________________________________________________________________
 // Append the four bytes of the `value`, most significant byte first (the byte
 // order of the zlib trailer).
 void appendBigEndian(std::string& out, uint32_t value) {
@@ -44,15 +47,16 @@ void appendBigEndian(std::string& out, uint32_t value) {
   }
 }
 
+// _____________________________________________________________________________
 // The checksum of the `format` for the `bytes`.
-Checksum checksum(StreamFormat format, std::string_view bytes) {
+Checksum checksum(StreamFormat format, std::string_view bytes) noexcept {
   const auto* data = reinterpret_cast<const Bytef*>(bytes.data());
   if (format == StreamFormat::Gzip) {
-    return Crc32{static_cast<uint32_t>(
-        crc32_z(crc32(0, Z_NULL, 0), data, bytes.size()))};
+    return {Crc32{static_cast<uint32_t>(
+        crc32_z(crc32(0, Z_NULL, 0), data, bytes.size()))}};
   }
-  return Adler32{static_cast<uint32_t>(
-      adler32_z(adler32(0, Z_NULL, 0), data, bytes.size()))};
+  return {Adler32{static_cast<uint32_t>(
+      adler32_z(adler32(0, Z_NULL, 0), data, bytes.size()))}};
 }
 }  // namespace
 
@@ -60,8 +64,11 @@ Checksum checksum(StreamFormat format, std::string_view bytes) {
 CompressedBlock compressBlock(const UncompressedBlock& block,
                               StreamFormat format) {
   z_stream stream{};
-  // Raw deflate (negative window bits) with the same level, window, and memory
-  // level as the sequential `compressStream`.
+  // Raw deflate (negative window bits, so without a zlib or gzip header and
+  // trailer, which `StreamFrame` writes once for the whole stream) at level 1,
+  // with a 32 KiB window and memory level 8. These are the parameters that the
+  // sequential `compressStream` gets from the `best_speed` compressors of
+  // Boost.Iostreams, which however write a complete zlib or gzip stream.
   int result = deflateInit2(&stream, Z_BEST_SPEED, Z_DEFLATED, -MAX_WBITS, 8,
                             Z_DEFAULT_STRATEGY);
   if (result != Z_OK) {
@@ -71,9 +78,8 @@ CompressedBlock compressBlock(const UncompressedBlock& block,
                      result));
   }
   absl::Cleanup endStream{[&stream]() { deflateEnd(&stream); }};
+  AD_CORRECTNESS_CHECK(block.dictionary_.size() <= DICTIONARY_SIZE.getBytes());
   if (!block.dictionary_.empty()) {
-    AD_CORRECTNESS_CHECK(block.dictionary_.size() <=
-                         NUMBER_OF_BYTES_IN_DICTIONARY);
     result = deflateSetDictionary(
         &stream, reinterpret_cast<const Bytef*>(block.dictionary_.data()),
         static_cast<uInt>(block.dictionary_.size()));
@@ -98,6 +104,9 @@ CompressedBlock compressBlock(const UncompressedBlock& block,
     remainingInput.remove_prefix(numberOfBytesInPiece);
     do {
       if (stream.total_out == out.size()) {
+        // The buffer is sized for incompressible input, so this is only a
+        // fallback that cannot overflow for the blocks of a stream.
+        AD_CORRECTNESS_CHECK(out.size() <= out.max_size() / 2);
         out.resize(2 * out.size());
       }
       stream.next_out = reinterpret_cast<Bytef*>(out.data() + stream.total_out);
@@ -114,16 +123,17 @@ CompressedBlock compressBlock(const UncompressedBlock& block,
   // block may wait in memory until it is its turn to be sent.
   out.resize(stream.total_out);
   out.shrink_to_fit();
-  return {std::move(out), checksum(format, block.bytes_), block.bytes_.size()};
+  return {RawDeflateData{std::move(out)}, checksum(format, block.bytes_),
+          ad_utility::MemorySize::bytes(block.bytes_.size())};
 }
 
 // _____________________________________________________________________________
-StreamFrame::StreamFrame(StreamFormat format)
+StreamFrame::StreamFrame(StreamFormat format) noexcept
     : checksum_{checksum(format, {})} {}
 
 // _____________________________________________________________________________
 std::string StreamFrame::header() const {
-  if (std::holds_alternative<Crc32>(checksum_)) {
+  if (checksum_.format() == StreamFormat::Gzip) {
     // ID1, ID2, CM = deflate, FLG = none, MTIME = 0 (unknown), XFL = 4
     // (fastest compression), OS = 255 (unknown), see RFC 1952, section 2.3.
     return {"\x1f\x8b\x08\x00\x00\x00\x00\x00\x04\xff", 10};
@@ -135,18 +145,19 @@ std::string StreamFrame::header() const {
 
 // _____________________________________________________________________________
 void StreamFrame::add(const CompressedBlock& block) {
-  AD_CORRECTNESS_CHECK(block.checksum_.index() == checksum_.index(),
+  AD_CORRECTNESS_CHECK(block.checksum_.format() == checksum_.format(),
                        "A block was compressed for another stream format");
-  auto length = static_cast<z_off_t>(block.numberOfUncompressedBytes_);
-  if (auto* crc = std::get_if<Crc32>(&checksum_)) {
+  auto length = static_cast<z_off_t>(block.uncompressedSize_.getBytes());
+  if (auto* crc = std::get_if<Crc32>(&checksum_.value_)) {
     crc->value_ = static_cast<uint32_t>(crc32_combine(
-        crc->value_, std::get<Crc32>(block.checksum_).value_, length));
+        crc->value_, std::get<Crc32>(block.checksum_.value_).value_, length));
   } else {
-    auto& adler = std::get<Adler32>(checksum_);
+    auto& adler = std::get<Adler32>(checksum_.value_);
     adler.value_ = static_cast<uint32_t>(adler32_combine(
-        adler.value_, std::get<Adler32>(block.checksum_).value_, length));
+        adler.value_, std::get<Adler32>(block.checksum_.value_).value_,
+        length));
   }
-  numberOfUncompressedBytes_ += block.numberOfUncompressedBytes_;
+  uncompressedSize_ += block.uncompressedSize_;
 }
 
 // _____________________________________________________________________________
@@ -155,31 +166,33 @@ std::string StreamFrame::finalBlockAndTrailer() const {
   // (which is what zlib writes for `Z_FINISH` without input). It starts on a
   // byte boundary, because every block ends with a sync flush.
   std::string out{"\x03\x00", 2};
-  if (const auto* crc = std::get_if<Crc32>(&checksum_)) {
+  if (const auto* crc = std::get_if<Crc32>(&checksum_.value_)) {
     appendLittleEndian(out, crc->value_);
-    appendLittleEndian(out, static_cast<uint32_t>(numberOfUncompressedBytes_));
+    appendLittleEndian(out,
+                       static_cast<uint32_t>(uncompressedSize_.getBytes()));
   } else {
-    appendBigEndian(out, std::get<Adler32>(checksum_).value_);
+    appendBigEndian(out, std::get<Adler32>(checksum_.value_).value_);
   }
   return out;
 }
 
 namespace {
+// _____________________________________________________________________________
 // Cut the `range` into `UncompressedBlock`s of at least
 // `MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK` bytes (except the last one),
-// each with the last `NUMBER_OF_BYTES_IN_DICTIONARY` bytes of the previous
-// block as its dictionary.
+// each with the last `DICTIONARY_SIZE` bytes of the previous block as its
+// dictionary.
 cppcoro::generator<UncompressedBlock> cutIntoBlocks(
     cppcoro::generator<std::string> range) {
   std::string dictionary;
   std::string bytes;
   auto makeBlock = [&dictionary, &bytes]() {
     // Each block that has a successor has at least
-    // `NUMBER_OF_BYTES_IN_DICTIONARY` bytes, so the dictionary of the next
-    // block is the end of this one.
+    // `DICTIONARY_SIZE` bytes, so the dictionary of the next block is the end
+    // of this one.
     std::string nextDictionary{
-        bytes.end() - static_cast<ptrdiff_t>(std::min(
-                          bytes.size(), NUMBER_OF_BYTES_IN_DICTIONARY)),
+        bytes.end() - static_cast<ptrdiff_t>(
+                          std::min(bytes.size(), DICTIONARY_SIZE.getBytes())),
         bytes.end()};
     UncompressedBlock block{std::move(bytes), std::move(dictionary)};
     dictionary = std::move(nextDictionary);
@@ -208,8 +221,8 @@ cppcoro::generator<UncompressedBlock> cutIntoBlocks(
 cppcoro::generator<std::string> compressStreamInParallel(
     cppcoro::generator<std::string> range,
     content_encoding::CompressionMethod compressionMethod,
-    ql::any_io_executor executor, size_t maxNumberOfBlocksInFlight) {
-  using namespace detail::parallelCompression;
+    qlever::Executor executor, size_t maxNumberOfBlocksInFlight) {
+  namespace pc = detail::parallelCompression;
   AD_CONTRACT_CHECK(maxNumberOfBlocksInFlight >= 1);
   if (compressionMethod == content_encoding::CompressionMethod::NONE) {
     for (std::string& piece : range) {
@@ -217,23 +230,23 @@ cppcoro::generator<std::string> compressStreamInParallel(
     }
     co_return;
   }
-  const StreamFormat format =
+  const pc::StreamFormat format =
       compressionMethod == content_encoding::CompressionMethod::GZIP
-          ? StreamFormat::Gzip
-          : StreamFormat::Zlib;
-  StreamFrame frame{format};
+          ? pc::StreamFormat::Gzip
+          : pc::StreamFormat::Zlib;
+  pc::StreamFrame frame{format};
   co_yield frame.header();
   // When this generator is destroyed early (for example, after a client
   // disconnect), the view waits for the blocks in flight.
   ad_utility::AsyncTransformView compressedBlocks{
-      cutIntoBlocks(std::move(range)),
-      [format](const UncompressedBlock& block) {
-        return compressBlock(block, format);
+      pc::cutIntoBlocks(std::move(range)),
+      [format](const pc::UncompressedBlock& block) {
+        return pc::compressBlock(block, format);
       },
       maxNumberOfBlocksInFlight, std::move(executor)};
-  for (CompressedBlock& block : compressedBlocks) {
+  for (pc::CompressedBlock& block : compressedBlocks) {
     frame.add(block);
-    co_yield block.bytes_;
+    co_yield block.deflateData_.bytes_;
   }
   co_yield frame.finalBlockAndTrailer();
 }

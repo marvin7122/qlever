@@ -1122,10 +1122,12 @@ ad_utility::httpUtils::CompressBody Server::compressBodyForQuery(
           &RuntimeParameters::parallelResponseCompression_>()) {
     return ad_utility::httpUtils::compressSequentially<>;
   }
+
   // As for the other parallel work of a query, a thread can compress the next
   // block while its previous one waits to be sent.
   const size_t maxNumberOfBlocksInFlight =
       2 * getRuntimeParameter<&RuntimeParameters::maxNumThreadsPerQuery_>();
+
   return [executor = std::move(executor), maxNumberOfBlocksInFlight](
              cppcoro::generator<std::string> body,
              ad_utility::content_encoding::CompressionMethod method) {
