@@ -14,8 +14,11 @@
 namespace qlever::constructExport {
 
 namespace {
+
+// _____________________________________________________________________________
 // Convert one result of `idsToStringAndTypeOrBorrowedWord` to an
-// `EvaluatedTerm`. A borrowed word stays borrowed (its bytes are not copied).
+// `EvaluatedTerm`, so that a borrowed word stays borrowed (its bytes are not
+// copied).
 std::optional<EvaluatedTerm> toEvaluatedTerm(
     std::optional<ql::exportIds::StringAndTypeOrBorrowedWord>&& resolved) {
   if (!resolved.has_value()) {
