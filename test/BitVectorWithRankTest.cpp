@@ -21,6 +21,7 @@
 #include "backports/algorithm.h"
 #include "util/BitVectorWithRank.h"
 #include "util/GTestHelpers.h"
+#include "util/Views.h"
 
 using ad_utility::BitVectorWithRank;
 
@@ -38,7 +39,7 @@ void expectRanksOfAllValues(const std::vector<uint64_t>& sortedValues,
   BitVectorWithRank set{sortedValues, universeSize};
   EXPECT_EQ(set.universeSize(), universeSize);
   size_t numberOfSmallerValues = 0;
-  for (uint64_t element = 0; element < universeSize + 2; ++element) {
+  for (const uint64_t element : ad_utility::integerRange(universeSize + 2)) {
     const bool isContained = numberOfSmallerValues < sortedValues.size() &&
                              sortedValues[numberOfSmallerValues] == element;
     if (isContained) {
@@ -57,7 +58,7 @@ template <typename Predicate>
 std::vector<uint64_t> valuesWhere(uint64_t universeSize,
                                   Predicate isContained) {
   std::vector<uint64_t> values;
-  for (uint64_t element = 0; element < universeSize; ++element) {
+  for (const uint64_t element : ad_utility::integerRange(universeSize)) {
     if (isContained(element)) {
       values.push_back(element);
     }
@@ -172,7 +173,7 @@ TEST(BitVectorWithRank, RandomSetsMatchBinarySearch) {
     const auto values = valuesWhere(
         universeSize, [&](uint64_t) { return isContained(randomEngine); });
     BitVectorWithRank set{values, universeSize};
-    for (uint64_t element = 0; element < universeSize; ++element) {
+    for (const uint64_t element : ad_utility::integerRange(universeSize)) {
       const auto it = ql::ranges::lower_bound(values, element);
       const std::optional<uint64_t> expected =
           it != values.end() && *it == element

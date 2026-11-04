@@ -19,6 +19,7 @@
 
 #include "../../util/GTestHelpers.h"
 #include "index/vocabulary/SortedVocabIndices.h"
+#include "util/Views.h"
 
 using ad_utility::vocabulary::PositionLookup;
 using ad_utility::vocabulary::SortedVocabIndices;
@@ -32,7 +33,7 @@ std::vector<uint64_t> randomIndicesWithHoles(std::mt19937_64& randomEngine,
                                              double fractionContained) {
   std::bernoulli_distribution isContained{fractionContained};
   std::vector<uint64_t> indices;
-  for (uint64_t index = 0; index < universeSize; ++index) {
+  for (const uint64_t index : ad_utility::integerRange(universeSize)) {
     if (isContained(randomEngine)) {
       indices.push_back(index);
     }
@@ -52,7 +53,8 @@ void expectBothLookupsAgree(const std::vector<uint64_t>& indices) {
   ASSERT_EQ(binarySearch.endIndex(), rankDirectory.endIndex());
   EXPECT_THAT(rankDirectory.view(), ::testing::ElementsAreArray(indices));
   size_t position = 0;
-  for (uint64_t index = 0; index < binarySearch.endIndex() + 2; ++index) {
+  for (const uint64_t index :
+       ad_utility::integerRange(binarySearch.endIndex() + 2)) {
     const bool isContained =
         position < indices.size() && indices[position] == index;
     const auto expected =
@@ -132,7 +134,7 @@ TEST(SortedVocabIndices, RankDirectoryIfSmaller) {
               fractionContained > 1.0 / 56);
     const SortedVocabIndices binarySearch{Storage{indices},
                                           PositionLookup::BinarySearch};
-    for (uint64_t index = 0; index < 5002; ++index) {
+    for (const uint64_t index : ad_utility::integerRange(uint64_t{5002})) {
       ASSERT_EQ(ifSmaller.positionOf(index), binarySearch.positionOf(index));
     }
   }

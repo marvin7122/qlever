@@ -18,6 +18,7 @@
 #include <optional>
 #include <vector>
 
+#include "backports/algorithm.h"
 #include "backports/span.h"
 #include "util/Exception.h"
 #include "util/NoCopyNoMove.h"
@@ -154,10 +155,10 @@ class BitVectorWithRank : public ad_utility::NoCopy {
         firstWord == lastWord ? highInLastWord : 64;
     auto count = static_cast<uint64_t>(absl::popcount(
         bits[firstWord] & wordMask(from - firstWord * 64, highInFirstWord)));
-    for (size_t word = firstWord + 1; word < lastWord; ++word) {
-      count += static_cast<uint64_t>(absl::popcount(bits[word]));
-    }
     if (lastWord > firstWord) {
+      for (const size_t word : ql::views::iota(firstWord + 1, lastWord)) {
+        count += static_cast<uint64_t>(absl::popcount(bits[word]));
+      }
       count += static_cast<uint64_t>(
           absl::popcount(bits[lastWord] & wordMask(0, highInLastWord)));
     }

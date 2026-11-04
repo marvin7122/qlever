@@ -12,6 +12,7 @@
 #include "index/vocabulary/VocabularyInMemoryBinSearch.h"
 #include "util/Forward.h"
 #include "util/Serializer/ByteBufferSerializer.h"
+#include "util/Views.h"
 
 namespace {
 using namespace vocabulary_test;
@@ -225,7 +226,8 @@ TEST(VocabularyInMemoryBinSearch, positionOfIndexAndAccessOperator) {
 
     ASSERT_EQ(vocab.size(), wordsWithHoles.size());
     EXPECT_THAT(vocab.indices(), ::testing::ElementsAreArray(indicesWithHoles));
-    for (size_t position = 0; position < wordsWithHoles.size(); ++position) {
+    for (const size_t position :
+         ad_utility::integerRange(wordsWithHoles.size())) {
       uint64_t index = indicesWithHoles.at(position);
       EXPECT_EQ(vocab.positionOfIndex(index), std::optional{position});
       EXPECT_EQ(vocab.indexAtPosition(position), index);
@@ -274,7 +276,7 @@ TEST(VocabularyInMemoryBinSearch, rankDirectory) {
                       .lookupBatch(indices);
   auto result = vocab.lookupBatch(indices);
   ASSERT_EQ(result->size(), expected->size());
-  for (size_t i = 0; i < indices.size(); ++i) {
+  for (const size_t i : ad_utility::integerRange(indices.size())) {
     EXPECT_EQ((*result)[i], (*expected)[i]) << indices[i];
   }
 
