@@ -62,7 +62,8 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
     std::atomic<bool> preferIoUring_{true};
   };
   // Behind a pointer, because `BatchManagers` is not movable (it holds a mutex
-  // and an atomic), but `VocabularyOnDisk` is.
+  // and an atomic), but `VocabularyOnDisk` is. As for any other member, a
+  // vocabulary must not be moved while a `lookupBatch` on it runs.
   std::unique_ptr<BatchManagers> batchManagers_;
 
   // This suffix is appended to the filename of the main file, in order to get
@@ -148,11 +149,21 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // Get the number of words in the vocabulary.
   size_t size() const { return size_; }
 
+  //____________________________________________________________________________
   // Return the number of idle managers of `lookupBatch`. Only for testing.
   size_t numberOfIdleBatchManagersForTesting() const {
     AD_CONTRACT_CHECK(batchManagers_ != nullptr,
                       "`open()` must be called before the managers exist");
     return batchManagers_->pool_.numStoredObjects();
+  }
+
+  //____________________________________________________________________________
+  // Make the managers that `lookupBatch` creates from now on synchronous, as
+  // after a failed io_uring setup. Only for testing.
+  void disableIoUringForTesting() {
+    AD_CONTRACT_CHECK(batchManagers_ != nullptr,
+                      "`open()` must be called before the managers exist");
+    batchManagers_->preferIoUring_ = false;
   }
 
   // Default constructor for an empty vocabulary.

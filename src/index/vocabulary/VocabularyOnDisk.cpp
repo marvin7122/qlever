@@ -340,6 +340,10 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
   // and its setup succeeds and has not failed before for this vocabulary).
   auto& managers = *batchManagers_;
   auto makeManager = [&managers]() {
+    // `makeBatchManager` clears `tryIoUring` if it built a synchronous manager
+    // (because the io_uring setup failed, or io_uring is not compiled in).
+    // This is the only place where `preferIoUring_` becomes false. The member
+    // is atomic, so it cannot be passed by reference itself.
     bool tryIoUring = managers.preferIoUring_;
     auto manager = ad_utility::makeBatchManager(tryIoUring);
     if (!tryIoUring) {
@@ -351,7 +355,8 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
 
   // Give the manager back on every exit path. Also after a failed read it can
   // be reused, because `IoUringPolicy` collects all reads of a batch from the
-  // kernel before it throws.
+  // kernel before it throws, and `SyncIoPolicy` keeps no state between
+  // batches.
   absl::Cleanup giveBack{[&managers, &manager]() {
     ad_utility::terminateIfThrows(
         [&managers, &manager]() {

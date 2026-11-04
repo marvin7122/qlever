@@ -117,10 +117,14 @@ class VocabularyOnDiskHandle {
   VocabularyOnDisk* operator->() { return &vocabulary_; }
 };
 
+// The name of the words file that `createVocabularyFromWords` writes.
+std::string vocabularyFilenameOfCurrentTest() {
+  return absl::StrCat(gtestCurrentTestName(), ".dat");
+}
+
 VocabularyOnDiskHandle createVocabularyFromWords(
     const std::vector<std::string>& words) {
-  return VocabularyOnDiskHandle{absl::StrCat(gtestCurrentTestName(), ".dat"),
-                                words};
+  return VocabularyOnDiskHandle{vocabularyFilenameOfCurrentTest(), words};
 }
 
 // Words of different lengths that are distinct for each `prefix`.
@@ -337,7 +341,8 @@ TEST(VocabularyOnDisk, LookupBatchReusesItsManager) {
 
 // A lookup whose batch has one short read throws and gives its manager back,
 // and the next lookup reuses that manager. `IoUringPolicy` collects all reads
-// of the failed batch before it throws, so the manager is clean.
+// of the failed batch before it throws, and `SyncIoPolicy` keeps no state
+// between batches, so the manager is clean.
 TEST(VocabularyOnDisk, LookupBatchReusesTheManagerAfterAFailedRead) {
   const auto words = makeWords(10);
   auto vocab = createVocabularyFromWords(words);
@@ -348,7 +353,7 @@ TEST(VocabularyOnDisk, LookupBatchReusesTheManagerAfterAFailedRead) {
 
   // Cut off the last byte of the words file, so that of the ten reads of the
   // following batch, only the read of the last word is short.
-  const auto filename = absl::StrCat(gtestCurrentTestName(), ".dat");
+  const auto filename = vocabularyFilenameOfCurrentTest();
   ql::filesystem::resize_file(filename,
                               ql::filesystem::file_size(filename) - 1);
   auto allWords = stridedIndices(0, words.size(), 1);
@@ -388,6 +393,19 @@ TEST(VocabularyOnDisk, LookupBatchFromManyThreadsAtOnce) {
   }
   EXPECT_GE(vocab->numberOfIdleBatchManagersForTesting(), 1u);
   EXPECT_LE(vocab->numberOfIdleBatchManagersForTesting(), numberOfThreads);
+}
+
+// After the io_uring setup has failed once (simulated here), new managers are
+// synchronous. Their lookups are correct, and they are reused like the others.
+TEST(VocabularyOnDisk, LookupBatchWithSynchronousManagers) {
+  auto vocab = createVocabularyFromWords(makeWords(50));
+  vocab->disableIoUringForTesting();
+  auto indices = stridedIndices(0, 50, 3);
+  for ([[maybe_unused]] size_t round : ad_utility::integerRange(size_t{3})) {
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+    EXPECT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 1u);
+  }
 }
 
 // Test that `lookupBatch` on a vocabulary that was never opened fails with a
