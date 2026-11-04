@@ -27,8 +27,8 @@
 #include "util/Exception.h"
 #include "util/File.h"
 #include "util/GTestHelpers.h"
-#include "util/IoUringManager.h"
 #include "util/Log.h"
+#include "util/io_uring/IoUringManager.h"
 
 namespace {
 
