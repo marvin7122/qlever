@@ -183,6 +183,8 @@ class AsyncTransformView
               return std::invoke(transformation, std::move(element),
                                  AsyncTransformStopFlag{stopRequested});
             } else {
+              // Only used by a `transformation` that takes the stop flag.
+              static_cast<void>(stopRequested);
               return std::invoke(transformation, std::move(element));
             }
           }));
