@@ -321,7 +321,10 @@ void IoUringPolicy::addBatch(
           // already forgotten).
           batches_.at(handle).numberOfOutstandingReads -=
               numberOfReads - numberOfPreparedReads;
-          drainBatch(handle);
+          // MUTANT: skip the reaping after a fatal (non-retried) submit error.
+          if (submitFailure->find("retries)") != std::string::npos) {
+            drainBatch(handle);
+          }
         }
       },
       "IoUringPolicy::addBatch must not throw while the kernel may hold "
