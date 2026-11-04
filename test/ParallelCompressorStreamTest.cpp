@@ -16,12 +16,14 @@
 #include <boost/iostreams/filter/zlib.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
 #include <random>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "backports/algorithm.h"
+#include "util/Exception.h"
+#include "util/GTestHelpers.h"
 #include "util/ParallelCompressorStream.h"
+#include "util/StringGeneratorTestHelpers.h"
 #include "util/views/ChunkedIotaView.h"
 
 namespace {
@@ -33,15 +35,6 @@ namespace pc = ad_utility::streams::detail::parallelCompression;
 // blocks that end inside a piece.
 constexpr size_t minBlock =
     ad_utility::streams::MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK;
-
-// Yield the `data` in pieces of `pieceSize` bytes (the last one may be
-// shorter). Nothing is yielded for empty `data`.
-cppcoro::generator<std::string> inPieces(std::string data, size_t pieceSize) {
-  for (auto [begin, end] :
-       ad_utility::chunkedIotaView(size_t{0}, data.size(), pieceSize)) {
-    co_yield data.substr(begin, end - begin);
-  }
-}
 
 // Yield the `pieces` as they are (including empty ones).
 cppcoro::generator<std::string> yieldAll(std::vector<std::string> pieces) {
@@ -86,22 +79,17 @@ std::string randomBytes(size_t numberOfBytes, unsigned seed = 7) {
   return bytes;
 }
 
-std::string concatenate(cppcoro::generator<std::string> generator) {
-  std::string result;
-  for (const std::string& piece : generator) {
-    result += piece;
-  }
-  return result;
-}
-
 // Decompress the `compressed` stream with zlib, which also checks the
 // trailer (the checksum and, for gzip, the size), as `gzip -t` does. Only one
 // gzip member (`windowBits` 15 + 16) or one zlib stream (`windowBits` 15) is
 // accepted, and the stream has to end exactly at the end of the `compressed`
-// bytes. Return the decompressed bytes.
+// bytes. At most `maxNumberOfBytes` (plus one buffer) are decompressed, so a
+// stream that is too long cannot grow the result without bound. Return the
+// decompressed bytes.
 std::string inflateStrictly(
     std::string_view compressed,
-    ad_utility::content_encoding::CompressionMethod method) {
+    ad_utility::content_encoding::CompressionMethod method,
+    size_t maxNumberOfBytes) {
   z_stream stream{};
   int windowBits =
       method == ad_utility::content_encoding::CompressionMethod::GZIP ? 15 + 16
@@ -112,13 +100,16 @@ std::string inflateStrictly(
   stream.avail_in = static_cast<uInt>(compressed.size());
   std::string result;
   int status = Z_OK;
-  while (status == Z_OK) {
+  // Each call of `inflate` either ends the stream or fills the buffer, so the
+  // loop ends once `maxNumberOfBytes` are exceeded.
+  while (status == Z_OK && stream.total_out <= maxNumberOfBytes) {
     result.resize(result.size() + 1024 * 1024);
     stream.next_out =
         reinterpret_cast<Bytef*>(result.data() + stream.total_out);
     stream.avail_out = static_cast<uInt>(result.size() - stream.total_out);
     status = inflate(&stream, Z_NO_FLUSH);
   }
+  EXPECT_LE(stream.total_out, maxNumberOfBytes);
   EXPECT_EQ(status, Z_STREAM_END)
       << (stream.msg != nullptr ? stream.msg : "no zlib message");
   EXPECT_EQ(stream.avail_in, 0u) << "trailing bytes after the stream";
@@ -156,12 +147,14 @@ class ParallelCompressorStream
   // Compress the `input` on the `pool_`, and check that both decoders give
   // the `expected` bytes. Return the compressed bytes.
   std::string compressAndCheck(cppcoro::generator<std::string> input,
-                               const std::string& expected,
+                               std::string_view expected,
                                size_t maxNumberOfBlocksInFlight = 8) {
-    auto compressed = concatenate(ad_utility::streams::compressStreamInParallel(
-        std::move(input), GetParam(), pool_.get_executor(),
-        maxNumberOfBlocksInFlight));
-    EXPECT_EQ(inflateStrictly(compressed, GetParam()), expected);
+    auto compressed = ad_utility::testing::concatenate(
+        ad_utility::streams::compressStreamInParallel(
+            std::move(input), GetParam(), pool_.get_executor(),
+            maxNumberOfBlocksInFlight));
+    EXPECT_EQ(inflateStrictly(compressed, GetParam(), expected.size()),
+              expected);
     EXPECT_EQ(decompressWithBoost(compressed, GetParam()), expected);
     return compressed;
   }
@@ -182,15 +175,15 @@ TEST_P(ParallelCompressorStream, oneByte) {
 // _____________________________________________________________________________
 TEST_P(ParallelCompressorStream, sizesAroundTheBlockSize) {
   for (size_t size :
-       {pc::NUMBER_OF_BYTES_IN_DICTIONARY - 1,
-        pc::NUMBER_OF_BYTES_IN_DICTIONARY, minBlock - 1, minBlock, minBlock + 1,
-        2 * minBlock - 1, 2 * minBlock, 2 * minBlock + 1, 5 * minBlock + 17}) {
+       {pc::DICTIONARY_SIZE.getBytes() - 1, pc::DICTIONARY_SIZE.getBytes(),
+        minBlock - 1, minBlock, minBlock + 1, 2 * minBlock - 1, 2 * minBlock,
+        2 * minBlock + 1, 5 * minBlock + 17}) {
     auto text = csvLikeText(size);
     // One piece, pieces of exactly one block, pieces that do not divide the
     // block size, and many small pieces.
     for (size_t pieceSize :
          {size, minBlock, minBlock - 1, minBlock + 1, size_t{1000}}) {
-      compressAndCheck(inPieces(text, pieceSize), text);
+      compressAndCheck(ad_utility::testing::inPieces(text, pieceSize), text);
     }
   }
 }
@@ -198,8 +191,8 @@ TEST_P(ParallelCompressorStream, sizesAroundTheBlockSize) {
 // _____________________________________________________________________________
 TEST_P(ParallelCompressorStream, randomBytesDoNotCompress) {
   auto bytes = randomBytes(3 * minBlock + 5);
-  compressAndCheck(inPieces(bytes, 1 << 20), bytes);
-  compressAndCheck(inPieces(bytes, 4096), bytes);
+  compressAndCheck(ad_utility::testing::inPieces(bytes, 1 << 20), bytes);
+  compressAndCheck(ad_utility::testing::inPieces(bytes, 4096), bytes);
 }
 
 // _____________________________________________________________________________
@@ -207,10 +200,11 @@ TEST_P(ParallelCompressorStream, large) {
   // 16 MiB in the 1 MiB pieces of an export, on 4 threads.
   auto text = csvLikeText(16 << 20);
   for (size_t maxNumberOfBlocksInFlight : {1, 2, 8}) {
-    compressAndCheck(inPieces(text, 1 << 20), text, maxNumberOfBlocksInFlight);
+    compressAndCheck(ad_utility::testing::inPieces(text, 1 << 20), text,
+                     maxNumberOfBlocksInFlight);
   }
   // Pieces that are much larger than a block.
-  compressAndCheck(inPieces(text, 10 << 20), text);
+  compressAndCheck(ad_utility::testing::inPieces(text, 10 << 20), text);
 }
 
 // _____________________________________________________________________________
@@ -221,12 +215,13 @@ TEST_P(ParallelCompressorStream, large) {
 // one full copy. (The string is shorter than the window, because deflate finds
 // no match at a distance of almost 32 KiB.)
 TEST_P(ParallelCompressorStream, blocksUseTheDictionary) {
-  auto unit = randomBytes(pc::NUMBER_OF_BYTES_IN_DICTIONARY / 2);
+  auto unit = randomBytes(pc::DICTIONARY_SIZE.getBytes() / 2);
   std::string text;
   while (text.size() < 10 * minBlock) {
     text += unit;
   }
-  auto compressed = compressAndCheck(inPieces(text, minBlock), text);
+  auto compressed =
+      compressAndCheck(ad_utility::testing::inPieces(text, minBlock), text);
   // The same blocks, each compressed without a dictionary.
   size_t numberOfBytesWithoutDictionary = 0;
   auto format =
@@ -238,7 +233,7 @@ TEST_P(ParallelCompressorStream, blocksUseTheDictionary) {
     numberOfBytesWithoutDictionary +=
         pc::compressBlock({text.substr(begin, end - begin), std::string{}},
                           format)
-            .bytes_.size();
+            .deflateData_.bytes_.size();
   }
   EXPECT_GT(numberOfBytesWithoutDictionary, 10 * unit.size());
   EXPECT_LT(3 * compressed.size(), numberOfBytesWithoutDictionary);
@@ -247,10 +242,11 @@ TEST_P(ParallelCompressorStream, blocksUseTheDictionary) {
 // _____________________________________________________________________________
 TEST_P(ParallelCompressorStream, noneIsTheIdentity) {
   auto text = csvLikeText(3 * minBlock);
-  auto output = concatenate(ad_utility::streams::compressStreamInParallel(
-      inPieces(text, 1000),
-      ad_utility::content_encoding::CompressionMethod::NONE,
-      pool_.get_executor(), 2));
+  auto output = ad_utility::testing::concatenate(
+      ad_utility::streams::compressStreamInParallel(
+          ad_utility::testing::inPieces(text, 1000),
+          ad_utility::content_encoding::CompressionMethod::NONE,
+          pool_.get_executor(), 2));
   EXPECT_EQ(output, text);
 }
 
@@ -262,11 +258,13 @@ TEST_P(ParallelCompressorStream, exceptionInTheInputIsPropagated) {
     for ([[maybe_unused]] size_t i : ql::views::iota(size_t{0}, size_t{10})) {
       co_yield csvLikeText(minBlock);
     }
-    throw std::runtime_error{"Operation was manually cancelled."};
+    AD_THROW("Operation was manually cancelled.");
   };
   auto generator = ad_utility::streams::compressStreamInParallel(
       throwing(), GetParam(), pool_.get_executor(), 4);
-  EXPECT_THROW(concatenate(std::move(generator)), std::runtime_error);
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      ad_utility::testing::concatenate(std::move(generator)),
+      ::testing::HasSubstr("Operation was manually cancelled."));
 }
 
 // An endless input of 1 MiB pieces, which counts the pieces that are read.
@@ -282,21 +280,26 @@ cppcoro::generator<std::string> endlessInput(size_t& numberOfPiecesRead) {
 // after a client disconnect), and it reads only a bounded number of pieces
 // ahead of its consumer.
 TEST_P(ParallelCompressorStream, earlyDestruction) {
+  constexpr size_t maxNumberOfBlocksInFlight = 4;
+  constexpr size_t numberOfBlocksConsumed = 2;
   size_t numberOfPiecesRead = 0;
   {
     auto generator = ad_utility::streams::compressStreamInParallel(
-        endlessInput(numberOfPiecesRead), GetParam(), pool_.get_executor(), 4);
-    // The header, and then two blocks.
+        endlessInput(numberOfPiecesRead), GetParam(), pool_.get_executor(),
+        maxNumberOfBlocksInFlight);
+    // The header, and then the consumed blocks.
     auto it = generator.begin();
-    for ([[maybe_unused]] size_t i : ql::views::iota(size_t{0}, size_t{2})) {
+    for ([[maybe_unused]] size_t i :
+         ql::views::iota(size_t{0}, numberOfBlocksConsumed)) {
       ASSERT_NE(it, generator.end());
       ++it;
     }
     ASSERT_NE(it, generator.end());
   }
-  // The two yielded blocks and the (at most) four in flight, one piece each.
-  EXPECT_LE(numberOfPiecesRead, 2u + 4u);
-  EXPECT_GE(numberOfPiecesRead, 2u);
+  // The consumed blocks and the (at most) blocks in flight, one piece each.
+  EXPECT_LE(numberOfPiecesRead,
+            numberOfBlocksConsumed + maxNumberOfBlocksInFlight);
+  EXPECT_GE(numberOfPiecesRead, numberOfBlocksConsumed);
 }
 
 // _____________________________________________________________________________
@@ -310,15 +313,15 @@ INSTANTIATE_TEST_SUITE_P(
 // exactly what zlib writes for empty input at level 1 (except for the OS field
 // of the gzip header, which zlib sets to the actual system).
 TEST(ParallelCompressorStreamFrame, emptyStream) {
-  using namespace std::string_literals;
   pc::StreamFrame zlib{pc::StreamFormat::Zlib};
   EXPECT_EQ(zlib.header() + zlib.finalBlockAndTrailer(),
-            "\x78\x01\x03\x00\x00\x00\x00\x01"s);
+            (std::string{"\x78\x01\x03\x00\x00\x00\x00\x01", 8}));
   pc::StreamFrame gzip{pc::StreamFormat::Gzip};
   EXPECT_EQ(gzip.header() + gzip.finalBlockAndTrailer(),
-            "\x1f\x8b\x08\x00\x00\x00\x00\x00\x04\xff"
-            "\x03\x00"
-            "\x00\x00\x00\x00\x00\x00\x00\x00"s);
+            (std::string{"\x1f\x8b\x08\x00\x00\x00\x00\x00\x04\xff"
+                         "\x03\x00"
+                         "\x00\x00\x00\x00\x00\x00\x00\x00",
+                         20}));
 }
 
 // _____________________________________________________________________________
@@ -370,10 +373,10 @@ TEST(ParallelCompressorStreamFrame, sizeModulo2To32) {
     pc::StreamFrame frame{format};
     // Two blocks of 2^31 + 3 bytes, so 2^32 + 6 bytes in total.
     for ([[maybe_unused]] size_t i : ql::views::iota(size_t{0}, size_t{2})) {
-      frame.add({std::string{},
+      frame.add({pc::RawDeflateData{},
                  isGzip ? pc::Checksum{pc::Crc32{blockChecksum}}
                         : pc::Checksum{pc::Adler32{blockChecksum}},
-                 numberOfBytesPerBlock});
+                 ad_utility::MemorySize::bytes(numberOfBytesPerBlock)});
     }
     auto trailer = frame.finalBlockAndTrailer();
     if (isGzip) {
@@ -402,8 +405,10 @@ TEST(ParallelCompressorStreamFrame, sizeModulo2To32) {
 // the other format.
 TEST(ParallelCompressorStreamFrame, formatsCannotBeMixed) {
   pc::StreamFrame zlib{pc::StreamFormat::Zlib};
-  EXPECT_ANY_THROW(zlib.add(
-      pc::compressBlock({"abc", std::string{}}, pc::StreamFormat::Gzip)));
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      zlib.add(
+          pc::compressBlock({"abc", std::string{}}, pc::StreamFormat::Gzip)),
+      ::testing::HasSubstr("A block was compressed for another stream format"));
 }
 
 // _____________________________________________________________________________
@@ -412,9 +417,9 @@ TEST(ParallelCompressorStreamFrame, formatsCannotBeMixed) {
 TEST(ParallelCompressorStreamFrame, blockEndsWithSyncFlush) {
   for (auto format : {pc::StreamFormat::Zlib, pc::StreamFormat::Gzip}) {
     auto block = pc::compressBlock({csvLikeText(1000), std::string{}}, format);
-    EXPECT_THAT(block.bytes_,
+    EXPECT_THAT(block.deflateData_.bytes_,
                 ::testing::EndsWith(std::string{"\0\0\xff\xff", 4}));
-    EXPECT_EQ(block.numberOfUncompressedBytes_, 1000u);
+    EXPECT_EQ(block.uncompressedSize_, ad_utility::MemorySize::bytes(1000));
   }
 }
 }  // namespace

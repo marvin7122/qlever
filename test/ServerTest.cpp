@@ -27,11 +27,11 @@
 #include "util/HttpRequestHelpers.h"
 #include "util/IndexTestHelpers.h"
 #include "util/ParallelCompressorStream.h"
+#include "util/StringGeneratorTestHelpers.h"
 #include "util/http/HttpUtils.h"
 #include "util/http/UrlParser.h"
 #include "util/json.h"
 #include "util/metrics/Metrics.h"
-#include "util/views/ChunkedIotaView.h"
 
 using nlohmann::json;
 using namespace ad_utility::testing;
@@ -86,34 +86,11 @@ TEST(ServerTest, chooseBestFittingMediaType) {
 }
 
 // _____________________________________________________________________________
-namespace {
-// Helpers of the test `compressBodyForQuery` below, which compresses one body
-// in several ways and compares the compressed bytes.
-
-// Yield the `text` in pieces of 1000 bytes, as a response body comes in pieces.
-cppcoro::generator<std::string> inPiecesOf1000(std::string text) {
-  for (auto [begin, end] :
-       ad_utility::chunkedIotaView(size_t{0}, text.size(), size_t{1000})) {
-    co_yield text.substr(begin, end - begin);
-  }
-}
-
-// Return all the pieces of the `generator` (a compressed body) as one string.
-std::string concatenate(cppcoro::generator<std::string> generator) {
-  std::string result;
-  for (const std::string& piece : generator) {
-    result += piece;
-  }
-  return result;
-}
-}  // namespace
-
 // The results of queries are compressed sequentially by default, and with
 // `parallel-response-compression` by `compressStreamInParallel` on the given
 // executor. The two outputs differ for a body of several blocks (even though
 // both decompress to the body), so the test can tell them apart.
 TEST(ServerTest, compressBodyForQuery) {
-  using ad_utility::content_encoding::CompressionMethod;
   boost::asio::thread_pool pool{2};
   std::string text;
   size_t row = 0;
@@ -121,20 +98,29 @@ TEST(ServerTest, compressBodyForQuery) {
          3 * ad_utility::streams::MIN_NUMBER_OF_BYTES_PER_COMPRESSION_BLOCK) {
     absl::StrAppend(&text, "\"row\",", row++, "\n");
   }
-  for (auto method : {CompressionMethod::DEFLATE, CompressionMethod::GZIP}) {
-    auto sequential = concatenate(
-        ad_utility::streams::compressStream(inPiecesOf1000(text), method));
-    auto parallel = concatenate(ad_utility::streams::compressStreamInParallel(
-        inPiecesOf1000(text), method, pool.get_executor(), 1));
+  // The body comes in pieces, as the body of a response does.
+  constexpr size_t numberOfBytesPerPiece = 1000;
+  auto body = [&text]() {
+    return ad_utility::testing::inPieces(text, numberOfBytesPerPiece);
+  };
+  for (auto method : {ad_utility::content_encoding::CompressionMethod::DEFLATE,
+                      ad_utility::content_encoding::CompressionMethod::GZIP}) {
+    // The body, compressed as `Server` does for the current value of
+    // `parallel-response-compression`.
+    auto compressWithServer = [&pool, &body, method]() {
+      return ad_utility::testing::concatenate(
+          Server::compressBodyForQuery(pool.get_executor())(body(), method));
+    };
+    auto sequential = ad_utility::testing::concatenate(
+        ad_utility::streams::compressStream(body(), method));
+    auto parallel = ad_utility::testing::concatenate(
+        ad_utility::streams::compressStreamInParallel(body(), method,
+                                                      pool.get_executor(), 1));
     ASSERT_NE(sequential, parallel);
-    EXPECT_EQ(concatenate(Server::compressBodyForQuery(pool.get_executor())(
-                  inPiecesOf1000(text), method)),
-              sequential);
+    EXPECT_EQ(compressWithServer(), sequential);
     auto cleanup = setRuntimeParameterForTest<
         &RuntimeParameters::parallelResponseCompression_>(true);
-    EXPECT_EQ(concatenate(Server::compressBodyForQuery(pool.get_executor())(
-                  inPiecesOf1000(text), method)),
-              parallel);
+    EXPECT_EQ(compressWithServer(), parallel);
   }
 }
 

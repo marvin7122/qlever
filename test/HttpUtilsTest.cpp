@@ -2,12 +2,14 @@
 // Chair of Algorithms and Data Structures
 // Authors: Hannah Bast <bast@cs.uni-freiburg.de
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <boost/iostreams/filter/gzip.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
 #include <tuple>
 
+#include "util/StringGeneratorTestHelpers.h"
 #include "util/http/HttpUtils.h"
 #include "util/http/beast.h"
 
@@ -101,20 +103,14 @@ TEST(HttpUtils, CreateOkResponseFromGeneratorWithCompression) {
     co_yield "Hello, ";
     co_yield "World!";
   };
-  auto bodyToString = [](auto& body) {
-    std::string result;
-    for (const auto& chunk : body) {
-      result += chunk;
-    }
-    return result;
-  };
   http::request<http::string_body> request;
 
   // Without an `Accept-Encoding` header, the body is not compressed.
   auto response = ad_utility::httpUtils::createOkResponse(generator(), request,
                                                           MediaType::textPlain);
   EXPECT_EQ(response.count(http::field::content_encoding), 0);
-  EXPECT_EQ(bodyToString(response.body()), "Hello, World!");
+  EXPECT_EQ(ad_utility::testing::concatenate(std::move(response.body())),
+            "Hello, World!");
 
   // With `Accept-Encoding: gzip`, the body is compressed.
   request.set(http::field::accept_encoding, "gzip");
@@ -127,7 +123,8 @@ TEST(HttpUtils, CreateOkResponseFromGeneratorWithCompression) {
     io::filtering_ostream decompressor;
     decompressor.push(io::gzip_decompressor());
     decompressor.push(io::back_inserter(decompressed));
-    decompressor << bodyToString(response.body());
+    decompressor << ad_utility::testing::concatenate(
+        std::move(response.body()));
   }
   EXPECT_EQ(decompressed, "Hello, World!");
 }
@@ -137,38 +134,35 @@ TEST(HttpUtils, CreateOkResponseFromGeneratorWithCompression) {
 // `CompressBody`, and only if the request asks for a compression.
 TEST(HttpUtils, CreateOkResponseFromGeneratorWithCustomCompression) {
   namespace http = boost::beast::http;
-  using ad_utility::MediaType;
-  using ad_utility::content_encoding::CompressionMethod;
   auto yieldOnce = [](std::string value) -> cppcoro::generator<std::string> {
     co_yield value;
   };
-  auto generator = [&yieldOnce]() { return yieldOnce("Hello"); };
-  std::vector<CompressionMethod> methods;
+  auto generator = [yieldOnce]() { return yieldOnce("Hello"); };
+  std::vector<ad_utility::content_encoding::CompressionMethod> methods;
   ad_utility::httpUtils::CompressBody compressBody =
-      [&methods, &yieldOnce](cppcoro::generator<std::string>,
-                             CompressionMethod method) {
+      [&methods, yieldOnce](
+          cppcoro::generator<std::string>,
+          ad_utility::content_encoding::CompressionMethod method) {
         methods.push_back(method);
         return yieldOnce("compressed");
       };
-  auto bodyToString = [](auto& body) {
-    std::string result;
-    for (const auto& chunk : body) {
-      result += chunk;
-    }
-    return result;
-  };
   http::request<http::string_body> request;
 
   auto response = ad_utility::httpUtils::createOkResponse(
-      generator(), request, MediaType::textPlain, compressBody);
+      generator(), request, ad_utility::MediaType::textPlain, compressBody);
   EXPECT_EQ(response.count(http::field::content_encoding), 0);
-  EXPECT_EQ(bodyToString(response.body()), "Hello");
+  EXPECT_EQ(ad_utility::testing::concatenate(std::move(response.body())),
+            "Hello");
   EXPECT_TRUE(methods.empty());
 
   request.set(http::field::accept_encoding, "deflate");
   response = ad_utility::httpUtils::createOkResponse(
-      generator(), request, MediaType::textPlain, compressBody);
+      generator(), request, ad_utility::MediaType::textPlain, compressBody);
+  ASSERT_EQ(response.count(http::field::content_encoding), 1);
   EXPECT_EQ(response.at(http::field::content_encoding), "deflate");
-  EXPECT_EQ(bodyToString(response.body()), "compressed");
-  EXPECT_EQ(methods, std::vector{CompressionMethod::DEFLATE});
+  EXPECT_EQ(ad_utility::testing::concatenate(std::move(response.body())),
+            "compressed");
+  EXPECT_THAT(methods,
+              ::testing::ElementsAre(
+                  ad_utility::content_encoding::CompressionMethod::DEFLATE));
 }
