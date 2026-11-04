@@ -798,13 +798,13 @@ constexpr size_t maxNumberOfRowsPerConstructChunk = qlever::constructExport::
 // The parallel CONSTRUCT export on four threads gives the same output as the
 // sequential export, for each format. The cases are: blank nodes and unbound
 // values (OPTIONAL) in a single block (`ORDER BY` forces an `OrderBy`), a lazy
-// scan of many small blocks (`rowsPerBlock = 2`), whose rows are copied into
-// chunks across the block boundaries, terms of the `LocalVocab` (BIND), blank
-// nodes after an OFFSET, a template without variables (no column is copied),
-// exactly one chunk, one chunk plus one row, one row, no row, and an export
-// limit of one chunk plus 808 rows. With `max-num-threads-per-query` = 1, only
-// two chunks are in flight. The number of tasks on the executor shows that
-// every chunk is a task, also for a lazy result, and that a
+// scan of blocks of 1000 rows (`makeConfigWithManyRows`), whose rows are copied
+// into chunks across the block boundaries, terms of the `LocalVocab` (BIND),
+// blank nodes after an OFFSET, a template without variables (no column is
+// copied), exactly one chunk, one chunk plus one row, one row, no row, and an
+// export limit of one chunk plus 808 rows. With `max-num-threads-per-query` =
+// 1, only two chunks are in flight. The number of tasks on the executor shows
+// that every chunk is a task, also for a lazy result, and that a
 // `construct-deduplication` uses the sequential export.
 TEST(ExportQueryExecutionTrees, ParallelConstructExport) {
   auto config = makeConfigWithManyRows(numberOfSubjectsForParallelExport);
