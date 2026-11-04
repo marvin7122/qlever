@@ -34,8 +34,10 @@
 using VocabBatchLookupResult = std::shared_ptr<ql::span<std::string_view>>;
 
 // One word of a `VocabBatchLookupResult` that is viewed instead of copied.
-// This object shares the ownership of the result, so `word()` stays valid as
-// long as this object lives.
+// This object shares the ownership of the result, so the view returned by
+// `word()` stays valid as long as this object lives. The bytes of the word are
+// final when the result is handed out (every producer of a
+// `VocabBatchLookupResult` finishes reading before it returns).
 class BorrowedVocabWord {
  private:
   std::string_view word_;
@@ -49,6 +51,8 @@ class BorrowedVocabWord {
     word_ = (*owner_)[i];
   }
 
+  // The word at the position that was passed to the constructor. The returned
+  // view is not a copy and is valid as long as this object lives.
   std::string_view word() const { return word_; }
 };
 

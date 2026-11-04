@@ -59,7 +59,8 @@ class EvaluatedTermData {
   explicit EvaluatedTermData(BorrowedVocabWord word)
       : rdfTerm_{std::move(word)}, rdfTermDataType_{nullptr} {}
 
-  // The string of the term, see above. Valid as long as this object lives.
+  // The string of the term, see above. The returned view is valid as long as
+  // this object lives; it must not be kept beyond that.
   std::string_view rdfTermString() const {
     return std::visit(
         ad_utility::OverloadCallOperator{
@@ -71,7 +72,7 @@ class EvaluatedTermData {
   // The XSD type of an encoded literal, `nullptr` otherwise, see above.
   const char* rdfTermDataType() const { return rdfTermDataType_; }
 
-  // True iff the bytes of `rdfTermString()` are viewed in a batch-lookup
+  // Return true iff the bytes of `rdfTermString()` are viewed in a batch-lookup
   // result instead of owned. Only used by tests.
   bool isBorrowed() const {
     return std::holds_alternative<BorrowedVocabWord>(rdfTerm_);
