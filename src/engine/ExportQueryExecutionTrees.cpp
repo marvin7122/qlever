@@ -106,8 +106,12 @@ STREAMABLE_GENERATOR_TYPE computeResultForAsk(
 }
 
 // _____________________________________________________________________________
-// The function that escapes the fields of a CSV or TSV export. Both the
-// sequential and the parallel export use it, so that their bytes are the same.
+// Return a reference to the function that escapes a field of a CSV or TSV
+// export: `RdfEscaping::escapeForTsv` for TSV, `RdfEscaping::escapeForCsv`
+// otherwise. It is returned by reference so that it can be passed as the
+// escape function of `idToStringAndType` and `idsToStringAndType` without a
+// copy. Both the sequential and the parallel export use it, so that their
+// bytes are the same.
 template <ad_utility::MediaType format>
 constexpr auto& csvOrTsvEscapeFunction() {
   if constexpr (format == ad_utility::MediaType::tsv) {
@@ -131,13 +135,6 @@ auto idToCsvOrTsvField(const Index& index, Id id,
 // the rows (`std::nullopt` for an unbound value).
 using CsvOrTsvFields =
     std::vector<std::optional<std::pair<std::string, const char*>>>;
-
-// The maximal number of cells of one column that are converted with one
-// batched lookup in the parallel CSV or TSV export. Between two such batches,
-// the conversion checks for cancellation and for the stop of the export, so a
-// batch must be small enough that even its cold vocabulary reads finish within
-// `DESIRED_CANCELLATION_CHECK_INTERVAL`.
-constexpr size_t MAX_NUMBER_OF_CELLS_PER_LOOKUP_BATCH = 1024;
 }  // namespace
 
 // _____________________________________________________________________________
@@ -158,65 +155,63 @@ ExportQueryExecutionTrees::csvOrTsvRows(
   CsvOrTsvChunk lines{allocator};
   const uint64_t firstRow = rows.empty() ? 0 : *rows.begin();
   const size_t numberOfRows = rows.size();
-  // The fields of each selected column (`std::nullopt` for a column that is
-  // `std::nullopt`). The vocabulary words of a column are read with batched
-  // lookups (`idsToStringAndType`) instead of one by one. These fields are not
-  // allocated with the `allocator`: they are about as large as the `lines` of
-  // this chunk and only exist while this chunk is serialized, so per running
-  // task at most one chunk's worth of fields is not counted.
-  std::vector<std::optional<CsvOrTsvFields>> fieldsPerColumn;
-  fieldsPerColumn.reserve(columns.size());
-  size_t numberOfBytes = 0;
-  for (const auto& column : columns) {
-    if (!column.has_value()) {
-      fieldsPerColumn.emplace_back(std::nullopt);
-      continue;
+  AD_CONTRACT_CHECK(firstRow + numberOfRows <= table.idTable().numRows());
+
+  // Serialize the rows in windows of at most
+  // `MAX_NUMBER_OF_CELLS_PER_LOOKUP_BATCH` rows, so that the fields of a window
+  // are the only ones that exist next to the `lines`. These fields are not
+  // allocated with the `allocator`: a window holds at most one string per cell
+  // of the window, and it is released before the next window starts.
+  for (size_t windowBegin = 0; windowBegin < numberOfRows;
+       windowBegin += MAX_NUMBER_OF_CELLS_PER_LOOKUP_BATCH) {
+    if (stop.isRequested()) {
+      return lines;
     }
-    ql::span<const Id> ids = table.idTable()
-                                 .getColumn(column.value().columnIndex_)
-                                 .subspan(firstRow, numberOfRows);
-    CsvOrTsvFields& fields =
-        fieldsPerColumn.emplace_back(std::in_place).value();
-    fields.reserve(numberOfRows);
-    for (size_t begin = 0; begin < numberOfRows;
-         begin += MAX_NUMBER_OF_CELLS_PER_LOOKUP_BATCH) {
+    const size_t windowSize = std::min(MAX_NUMBER_OF_CELLS_PER_LOOKUP_BATCH,
+                                       numberOfRows - windowBegin);
+
+    // Convert each selected column of the window with one batched lookup
+    // (`std::nullopt` for a column that is `std::nullopt`). The vocabulary
+    // words of a column are thus read together instead of one by one.
+    std::vector<std::optional<CsvOrTsvFields>> fieldsPerColumn;
+    fieldsPerColumn.reserve(columns.size());
+    for (const auto& column : columns) {
+      if (!column.has_value()) {
+        fieldsPerColumn.emplace_back(std::nullopt);
+        continue;
+      }
       if (stop.isRequested()) {
         return lines;
       }
-      auto batch =
+      ql::span<const Id> ids = table.idTable()
+                                   .getColumn(column.value().columnIndex_)
+                                   .subspan(firstRow + windowBegin, windowSize);
+      CsvOrTsvFields fields =
           ql::exportIds::idsToStringAndType<format ==
                                             ad_utility::MediaType::csv>(
-              index,
-              ids.subspan(begin, std::min(MAX_NUMBER_OF_CELLS_PER_LOOKUP_BATCH,
-                                          numberOfRows - begin)),
-              table.localVocab(), csvOrTsvEscapeFunction<format>());
+              index, ids, table.localVocab(), csvOrTsvEscapeFunction<format>());
       cancellationHandle.throwIfCancelled();
-      for (auto& field : batch) {
-        if (field.has_value()) {
-          numberOfBytes += field.value().first.size();
+      fieldsPerColumn.emplace_back(std::move(fields));
+    }
+
+    // Append the fields of the window row by row, separated by `separator`.
+    for (size_t i = 0; i < windowSize; ++i) {
+      for (const auto& [j, fields] :
+           ::ranges::views::enumerate(fieldsPerColumn)) {
+        if (j > 0) {
+          lines.push_back(separator);
         }
-        fields.push_back(std::move(field));
+        if (!fields.has_value()) {
+          continue;
+        }
+        const auto& optionalStringAndType = fields.value()[i];
+        if (optionalStringAndType.has_value()) [[likely]] {
+          lines.append(optionalStringAndType.value().first);
+        }
       }
+      lines.push_back('\n');
+      cancellationHandle.throwIfCancelled();
     }
-  }
-  // One separator per column (or the newline) per row.
-  lines.reserve(numberOfBytes +
-                numberOfRows * std::max(columns.size(), size_t{1}));
-  for (size_t i = 0; i < numberOfRows; ++i) {
-    for (const auto& [j, fields] :
-         ::ranges::views::enumerate(fieldsPerColumn)) {
-      if (j > 0) {
-        lines.push_back(separator);
-      }
-      if (!fields.has_value()) {
-        continue;
-      }
-      const auto& field = fields.value()[i];
-      if (field.has_value()) [[likely]] {
-        lines.append(field.value().first);
-      }
-    }
-    lines.push_back('\n');
   }
   return lines;
 }
