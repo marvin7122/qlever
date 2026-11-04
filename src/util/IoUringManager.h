@@ -288,8 +288,9 @@ class IoUringPolicy : public NoCopyNoMove {
  public:
   using BatchHandle = uint64_t;
 
-  // The size of a wave: when the ring is full or `wait()` blocks and no
-  // completion is ready, wait for up to this many completions at once, then
+  // The size of a wave: when no completion is ready while `addBatch` finds the
+  // ring full, or while `wait()`, the destructor or a failed `addBatch` reaps
+  // the reads of a batch, wait for up to this many completions at once, then
   // reap all ready ones (see `reapWave`). This amortizes the `io_uring_enter`
   // call of the wait over the wave. The value is not tuned.
   static constexpr unsigned REAP_WAVE = 8;
@@ -385,14 +386,15 @@ class IoUringPolicy : public NoCopyNoMove {
   }
 
   // The number of CQEs that `reapWave` takes out of the completion queue at
-  // once; a wave with more ready CQEs is reaped in several chunks.
+  // once. It reaps every ready CQE, which can be more than a wave (they may
+  // have been ready before it waited), in several chunks then.
   static constexpr size_t REAP_CHUNK =
       IoUringInterface::MAX_COMPLETIONS_PER_POP;
 
   // Reap every ready CQE and update the outstanding bookkeeping. If none is
-  // ready, first block until a wave of `min(REAP_WAVE,
-  // numberOfRequestsToComplete)` CQEs is ready. `numberOfRequestsToComplete` is
-  // the number of requests the caller waits for; it must be > 0 and at most
+  // ready, first block until at least `min(REAP_WAVE,
+  // numberOfRequestsToComplete)` CQEs are ready. `numberOfRequestsToComplete`
+  // is the number of requests the caller waits for; it must be > 0 and at most
   // `numberOfRequestsInKernel()`, so that the wave never waits for more
   // completions than will arrive. Reaps at least one CQE, but possibly fewer
   // than the wave if a signal ends the wait early, so the callers loop until

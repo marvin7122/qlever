@@ -426,7 +426,8 @@ void IoUringPolicy::drainBatch(BatchHandle handle) {
   // for at most the batch's remaining reads never waits longer than the batch
   // needs: the batch cannot finish before they complete, and every CQE (also of
   // other batches) counts towards the wave. They are all in the kernel: a
-  // batch keeps no read queued once `addBatch` returns or cancels them.
+  // batch keeps no read queued once `addBatch` returns or cancels them. So the
+  // wave is at most `numberOfRequestsInKernel()`, as `reapWave` requires.
   while (true) {
     auto it = batches_.find(handle);
     if (it == batches_.end() || it->second.numberOfOutstandingReads == 0) {
