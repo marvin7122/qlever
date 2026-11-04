@@ -227,6 +227,29 @@ std::optional<std::pair<std::string, const char*>> idToStringAndType(
   }
 }
 
+// Return true iff the result of `idToStringAndType` for `id` may be cached
+// for the whole export of a query result, that is, iff the same `id` resolves
+// to the same string in every block of the result. This is false only for
+// `LocalVocabIndex`: such an `Id` points into a `LocalVocab` that a lazy result
+// frees after its block has been exported, after which the same address (and
+// hence the same `Id`) can denote a different word. Hashing or comparing a
+// cached `LocalVocabIndex` key would then also read freed memory, because both
+// dereference the `LocalVocabEntry`. For all other datatypes:
+// - `VocabIndex`, `WordVocabIndex`, `TextRecordIndex`: the vocabularies and
+//   the text index of an index never change while it is loaded.
+// - `SecondaryVocabIndex`: the secondary vocabulary is immutable once the
+//   index is loaded (see `IndexImpl::secondaryVocab`).
+// - `EncodedVal`: decoded with the `EncodedIriManager` of the index, which is
+//   fixed after the index is built.
+// - `BlankNodeIndex` and the values encoded in the `Id` bits (`Undefined`,
+//   `Bool`, `Int`, `Double`, `Date`, `GeoPoint`): formatted from the bits only.
+// Both the SELECT export (`IdToStringAndTypeCache`) and the CONSTRUCT export
+// (`IdCache` in `ConstructBatchEvaluator`) use this to decide what they may
+// cache.
+inline bool canBeCachedForWholeExport(Id id) {
+  return id.getDatatype() != Datatype::LocalVocabIndex;
+}
+
 // Positions (indices into the `ids` span) split by datatype: `VocabIndex` ids
 // (`vocabIndexIndices_`) need an on-disk vocabulary lookup and are batched
 // together: all others (`nonVocabIndexIndices_`) are resolved from the id bits
