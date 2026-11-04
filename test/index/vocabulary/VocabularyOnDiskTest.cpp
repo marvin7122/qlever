@@ -30,6 +30,12 @@
 #include "util/jthread.h"
 
 namespace {
+
+// The values of `vocabulary-page-cache-fast-path` that the tests set.
+const ad_utility::PageCacheFastPathMode fastPathOn{
+    ad_utility::PageCacheFastPathMode::Enum::On};
+const ad_utility::PageCacheFastPathMode fastPathOff{
+    ad_utility::PageCacheFastPathMode::Enum::Off};
 using namespace vocabulary_test;
 
 // Store a `VocabularyOnDisk` and read it back from file. For each instance of
@@ -329,9 +335,10 @@ TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
   auto vocab = createExampleVocabulary();
   std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
   auto resetParameter = setRuntimeParameterForTest<
-      &RuntimeParameters::vocabularyPageCacheFastPath_>(false);
+      &RuntimeParameters::vocabularyPageCacheFastPath_>(fastPathOff);
   const auto withoutFastPath = vocab->lookupBatch(indices);
-  setRuntimeParameter<&RuntimeParameters::vocabularyPageCacheFastPath_>(true);
+  setRuntimeParameter<&RuntimeParameters::vocabularyPageCacheFastPath_>(
+      fastPathOn);
   const auto withFastPath = vocab->lookupBatch(indices);
   EXPECT_THAT(*withFastPath, ::testing::ElementsAreArray(*withoutFastPath));
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
@@ -350,7 +357,7 @@ TEST(VocabularyOnDisk, LookupBatchFollowsThePageCacheFastPathParameter) {
       numberOfPageCacheReads, &pageCacheReadTestHelpers::nothingCached));
   std::array<size_t, 4> indices{0, 1, 3, 2};
   auto resetParameter = setRuntimeParameterForTest<
-      &RuntimeParameters::vocabularyPageCacheFastPath_>(false);
+      &RuntimeParameters::vocabularyPageCacheFastPath_>(fastPathOff);
   for ([[maybe_unused]] size_t i :
        ad_utility::integerRange(NUM_VOCAB_BATCH_IO_MANAGERS)) {
     vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
@@ -358,7 +365,8 @@ TEST(VocabularyOnDisk, LookupBatchFollowsThePageCacheFastPathParameter) {
   }
   EXPECT_EQ(numberOfPageCacheReads, 0u);
 
-  setRuntimeParameter<&RuntimeParameters::vocabularyPageCacheFastPath_>(true);
+  setRuntimeParameter<&RuntimeParameters::vocabularyPageCacheFastPath_>(
+      fastPathOn);
   for ([[maybe_unused]] size_t i :
        ad_utility::integerRange(NUM_VOCAB_BATCH_IO_MANAGERS)) {
     const size_t numberOfPageCacheReadsBefore = numberOfPageCacheReads;
@@ -376,7 +384,7 @@ TEST(VocabularyOnDisk, LookupBatchFollowsThePageCacheFastPathParameter) {
 TEST(VocabularyOnDisk, LookupBatchPageCacheMissesGoThroughTheManager) {
   SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
   auto resetParameter = setRuntimeParameterForTest<
-      &RuntimeParameters::vocabularyPageCacheFastPath_>(true);
+      &RuntimeParameters::vocabularyPageCacheFastPath_>(fastPathOn);
   // Runs of consecutive indices, reordered and duplicated indices.
   std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
   size_t numberOfCalls = 0;
