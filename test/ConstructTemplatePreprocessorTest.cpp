@@ -46,11 +46,15 @@ auto iriV = ad_utility::testing::iriV;
 // Composable matchers for `PreprocessedTerm` variants.
 // see https://github.com/google/googletest/blob/main/docs/reference/matchers.md
 constexpr auto matchesPrecomputedConstant = [](const auto& value) {
-  // only match the string, not the type field.
-  return ::testing::VariantWith<PrecomputedConstant>(AD_FIELD(
-      PrecomputedConstant, evaluatedTerm_,
-      ::testing::Pointee(AD_PROPERTY(EvaluatedTermData, rdfTermString,
-                                     ::testing::Eq(std::string_view{value})))));
+  // A constant has the given string and no datatype (its `dedupId_` is checked
+  // in `constantResolvesToSameValueIdAsData`).
+  return ::testing::VariantWith<PrecomputedConstant>(
+      AD_FIELD(PrecomputedConstant, evaluatedTerm_,
+               ::testing::Pointee(::testing::AllOf(
+                   AD_PROPERTY(EvaluatedTermData, rdfTermString,
+                               ::testing::Eq(std::string_view{value})),
+                   AD_PROPERTY(EvaluatedTermData, rdfTermDataType,
+                               ::testing::IsNull())))));
 };
 
 // _____________________________________________________________________________
