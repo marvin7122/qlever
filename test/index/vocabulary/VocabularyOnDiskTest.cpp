@@ -8,7 +8,6 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <gmock/gmock.h>
 
@@ -17,13 +16,17 @@
 
 #include "../../util/GTestHelpers.h"
 #include "../../util/MmapVectorLegacyFormat.h"
+#include "../../util/PageCacheReadTestHelpers.h"
+#include "../../util/RuntimeParametersTestHelpers.h"
 #include "./VocabularyTestHelpers.h"
 #include "backports/algorithm.h"
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "index/vocabulary/VocabularyOnDisk.h"
 #include "util/File.h"
 #include "util/Forward.h"
 #include "util/MmapVector.h"
+#include "util/Views.h"
 #include "util/jthread.h"
 
 namespace {
@@ -72,11 +75,14 @@ class VocabularyCreator {
   }
 
   // Create and return a `VocabularyOnDisk` from words. The ids will be [0, ..
-  // words.size()).
-  auto createVocabulary(const std::vector<std::string>& words) {
+  // words.size()). Its `lookupBatch` reads the page cache with
+  // `pageCacheRead`.
+  auto createVocabulary(const std::vector<std::string>& words,
+                        ad_utility::PageCacheRead pageCacheRead =
+                            &ad_utility::systemPageCacheRead) {
     createVocabularyImpl(words);
     VocabularyOnDisk vocabulary;
-    vocabulary.open(vocabFilename_);
+    vocabulary.open(vocabFilename_, pageCacheRead);
     return vocabulary;
   }
 };
@@ -87,9 +93,11 @@ class VocabularyCreator {
 class VocabularyOnDiskHandle {
  public:
   VocabularyOnDiskHandle(std::string filename,
-                         const std::vector<std::string>& words)
+                         const std::vector<std::string>& words,
+                         ad_utility::PageCacheRead pageCacheRead =
+                             &ad_utility::systemPageCacheRead)
       : creator_{std::move(filename)},
-        vocabulary_{creator_.createVocabulary(words)} {}
+        vocabulary_{creator_.createVocabulary(words, pageCacheRead)} {}
 
   // Non-copyable/movable: a copy would give two `creator_`s the same file, so
   // both destructors would unlink it (double free).
@@ -113,9 +121,11 @@ class VocabularyOnDiskHandle {
 };
 
 VocabularyOnDiskHandle createVocabularyFromWords(
-    const std::vector<std::string>& words) {
+    const std::vector<std::string>& words,
+    ad_utility::PageCacheRead pageCacheRead =
+        &ad_utility::systemPageCacheRead) {
   return VocabularyOnDiskHandle{absl::StrCat(gtestCurrentTestName(), ".dat"),
-                                words};
+                                words, pageCacheRead};
 }
 
 // Words of different lengths that are distinct for each `prefix`.
@@ -155,8 +165,11 @@ auto createVocabulary() {
   };
 }
 
-VocabularyOnDiskHandle createExampleVocabulary() {
-  return createVocabularyFromWords({"alpha", "delta", "beta", "42", "gamma"});
+VocabularyOnDiskHandle createExampleVocabulary(
+    ad_utility::PageCacheRead pageCacheRead =
+        &ad_utility::systemPageCacheRead) {
+  return createVocabularyFromWords({"alpha", "delta", "beta", "42", "gamma"},
+                                   pageCacheRead);
 }
 
 // Create a `VocabularyOnDisk` from `words` and assert that `scanAll` yields
@@ -302,6 +315,96 @@ TEST(VocabularyOnDisk, LookupBatchMatchesIndividualLookups) {
   auto result = vocab->lookupBatch(indices);
   vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(*vocab, result,
                                                                 indices);
+}
+
+// With `vocabulary-page-cache-fast-path`, the words and offsets that
+// are in the page cache are read before the batch manager sees the rest. The
+// result must be byte-identical to the result without the fast path, for runs
+// of consecutive indices as well as for reordered and duplicated indices. This
+// test uses the real `preadv2(RWF_NOWAIT)`; where the file system rejects it
+// (for example overlayfs), both lookups take the regular path. The tests
+// below inject the page-cache read instead.
+TEST(VocabularyOnDisk, LookupBatchPageCacheFastPathIsByteIdentical) {
+  SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
+  auto vocab = createExampleVocabulary();
+  std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
+  auto resetParameter = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyPageCacheFastPath_>(false);
+  const auto withoutFastPath = vocab->lookupBatch(indices);
+  setRuntimeParameter<&RuntimeParameters::vocabularyPageCacheFastPath_>(true);
+  const auto withFastPath = vocab->lookupBatch(indices);
+  EXPECT_THAT(*withFastPath, ::testing::ElementsAreArray(*withoutFastPath));
+  vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+      *vocab, withFastPath, indices);
+}
+
+// _____________________________________________________________________________
+// `lookupBatch` reads the runtime parameter for every lookup: with the
+// parameter off, no page-cache read is attempted. The lookups go round the
+// whole pool with the parameter off and again with it on, so every manager is
+// shown to follow the parameter.
+TEST(VocabularyOnDisk, LookupBatchFollowsThePageCacheFastPathParameter) {
+  SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
+  size_t numberOfPageCacheReads = 0;
+  auto vocab = createExampleVocabulary(pageCacheReadTestHelpers::counted(
+      numberOfPageCacheReads, &pageCacheReadTestHelpers::nothingCached));
+  std::array<size_t, 4> indices{0, 1, 3, 2};
+  auto resetParameter = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyPageCacheFastPath_>(false);
+  for ([[maybe_unused]] size_t i :
+       ad_utility::integerRange(NUM_VOCAB_BATCH_IO_MANAGERS)) {
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+  }
+  EXPECT_EQ(numberOfPageCacheReads, 0u);
+
+  setRuntimeParameter<&RuntimeParameters::vocabularyPageCacheFastPath_>(true);
+  for ([[maybe_unused]] size_t i :
+       ad_utility::integerRange(NUM_VOCAB_BATCH_IO_MANAGERS)) {
+    const size_t numberOfPageCacheReadsBefore = numberOfPageCacheReads;
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+    EXPECT_GT(numberOfPageCacheReads, numberOfPageCacheReadsBefore);
+  }
+}
+
+// _____________________________________________________________________________
+// With the fast path on, the reads that the page cache does not serve (all of
+// them, every other run, or all after the fast path was found unsupported) go
+// through the batch manager, for the offsets as well as for the words; the
+// result always matches `operator[]`.
+TEST(VocabularyOnDisk, LookupBatchPageCacheMissesGoThroughTheManager) {
+  SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
+  auto resetParameter = setRuntimeParameterForTest<
+      &RuntimeParameters::vocabularyPageCacheFastPath_>(true);
+  // Runs of consecutive indices, reordered and duplicated indices.
+  std::array<size_t, 13> indices{0, 1, 2, 3, 4, 2, 0, 3, 1, 1, 4, 0, 3};
+  size_t numberOfCalls = 0;
+  size_t numberOfServedCalls = 0;
+  // Every other run is cached, starting with the first one.
+  auto everyOtherRunCached = [&numberOfCalls, &numberOfServedCalls](
+                                 int fd, const ::iovec* iov, int iovcnt,
+                                 int64_t offset) {
+    if (numberOfCalls++ % 2 == 1) {
+      return pageCacheReadTestHelpers::nothingCached(fd, iov, iovcnt, offset);
+    }
+    ++numberOfServedCalls;
+    return pageCacheReadTestHelpers::fullyCached(fd, iov, iovcnt, offset);
+  };
+  // With `notSupported`, the words batch of the lookup runs on the manager
+  // whose reader the offsets batch has just switched off.
+  for (const ad_utility::PageCacheRead& pageCacheRead :
+       {ad_utility::PageCacheRead{&pageCacheReadTestHelpers::nothingCached},
+        ad_utility::PageCacheRead{everyOtherRunCached},
+        ad_utility::PageCacheRead{&pageCacheReadTestHelpers::notSupported}}) {
+    auto vocab = createExampleVocabulary(pageCacheRead);
+    vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
+        *vocab, vocab->lookupBatch(indices), indices);
+  }
+  // `everyOtherRunCached` served some runs and missed others, in the offsets
+  // as well as in the words batch (9 runs each).
+  EXPECT_EQ(numberOfCalls, 18u);
+  EXPECT_EQ(numberOfServedCalls, 9u);
 }
 
 // An empty batch is an invalid request and must throw.

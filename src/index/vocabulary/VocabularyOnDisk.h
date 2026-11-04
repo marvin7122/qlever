@@ -1,6 +1,12 @@
-// Copyright 2016, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Authors: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2016 - 2026, The QLever Authors, in particular:
+//
+// 2016 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
@@ -46,7 +52,7 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // never reused.
   uint64_t id_ = 0;
 
-  // Pool of persistent `BatchIoManager`s for `lookupBatch`.
+  // Pool of persistent batch managers for `lookupBatch`.
   mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>
       ioManagers_;
@@ -103,8 +109,11 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   }
 
   // Open the vocabulary from file. It must have been previously written to
-  // this file via a `WordWriter`.
-  void open(const std::string& filename);
+  // this file via a `WordWriter`. `lookupBatch` reads the page cache with
+  // `pageCacheRead`, which only tests replace.
+  void open(const std::string& filename,
+            ad_utility::PageCacheRead pageCacheRead =
+                &ad_utility::systemPageCacheRead);
 
   // Return the word that is stored at the index. Throw an exception if `idx >=
   // size`. If a thread looks up words (nearly) sequentially, the following

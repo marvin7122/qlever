@@ -41,16 +41,17 @@ void SyncIoPolicy::readFullyOrThrow(int fd, char* targetBuffer, size_t numBytes,
 }
 
 //______________________________________________________________________________
-void SyncIoPolicy::addBatch(int fd,
+bool SyncIoPolicy::addBatch(int fd,
                             ql::span<const size_t> numBytesToReadPerRequest,
                             ql::span<const uint64_t> fileOffsetPerRequest,
                             ql::span<char*> targetBufferPerRequest,
-                            [[maybe_unused]] BatchHandle handle) const {
+                            [[maybe_unused]] BatchId handle) const {
   for (const auto& [numBytesToRead, fileOffset, targetBuf] :
        ::ranges::views::zip(numBytesToReadPerRequest, fileOffsetPerRequest,
                             targetBufferPerRequest)) {
     SyncIoPolicy::readFullyOrThrow(fd, targetBuf, numBytesToRead, fileOffset);
   }
+  return false;
 }
 
 #ifdef QLEVER_HAS_IO_URING
@@ -95,15 +96,15 @@ IoUringPolicy::~IoUringPolicy() {
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::addBatch(int fd,
+bool IoUringPolicy::addBatch(int fd,
                              ql::span<const size_t> numBytesToReadPerRequest,
                              ql::span<const uint64_t> fileOffsetPerRequest,
                              ql::span<char*> targetBufferPerRequest,
-                             BatchHandle handle) {
+                             BatchId handle) {
   const size_t numReadRequestsToPerform = numBytesToReadPerRequest.size();
 
   if (numReadRequestsToPerform == 0) {
-    return;
+    return false;
   }
   numInFlightReadRequestsPerBatch_[handle] = numReadRequestsToPerform;
 
@@ -145,10 +146,11 @@ void IoUringPolicy::addBatch(int fd,
   // submits when the submission queue is full, so the last group of SQEs has
   // not yet been submitted).
   io_uring_submit(&ring_);
+  return true;
 }
 
 //______________________________________________________________________________
-void IoUringPolicy::wait(BatchHandle handle) {
+void IoUringPolicy::wait(BatchId handle) {
   // Drain completions until this batch is gone. `drainOneCqe` erases a batch as
   // soon as its last read completes, so a present entry always still has
   // outstanding reads.

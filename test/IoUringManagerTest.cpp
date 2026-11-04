@@ -8,12 +8,10 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#include <absl/cleanup/cleanup.h>
-#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
-#include <cstdio>
-#include <cstring>
+#include <algorithm>
+#include <cctype>
 #include <initializer_list>
 #include <memory>
 #include <sstream>
@@ -27,106 +25,16 @@
 #include "util/Exception.h"
 #include "util/File.h"
 #include "util/GTestHelpers.h"
+#include "util/IoUringManagerTestHelpers.h"
 #include "util/Log.h"
+#include "util/PageCacheReadTestHelpers.h"
 #include "util/io_uring/IoUringManager.h"
+#include "util/io_uring/PageCacheFirstPolicy.h"
 
 namespace {
 
 using namespace ::testing;
-
-// Writes `content` to a temporary file and keeps it open for reading.
-// `fd()` exposes the file descriptor; the file is removed from disk on
-// destruction. Use `makeTempFile` below to get the file and its fd in one step.
-class TempFile {
- public:
-  explicit TempFile(std::string_view content)
-      : path_{absl::StrCat(gtestCurrentTestName(), ".tmp")} {
-    // Open for reading and writing (`"w+b"`): the tests read from this file's
-    // `fd()` via `pread`/io_uring.
-    readFile_ = ad_utility::File{path_, "w+b"};
-    readFile_.write(content.data(), content.size());
-    // Flush the libc stream buffer so the written bytes reach the kernel and
-    // are visible to the reads the tests issue on `fd()`.
-    readFile_.flush();
-  }
-  // Movable (so a factory can return it by value). The moved-from object's
-  // `path_` is cleared so that only the live object removes the file.
-  TempFile(TempFile&& other) noexcept
-      : path_{std::move(other.path_)}, readFile_{std::move(other.readFile_)} {
-    other.path_.clear();
-  }
-  // Close the descriptor and remove the file from disk.
-  ~TempFile() {
-    if (!path_.empty()) {
-      readFile_.close();
-      std::remove(path_.c_str());
-    }
-  }
-  int fd() const { return readFile_.fd(); }
-
- private:
-  std::string path_;
-  ad_utility::File readFile_;
-};
-
-// Create a temporary file holding `content` and return it together with its
-// file descriptor. The returned `tmp` must be kept alive for as long as `fd` is
-// used.
-std::pair<TempFile, int> makeTempFile(std::string_view content) {
-  TempFile tmp{content};
-  int fd = tmp.fd();
-  return {std::move(tmp), fd};
-}
-
-// Test helper that accumulates a batch of read requests and owns their target
-// buffers. After the batch has completed, `result()` returns the bytes that
-// each read produced, in request order.
-class ReadBatchForTesting {
- public:
-  // Add a read of `numBytes` bytes at `offset`; returns the read's index.
-  size_t add(uint64_t offset, size_t numBytes) {
-    offsets_.push_back(offset);
-    numBytes_.push_back(numBytes);
-    targetBuffers_.emplace_back(numBytes, '\0');
-    return targetBuffers_.size() - 1;
-  }
-
-  // Add several reads at once from a range of `(offset, numBytes)` pairs.
-  void add(ql::span<const std::pair<uint64_t, size_t>> reads) {
-    for (const auto& [offset, numBytes] : reads) {
-      add(offset, numBytes);
-    }
-  }
-
-  void add(std::initializer_list<std::pair<uint64_t, size_t>> reads) {
-    add(ql::span<const std::pair<uint64_t, size_t>>{reads.begin(),
-                                                    reads.size()});
-  }
-
-  // Submit all accumulated reads to `manager` for file `fd`; returns the
-  // handle.
-  template <typename Manager>
-  typename Manager::BatchHandle submitTo(Manager& manager, int fd) {
-    // Build the buffer pointers here, after all buffers have been added, so the
-    // addresses are stable (no further `add` will reallocate `targetBuffers_`).
-    // `addBatch` copies each address into its read request, so this temporary
-    // vector need not outlive the call.
-    std::vector<char*> pointers = ::ranges::to_vector(
-        targetBuffers_ | ql::views::transform([](std::string& buffer) {
-          return buffer.data();
-        }));
-    return manager.addBatch(fd, numBytes_, offsets_, pointers);
-  }
-
-  // The bytes read by each read, in request order (valid once the batch has
-  // completed).
-  const std::vector<std::string>& result() const { return targetBuffers_; }
-
- private:
-  std::vector<size_t> numBytes_;
-  std::vector<uint64_t> offsets_;
-  std::vector<std::string> targetBuffers_;
-};
+using namespace ioUringManagerTestHelpers;
 
 // Test helper that builds the file content and the matching batch of reads
 // together. `addRead(bytes)` appends `bytes` as the next region of the file,
@@ -179,17 +87,21 @@ bool ioUringAvailableAtRuntime() {
 #endif
 
 // Typed test fixture: each `TypeParam` is a `BatchManager` instantiated with a
-// concrete I/O policy. When io_uring is present the tests run against both the
-// `IoUringPolicy` and the `SyncIoPolicy` backends. If io_uring is not present
-// (at compile time, or blocked at runtime, see `ioUringAvailableAtRuntime`),
-// the tests run against `SyncIoPolicy` only.
+// concrete I/O policy, with and without the page-cache fast path
+// (`PageCacheFirstPolicy`). When io_uring is present the tests run against both
+// the `IoUringPolicy` and the `SyncIoPolicy` backends. If io_uring is not
+// present (at compile time, or blocked at runtime, see
+// `ioUringAvailableAtRuntime`), the tests run against `SyncIoPolicy` only.
 template <typename T>
 class IoUringManagerTest : public ::testing::Test {
  protected:
   void SetUp() override {
 #ifdef QLEVER_HAS_IO_URING
     if constexpr (std::is_same_v<
-                      T, ad_utility::BatchManager<ad_utility::IoUringPolicy>>) {
+                      T, ad_utility::BatchManager<ad_utility::IoUringPolicy>> ||
+                  std::is_same_v<T, ad_utility::BatchManager<
+                                        ad_utility::PageCacheFirstPolicy<
+                                            ad_utility::IoUringPolicy>>>) {
       if (!ioUringAvailableAtRuntime()) {
         GTEST_SKIP() << "io_uring is compiled in, but not available at "
                         "runtime (e.g. blocked by seccomp inside Docker)";
@@ -200,12 +112,18 @@ class IoUringManagerTest : public ::testing::Test {
 };
 
 #ifdef QLEVER_HAS_IO_URING
-using ManagerTypes =
-    ::testing::Types<ad_utility::BatchManager<ad_utility::IoUringPolicy>,
-                     ad_utility::BatchManager<ad_utility::SyncIoPolicy>>;
+using ManagerTypes = ::testing::Types<
+    ad_utility::BatchManager<ad_utility::IoUringPolicy>,
+    ad_utility::BatchManager<ad_utility::SyncIoPolicy>,
+    ad_utility::BatchManager<
+        ad_utility::PageCacheFirstPolicy<ad_utility::IoUringPolicy>>,
+    ad_utility::BatchManager<
+        ad_utility::PageCacheFirstPolicy<ad_utility::SyncIoPolicy>>>;
 #else
 using ManagerTypes =
-    ::testing::Types<ad_utility::BatchManager<ad_utility::SyncIoPolicy>>;
+    ::testing::Types<ad_utility::BatchManager<ad_utility::SyncIoPolicy>,
+                     ad_utility::BatchManager<ad_utility::PageCacheFirstPolicy<
+                         ad_utility::SyncIoPolicy>>>;
 #endif
 
 TYPED_TEST_SUITE(IoUringManagerTest, ManagerTypes);
@@ -373,35 +291,6 @@ TYPED_TEST(IoUringManagerTest, ReadPastEofThrows) {
                                HasSubstr("read fewer bytes than requested"));
 }
 
-// A read that is fully satisfied returns the requested bytes from the requested
-// offset.
-TEST(ReadFullyOrThrow, FullReadSucceeds) {
-  auto [tmp, fd] = makeTempFile("AAAABBBB");
-  std::vector<char> targetBuffer(4);
-  ad_utility::SyncIoPolicy::readFullyOrThrow(fd, targetBuffer.data(), 4, 4);
-  EXPECT_EQ(std::string(targetBuffer.data(), 4), "BBBB");
-}
-
-// An invalid file descriptor makes the underlying `pread` call fail (return
-// -1), which must cause a throw.
-TEST(ReadFullyOrThrow, PreadFailureThrows) {
-  std::vector<char> targetBuffer(4);
-  constexpr int invalidFd = -1;
-  AD_EXPECT_THROW_WITH_MESSAGE(ad_utility::SyncIoPolicy::readFullyOrThrow(
-                                   invalidFd, targetBuffer.data(), 4, 0),
-                               HasSubstr("pread failed"));
-}
-
-// Requesting more bytes than the file contains (read past EOF) is a short read
-// and must throw.
-TEST(ReadFullyOrThrow, ShortReadThrows) {
-  auto [tmp, fd] = makeTempFile("AAAABBBB");  // 8 bytes
-  std::vector<char> targetBuffer(16);
-  AD_EXPECT_THROW_WITH_MESSAGE(ad_utility::SyncIoPolicy::readFullyOrThrow(
-                                   fd, targetBuffer.data(), 16, 0),
-                               HasSubstr("read fewer bytes than requested"));
-}
-
 // Two reads, each larger than a memory page (4 KiB on Linux), exercise
 // multi-page `pread`/SQEs -- including one at a large non-zero offset, which is
 // the realistic size for reading a compressed vocabulary block. Each half holds
@@ -532,11 +421,22 @@ TYPED_TEST(IoUringManagerTest, waitOnNonExistingBatch) {
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("CCCC", "AAAA", "DDDD"));
 }
 
+// A batch without reads is accepted and has nothing to wait for. Every policy
+// must allow this: `BatchManager` and `PageCacheFirstPolicy` pass a caller's
+// empty batch on unchanged.
+TYPED_TEST(IoUringManagerTest, emptyBatchHasNothingToWaitFor) {
+  auto [tmp, fd] = makeTempFile("AAAA");
+  ReadBatchForTesting batch;
+  TypeParam manager(64);
+  manager.wait(batch.submitTo(manager, fd));
+  EXPECT_THAT(batch.result(), ::testing::IsEmpty());
+}
+
 // Wait on `BatchHandle` for which no actual batch of read calls has been
 // issued.
 TYPED_TEST(IoUringManagerTest, fakeHandle) {
   // create a handle for which no request has been queued.
-  auto fakeHandle = 999;
+  typename TypeParam::BatchHandle fakeHandle{999};
 
   auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
 
@@ -566,6 +466,14 @@ void expectManagerWorks(ad_utility::BatchManagerBase& manager) {
   EXPECT_THAT(batch.result(), ::testing::ElementsAre("BBBB", "AAAA"));
 }
 
+// True if `manager` is a `BatchManager` for `Policy`, decorated with
+// `PageCacheFirstPolicy`.
+template <typename Policy>
+bool usesPolicy(ad_utility::BatchManagerBase& manager) {
+  return dynamic_cast<ad_utility::BatchManager<
+             ad_utility::PageCacheFirstPolicy<Policy>>*>(&manager) != nullptr;
+}
+
 // With `preferIoUring == false`, `makeBatchManager` must return a
 // `SyncIoPolicy`-backed manager without probing io_uring, and leave the flag
 // `false`.
@@ -574,9 +482,7 @@ TEST(MakeBatchManager, syncBackendWhenIoUringNotPreferred) {
   auto manager = ad_utility::makeBatchManager(preferIoUring);
   ASSERT_NE(manager, nullptr);
   EXPECT_FALSE(preferIoUring);
-  EXPECT_NE(dynamic_cast<ad_utility::BatchManager<ad_utility::SyncIoPolicy>*>(
-                manager.get()),
-            nullptr);
+  EXPECT_TRUE(usesPolicy<ad_utility::SyncIoPolicy>(*manager));
   expectManagerWorks(*manager);
 }
 
@@ -593,21 +499,89 @@ TEST(MakeBatchManager, backendMatchesFlagWhenIoUringPreferred) {
   ASSERT_NE(manager, nullptr);
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
-    EXPECT_NE(
-        dynamic_cast<ad_utility::BatchManager<ad_utility::IoUringPolicy>*>(
-            manager.get()),
-        nullptr);
+    EXPECT_TRUE(usesPolicy<ad_utility::IoUringPolicy>(*manager));
   } else {
-    EXPECT_NE(dynamic_cast<ad_utility::BatchManager<ad_utility::SyncIoPolicy>*>(
-                  manager.get()),
-              nullptr);
+    EXPECT_TRUE(usesPolicy<ad_utility::SyncIoPolicy>(*manager));
   }
 #else
   EXPECT_FALSE(preferIoUring);
-  EXPECT_NE(dynamic_cast<ad_utility::BatchManager<ad_utility::SyncIoPolicy>*>(
-                manager.get()),
-            nullptr);
+  EXPECT_TRUE(usesPolicy<ad_utility::SyncIoPolicy>(*manager));
 #endif
   expectManagerWorks(*manager);
 }
+
+// `read`, but the bytes it reads are turned into lowercase, so that a test can
+// tell the bytes served from the "page cache" from those that the wrapped
+// policy read (the test files are uppercase).
+ad_utility::PageCacheRead lowercased(ad_utility::PageCacheRead read) {
+  return [read = std::move(read)](int fd, const ::iovec* iov, int iovcnt,
+                                  int64_t offset) {
+    const int64_t numBytesRead = read(fd, iov, iovcnt, offset);
+    auto numberOfBytesLeft =
+        static_cast<size_t>(std::max<int64_t>(numBytesRead, 0));
+    for (const ::iovec& buffer :
+         ql::span<const ::iovec>{iov, static_cast<size_t>(iovcnt)}) {
+      auto* bytes = static_cast<char*>(buffer.iov_base);
+      const size_t numberOfBytesInBuffer =
+          std::min(numberOfBytesLeft, buffer.iov_len);
+      std::transform(bytes, bytes + numberOfBytesInBuffer, bytes,
+                     [](char c) { return static_cast<char>(std::tolower(c)); });
+      numberOfBytesLeft -= numberOfBytesInBuffer;
+    }
+    return numBytesRead;
+  };
+}
+
+// Several batches of which the page cache serves some reads, and one that it
+// serves completely, are interleaved on a `PageCacheFirstPolicy<Policy>` whose
+// ring holds only two reads, so the forwarded remainder of the first batch
+// already fills the ring. Every batch must end up with the right bytes,
+// whichever order the batches are waited for in. The served reads come back
+// in lowercase, so the expected strings show which path served each read.
+template <typename Policy>
+void expectInterleavedPartialBatchesWork() {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDDEEEEFFFF");
+  // No two neighbouring reads of a batch are adjacent in the file, so each read
+  // is a run of its own, and the runs at the offsets 0 and 12 are cached.
+  size_t numberOfPageCacheReads = 0;
+  ad_utility::BatchManager<ad_utility::PageCacheFirstPolicy<Policy>> manager(
+      2, pageCacheReadTestHelpers::counted(
+             numberOfPageCacheReads,
+             lowercased(pageCacheReadTestHelpers::cachedAt({0, 12}))));
+  ReadBatchForTesting first;
+  first.add({{16, 4}, {0, 4}, {12, 4}, {4, 4}, {20, 4}});
+  ReadBatchForTesting second;
+  second.add({{8, 4}, {20, 4}, {0, 4}});
+  ReadBatchForTesting servedCompletely;
+  servedCompletely.add({{12, 4}, {0, 4}});
+  const auto firstHandle = first.submitTo(manager, fd);
+  const auto secondHandle = second.submitTo(manager, fd);
+  const auto servedCompletelyHandle = servedCompletely.submitTo(manager, fd);
+  manager.wait(secondHandle);
+  manager.wait(servedCompletelyHandle);
+  manager.wait(firstHandle);
+  EXPECT_THAT(first.result(),
+              ElementsAre("EEEE", "aaaa", "dddd", "BBBB", "FFFF"));
+  EXPECT_THAT(second.result(), ElementsAre("CCCC", "FFFF", "aaaa"));
+  EXPECT_THAT(servedCompletely.result(), ElementsAre("dddd", "aaaa"));
+  // One page-cache read per read, because every read is a run of its own.
+  EXPECT_EQ(numberOfPageCacheReads, size_t{5 + 3 + 2});
+}
+
+// _____________________________________________________________________________
+TEST(PageCacheFirstPolicy, interleavedPartialBatchesWithSyncIo) {
+  SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
+  expectInterleavedPartialBatchesWork<ad_utility::SyncIoPolicy>();
+}
+
+#ifdef QLEVER_HAS_IO_URING
+// _____________________________________________________________________________
+TEST(PageCacheFirstPolicy, interleavedPartialBatchesWithIoUring) {
+  SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
+  if (!ioUringAvailableAtRuntime()) {
+    GTEST_SKIP() << "io_uring is compiled in, but not available at runtime";
+  }
+  expectInterleavedPartialBatchesWork<ad_utility::IoUringPolicy>();
+}
+#endif
 }  // namespace

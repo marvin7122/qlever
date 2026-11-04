@@ -1,6 +1,12 @@
-// Copyright 2022, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "index/vocabulary/VocabularyOnDisk.h"
 
@@ -12,6 +18,7 @@
 #include <atomic>
 
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
@@ -425,7 +432,8 @@ VocabularyOnDisk::WordWriter::~WordWriter() {
 }
 
 // _____________________________________________________________________________
-void VocabularyOnDisk::open(const std::string& filename) {
+void VocabularyOnDisk::open(const std::string& filename,
+                            ad_utility::PageCacheRead pageCacheRead) {
   static std::atomic<uint64_t> nextId = 1;
   id_ = nextId++;
   file_.open(filename, "r");
@@ -438,12 +446,19 @@ void VocabularyOnDisk::open(const std::string& filename) {
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
 
-  // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
+  // Initialize the pool of persistent batch managers for `lookupBatch`. They
+  // read the runtime parameter for every batch, so that it can change between
+  // two lookups.
   ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
   bool preferIoUring = true;
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
+    ioManagers_->push(ad_utility::makeBatchManager(
+        preferIoUring, ad_utility::defaultBatchManagerRingSize, pageCacheRead,
+        [] {
+          return getRuntimeParameter<
+              &RuntimeParameters::vocabularyPageCacheFastPath_>();
+        }));
   }
 }

@@ -14,4 +14,6 @@ add_library(vocabulary VocabularyInMemory.h VocabularyInMemory.cpp
                        Vocabulary.cpp EncodedIriManager.cpp
                        EncodedIriPattern.cpp PrefixHeuristic.cpp
                        SecondaryVocabulary.cpp)
-qlever_target_link_libraries(vocabulary qlever_util rdfTypes)
+# The vocabulary library needs the utilities, the RDF types and the globals
+# (for the runtime parameters).
+qlever_target_link_libraries(vocabulary qlever_util rdfTypes global)
