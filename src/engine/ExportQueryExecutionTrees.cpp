@@ -569,7 +569,7 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
   ql::exportIds::IdToStringAndTypeCache<format == csv, false,
                                         decltype(escapeFunction)>
       cache{qet.getQec()->getIndex(), selectExportTermCacheConfig(),
-            qet.getQec()->getAllocator()};
+            qet.getQec()->getAllocator(), escapeFunction};
   uint64_t resultSize = 0;
   for (const auto& [pair, range] :
        getRowIndices(limitAndOffset, *result, resultSize)) {
