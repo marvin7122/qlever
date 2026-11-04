@@ -85,7 +85,6 @@ TEST(ServerTest, chooseBestFittingMediaType) {
 }
 
 // _____________________________________________________________________________
-// _____________________________________________________________________________
 namespace {
 // Yield the `text` in pieces of 1000 bytes.
 cppcoro::generator<std::string> inPiecesOf1000(std::string text) {
@@ -134,6 +133,7 @@ TEST(ServerTest, compressBodyForQuery) {
   }
 }
 
+// _____________________________________________________________________________
 TEST(ServerTest, getQueryId) {
   using namespace ad_utility::websocket;
 
