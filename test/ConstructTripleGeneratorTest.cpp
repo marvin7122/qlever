@@ -15,6 +15,7 @@
 #include "engine/ConstructTripleGenerator.h"
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/Result.h"
+#include "index/vocabulary/VocabularyType.h"
 #include "util/CancellationHandle.h"
 
 namespace {
@@ -493,68 +494,78 @@ TEST_F(ConstructTripleGeneratorTest, formattedChunksAreTheSerializedTriples) {
   // so these rows yield more than two chunks (and span 17 batches).
   constexpr size_t numberOfRows =
       ConstructTripleGenerator::FORMATTED_CHUNK_BYTES / 4 + 7;
-  LocalVocab localVocab;
-  const auto& context = qec_->getLocalVocabContext();
-  auto localLiteral = [&localVocab, &context](const std::string& content) {
-    return Id::makeFromLocalVocabIndex(localVocab.getIndexAndAddIfNotContained(
-        LocalVocabEntry::literalWithoutQuotes(content, context)));
-  };
-  const Id idHello = ad_utility::testing::makeGetId(index_)("\"hello\"");
   const std::string intType = absl::StrCat("\"42\"^^<", XSD_INT_TYPE, ">");
-  // Each object together with its serialization in Turtle and N-Triples
-  // (`std::nullopt` for UNDEF, which yields no triple).
-  struct Object {
-    Id id_;
-    std::optional<std::string> turtle_;
-    std::optional<std::string> ntriples_;
-  };
-  const std::vector<Object> objects{
-      {idO_, "<o>", "<o>"},
-      {idHello, "\"hello\"", "\"hello\""},
-      {localLiteral("local"), "\"local\"", "\"local\""},
-      {localLiteral("line\nbreak"), "\"line\\nbreak\"", "\"line\\nbreak\""},
-      {Id::makeFromInt(42), "42", intType},
-      {U, std::nullopt, std::nullopt}};
-
-  std::vector<std::vector<IntOrId>> rows;
-  std::string expectedTurtle;
-  std::string expectedNTriples;
-  for (size_t i = 0; i < numberOfRows; ++i) {
-    const bool isS = i % 3 != 0;
-    const Object& object = objects.at(i % objects.size());
-    rows.push_back({isS ? idS_ : idQ_, object.id_});
-    if (object.turtle_.has_value()) {
-      const std::string_view subject = isS ? "<s>" : "<q>";
-      absl::StrAppend(&expectedTurtle, subject, " <p> ", object.turtle_.value(),
-                      " .\n");
-      absl::StrAppend(&expectedNTriples, subject, " <p> ",
-                      object.ntriples_.value(), " .\n");
-    }
-  }
-  auto result = std::make_shared<const Result>(makeIdTableFromVector(rows),
-                                               std::vector<ColumnIndex>{},
-                                               std::move(localVocab));
   auto templateTriples = oneTriple(Variable{"?s"}, iriV("<p>"), Variable{"?o"});
   VariableToColumnMap varMap;
   varMap[Variable{"?s"}] = makeAlwaysDefinedColumn(0);
   varMap[Variable{"?o"}] = makePossiblyUndefinedColumn(1);
 
-  for (const auto& [mediaType, expected] :
-       {std::pair{ad_utility::MediaType::turtle, expectedTurtle},
-        std::pair{ad_utility::MediaType::ntriples, expectedNTriples}}) {
-    const auto chunks =
-        collectFormatted(ConstructTripleGenerator::generateFormattedTriples(
-            templateTriples, varMap,
-            singleTableRange(makeTableWithRange(*result, 0, numberOfRows)), 0,
-            mediaType, makeConfig()));
-    EXPECT_EQ(absl::StrJoin(chunks, ""), expected);
-    // More than one chunk, each but the last at least the chunk size.
-    ASSERT_GT(chunks.size(), 1u);
-    for (size_t i = 0; i + 1 < chunks.size(); ++i) {
-      EXPECT_GE(chunks[i].size(),
-                ConstructTripleGenerator::FORMATTED_CHUNK_BYTES);
+  // Every vocabulary type, because each returns its words in a different kind
+  // of batch-lookup result.
+  for (const auto type : ad_utility::VocabularyType::allForIndexBuilding_) {
+    SCOPED_TRACE(ad_utility::VocabularyType{type}.toString());
+    QueryExecutionContext* qec = ad_utility::testing::getQec(
+        "<s> <p> <o> . <s> <q> \"hello\" .", ad_utility::VocabularyType{type});
+    const Index& index = qec->getIndex();
+    auto getId = ad_utility::testing::makeGetId(index);
+    LocalVocab localVocab;
+    auto localLiteral = [&localVocab, qec](const std::string& content) {
+      return Id::makeFromLocalVocabIndex(
+          localVocab.getIndexAndAddIfNotContained(
+              LocalVocabEntry::literalWithoutQuotes(
+                  content, qec->getLocalVocabContext())));
+    };
+    // Each object together with its serialization in Turtle and N-Triples
+    // (`std::nullopt` for UNDEF, which yields no triple).
+    struct Object {
+      Id id_;
+      std::optional<std::string> turtle_;
+      std::optional<std::string> ntriples_;
+    };
+    const std::vector<Object> objects{
+        {getId("<o>"), "<o>", "<o>"},
+        {getId("\"hello\""), "\"hello\"", "\"hello\""},
+        {localLiteral("local"), "\"local\"", "\"local\""},
+        {localLiteral("line\nbreak"), "\"line\\nbreak\"", "\"line\\nbreak\""},
+        {Id::makeFromInt(42), "42", intType},
+        {U, std::nullopt, std::nullopt}};
+
+    std::vector<std::vector<IntOrId>> rows;
+    std::string expectedTurtle;
+    std::string expectedNTriples;
+    for (size_t i = 0; i < numberOfRows; ++i) {
+      const bool isS = i % 3 != 0;
+      const Object& object = objects.at(i % objects.size());
+      rows.push_back({getId(isS ? "<s>" : "<q>"), object.id_});
+      if (object.turtle_.has_value()) {
+        const std::string_view subject = isS ? "<s>" : "<q>";
+        absl::StrAppend(&expectedTurtle, subject, " <p> ",
+                        object.turtle_.value(), " .\n");
+        absl::StrAppend(&expectedNTriples, subject, " <p> ",
+                        object.ntriples_.value(), " .\n");
+      }
     }
-    EXPECT_FALSE(chunks.back().empty());
+    auto result = std::make_shared<const Result>(makeIdTableFromVector(rows),
+                                                 std::vector<ColumnIndex>{},
+                                                 std::move(localVocab));
+
+    for (const auto& [mediaType, expected] :
+         {std::pair{ad_utility::MediaType::turtle, expectedTurtle},
+          std::pair{ad_utility::MediaType::ntriples, expectedNTriples}}) {
+      const auto chunks =
+          collectFormatted(ConstructTripleGenerator::generateFormattedTriples(
+              templateTriples, varMap,
+              singleTableRange(makeTableWithRange(*result, 0, numberOfRows)), 0,
+              mediaType, EvaluationConfig{index, makeHandle(), *qec}));
+      EXPECT_EQ(absl::StrJoin(chunks, ""), expected);
+      // More than one chunk, each but the last at least the chunk size.
+      ASSERT_GT(chunks.size(), 1u);
+      for (size_t i = 0; i + 1 < chunks.size(); ++i) {
+        EXPECT_GE(chunks[i].size(),
+                  ConstructTripleGenerator::FORMATTED_CHUNK_BYTES);
+      }
+      EXPECT_FALSE(chunks.back().empty());
+    }
   }
 }
 

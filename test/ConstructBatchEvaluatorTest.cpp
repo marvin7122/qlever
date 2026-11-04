@@ -13,6 +13,7 @@
 #include "./util/IndexTestHelpers.h"
 #include "engine/ConstructBatchEvaluator.h"
 #include "global/Constants.h"
+#include "index/vocabulary/VocabularyType.h"
 
 namespace {
 
@@ -292,33 +293,43 @@ TEST_F(ConstructBatchEvaluatorTest, localVocabIdBypassesIdCache) {
 // The words of the vocabulary are not copied: their terms view the words in
 // the batch-lookup result, which they keep alive. So a term in `idCache` stays
 // readable after the batch that looked it up is gone, also when later batches
-// are evaluated with the same cache.
+// are evaluated with the same cache. This is checked for every vocabulary type,
+// because a missing owner is only detectable (with ASan) where the result does
+// not view storage of the vocabulary itself: `InMemoryUncompressed` returns
+// views into its own words, which live as long as the index.
 TEST_F(ConstructBatchEvaluatorTest, borrowedVocabTermsOutliveTheirBatch) {
-  IdCache idCache{1024};
-  {
-    auto idTable = makeIdTableFromVector({{idS_}, {getId_("\"hello\"")}});
-    auto result = evaluateIdTable({0}, idTable, idCache);
-    ASSERT_EQ(result.numRows_, 2);
-    EXPECT_THAT(getColumn(result, 0),
-                ElementsAre(evalTerm("<s>"), evalTerm("\"hello\"")));
-  }
-  {
-    // A later batch with other words and one cache hit.
-    auto idTable = makeIdTableFromVector({{idO_}, {idS_}, {idQ_}});
-    auto result = evaluateIdTable({0}, idTable, idCache);
-    EXPECT_THAT(getColumn(result, 0),
-                ElementsAre(evalTerm("<o>"), evalTerm("<s>"), evalTerm("<q>")));
-  }
+  for (const auto type : ad_utility::VocabularyType::allForIndexBuilding_) {
+    SCOPED_TRACE(ad_utility::VocabularyType{type}.toString());
+    QueryExecutionContext* qec = ad_utility::testing::getQec(
+        "<s> <p> <o> . <s> <q> \"hello\" .", ad_utility::VocabularyType{type});
+    const Index& index = qec->getIndex();
+    auto getId = ad_utility::testing::makeGetId(index);
+    auto evaluate = [&index, this](const IdTable& idTable, IdCache& idCache) {
+      const BatchEvaluationContext ctx{idTable.asStaticView<0>(), 0,
+                                       idTable.numRows()};
+      return getColumn(
+          ConstructBatchEvaluator::evaluateBatch(
+              std::vector<ColumnIndex>{0}, ctx, localVocab_, index, idCache),
+          0);
+    };
 
-  for (const auto& [id, expected] : std::vector<std::pair<Id, std::string>>{
-           {idS_, "<s>"},
-           {getId_("\"hello\""), "\"hello\""},
-           {idO_, "<o>"},
-           {idQ_, "<q>"}}) {
-    const auto cached = idCache.tryGet(id);
-    ASSERT_TRUE(cached.has_value()) << expected;
-    EXPECT_THAT(cached.value(), evalTerm(expected));
-    EXPECT_TRUE(cached.value().value()->isBorrowed()) << expected;
+    IdCache idCache{1024};
+    EXPECT_THAT(
+        evaluate(makeIdTableFromVector({{getId("<s>")}, {getId("\"hello\"")}}),
+                 idCache),
+        ElementsAre(evalTerm("<s>"), evalTerm("\"hello\"")));
+    // A later batch with other words and one cache hit.
+    EXPECT_THAT(evaluate(makeIdTableFromVector(
+                             {{getId("<o>")}, {getId("<s>")}, {getId("<q>")}}),
+                         idCache),
+                ElementsAre(evalTerm("<o>"), evalTerm("<s>"), evalTerm("<q>")));
+
+    for (const std::string word : {"<s>", "\"hello\"", "<o>", "<q>"}) {
+      const auto cached = idCache.tryGet(getId(word));
+      ASSERT_TRUE(cached.has_value()) << word;
+      EXPECT_THAT(cached.value(), evalTerm(word));
+      EXPECT_TRUE(cached.value().value()->isBorrowed()) << word;
+    }
   }
 }
 
