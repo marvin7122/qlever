@@ -40,7 +40,7 @@ on:
   workflow_dispatch:
     inputs:
       probe:
-        description: Only check that the App token can comment; change nothing
+        description: Only check that the App token can comment on PRs; change nothing
         type: boolean
         default: false
 
@@ -198,6 +198,8 @@ jobs:
     timeout-minutes: 10
     steps:
       # Comments made with GITHUB_TOKEN start no workflow, App comments do.
+      # A comment on a PR needs pull_requests: write; issues: write alone is
+      # refused with 403 (run 41831983146).
       - name: Mint a token of the OCR fan-out App
         id: app
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
@@ -206,7 +208,7 @@ jobs:
           private-key: ${{ secrets.OCR_FANOUT_APP_PRIVATE_KEY }}
           owner: marvin7122
           repositories: qlever
-          permission-issues: write
+          permission-pull-requests: write
       - name: Post the fan-out commands
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
@@ -229,7 +231,7 @@ jobs:
             }
 
   # Manual check (workflow_dispatch with probe): the App token can be minted
-  # with issues: write. Posts nothing.
+  # with pull_requests: write, which PR comments need. Posts nothing.
   probe:
     if: ${{ inputs.probe }}
     runs-on: ubuntu-latest
@@ -243,8 +245,8 @@ jobs:
           private-key: ${{ secrets.OCR_FANOUT_APP_PRIVATE_KEY }}
           owner: marvin7122
           repositories: qlever
-          permission-issues: write
+          permission-pull-requests: write
       - name: Report the App
         env:
           SLUG: ${{ steps.app.outputs.app-slug }}
-        run: echo "App ${SLUG} can comment on marvin7122/qlever (issues write)."
+        run: echo "App ${SLUG} can comment on PRs of marvin7122/qlever (pull_requests write)."
