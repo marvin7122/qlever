@@ -56,6 +56,9 @@ class FakeIoUring final : public IoUringInterface {
     double submitOutOfMemory = 0;
     size_t maxEagainBurst = 1;
     double waitInterrupted = 0;
+    // A wait returns 0 as soon as one completion is ready, like a wait that a
+    // signal ends while a completion is ready.
+    double waitReturnsEarly = 0;
     double shortRead = 0;
     double readError = 0;
     // The results of the first submits, one per call: a negative value fails
@@ -67,6 +70,9 @@ class FakeIoUring final : public IoUringInterface {
     int brokenWaitErrno = 0;
     // Whether a submit may already complete some of the requests it took.
     bool completeOnSubmit = true;
+    // Whether a submit completes all requests in the kernel (implies
+    // `completeOnSubmit`).
+    bool completeAllOnSubmit = false;
   };
 
   //____________________________________________________________________________
@@ -120,12 +126,27 @@ class FakeIoUring final : public IoUringInterface {
     size_t outOfMemorySubmits = 0;
     // Waits that failed with `EINTR`.
     size_t interruptedWaits = 0;
+    // Waits that returned 0 with fewer completions ready than asked for.
+    size_t earlyWaits = 0;
     // Reads that failed or read fewer bytes than requested, also those that
     // are short because they end past the end of the file.
     size_t faultyReads = 0;
     // Reads that `cancelQueued` rewrote into no-ops.
     size_t cancelledReads = 0;
   };
+
+  // How often the policy waited (also interrupted and failed waits), for how
+  // many completions, and how many of its pops returned at least one
+  // completion, over the lifetime of the ring.
+  struct CallCounts {
+    size_t waits = 0;
+    std::vector<unsigned> waitSizes;
+    size_t chunks = 0;
+  };
+
+  //____________________________________________________________________________
+  // The calls counted so far (see `CallCounts`).
+  const CallCounts& callCounts() const noexcept { return callCounts_; }
 
   //____________________________________________________________________________
   // The faults injected so far (see `FaultCounts`).
@@ -193,6 +214,8 @@ class FakeIoUring final : public IoUringInterface {
   // Complete random requests of the kernel until `minComplete` completions are
   // ready, unless the wait is interrupted or broken. Return 0 or `-errno`.
   int waitForCompletions(unsigned minComplete) override {
+    ++callCounts_.waits;
+    callCounts_.waitSizes.push_back(minComplete);
     if (faults_.brokenWaitErrno != 0) {
       return -faults_.brokenWaitErrno;
     }
@@ -205,6 +228,18 @@ class FakeIoUring final : public IoUringInterface {
     // requests in the kernel would block forever.
     AD_CORRECTNESS_CHECK(minComplete <= kernel_.size() + completions_.size(),
                          "A real ring would block forever on this wait.");
+    // (Only draws from the generator if the fault is enabled, so that it does
+    // not change the faults of the tests that do not use it.)
+    if (faults_.waitReturnsEarly > 0 && completions_.size() < minComplete &&
+        happens(faults_.waitReturnsEarly)) {
+      ++faultCounts_.earlyWaits;
+      if (completions_.empty()) {
+        // The check above guarantees a request in the kernel here.
+        AD_CORRECTNESS_CHECK(!kernel_.empty());
+        completeRandomRequests(1);
+      }
+      return 0;
+    }
     while (completions_.size() < minComplete) {
       completeRandomRequests(1);
     }
@@ -222,6 +257,9 @@ class FakeIoUring final : public IoUringInterface {
     completions_.erase(
         completions_.begin(),
         completions_.begin() + static_cast<ptrdiff_t>(numberOfPopped));
+    if (numberOfPopped > 0) {
+      ++callCounts_.chunks;
+    }
     return numberOfPopped;
   }
 
@@ -320,7 +358,9 @@ class FakeIoUring final : public IoUringInterface {
                          "completions must fit into the completion queue, "
                          "or a real ring would drop completions.");
     // The kernel may already have completed some of the requests.
-    if (faults_.completeOnSubmit) {
+    if (faults_.completeAllOnSubmit) {
+      completeRandomRequests(kernel_.size());
+    } else if (faults_.completeOnSubmit) {
       completeRandomRequests(uniform(0, kernel_.size()));
     }
     return static_cast<int>(numberOfTakenSqes);
@@ -396,6 +436,7 @@ class FakeIoUring final : public IoUringInterface {
   size_t numberOfSubmits_ = 0;
   bool injectedReadFault_ = false;
   FaultCounts faultCounts_;
+  CallCounts callCounts_;
 };
 
 }  // namespace ad_utility::testing
