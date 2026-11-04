@@ -26,8 +26,11 @@ on:
   # who added it, the one-run-per-head rule and the daily cap, and then has
   # the OCR fan-out App post the `/open-code-review-fanout` command with a
   # `deep-review-request` marker. That comment is the only bot comment that
-  # passes the guards below (the App's id and the marker); its run removes
-  # the label when it ends (job `deep-review-label`).
+  # passes the guards below (the App's bot login and the marker); its run
+  # removes the label when it ends (job `deep-review-label`). The login, not
+  # `performed_via_github_app`, because the issue_comment payload left that
+  # field empty (run 41832775755 skipped every job); `[bot]` logins cannot be
+  # taken by users.
   issue_comment:
     types: [created]
 
@@ -63,8 +66,7 @@ concurrency:
     (startsWith(github.event.comment.body, '/open-code-review-fanout') ||
     startsWith(github.event.comment.body, '@open-code-review-fanout')) &&
     !(github.event.comment.user.type == 'Bot' &&
-    vars.OCR_FANOUT_APP_ID != '' &&
-    github.event.comment.performed_via_github_app.id == vars.OCR_FANOUT_APP_ID &&
+    github.event.comment.user.login == 'qlever-ocr-fan-out[bot]' &&
     contains(github.event.comment.body, '<!-- deep-review-request sha=')) &&
     (github.event.comment.user.type == 'Bot' ||
     (github.event.comment.author_association != 'MEMBER' &&
@@ -100,8 +102,7 @@ env:
   # comment, see the `on:` comment above).
   OCR_DEEP_REVIEW_RELAY: >-
     ${{ github.event.comment.user.type == 'Bot' &&
-    vars.OCR_FANOUT_APP_ID != '' &&
-    github.event.comment.performed_via_github_app.id == vars.OCR_FANOUT_APP_ID &&
+    github.event.comment.user.login == 'qlever-ocr-fan-out[bot]' &&
     contains(github.event.comment.body, '<!-- deep-review-request sha=') }}
   OCR_REVIEW_BUDGET_USD: ${{ vars.OCR_REVIEW_BUDGET_USD || '1.00' }}
   OCR_PRICE_INPUT_PER_M: '0.14'
@@ -144,8 +145,7 @@ jobs:
       github.event.issue.pull_request &&
       startsWith(github.event.comment.body, '/open-code-review-fanout') &&
       (github.event.comment.user.type == 'Bot' &&
-       vars.OCR_FANOUT_APP_ID != '' &&
-       github.event.comment.performed_via_github_app.id == vars.OCR_FANOUT_APP_ID &&
+       github.event.comment.user.login == 'qlever-ocr-fan-out[bot]' &&
        contains(github.event.comment.body, '<!-- deep-review-request sha='))
     runs-on: ubuntu-latest
     timeout-minutes: 130
@@ -842,8 +842,7 @@ jobs:
       github.event.issue.pull_request &&
       startsWith(github.event.comment.body, '/open-code-review-fanout') &&
       (github.event.comment.user.type == 'Bot' &&
-       vars.OCR_FANOUT_APP_ID != '' &&
-       github.event.comment.performed_via_github_app.id == vars.OCR_FANOUT_APP_ID &&
+       github.event.comment.user.login == 'qlever-ocr-fan-out[bot]' &&
        contains(github.event.comment.body, '<!-- deep-review-request sha='))
     runs-on: ubuntu-latest
     timeout-minutes: 5
