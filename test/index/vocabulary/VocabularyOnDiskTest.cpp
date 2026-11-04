@@ -13,7 +13,8 @@
 #include <gmock/gmock.h>
 
 #include <array>
-#include <latch>
+#include <condition_variable>
+#include <mutex>
 #include <optional>
 #include <random>
 #include <vector>
@@ -319,6 +320,7 @@ TEST(VocabularyOnDisk, LookupBatchEmptyThrows) {
   EXPECT_ANY_THROW(vocab->lookupBatch(ql::span<const size_t>{}));
 }
 
+// _____________________________________________________________________________
 // An out-of-range index in a batch must throw, before a manager is created.
 TEST(VocabularyOnDisk, LookupBatchOutOfRangeIndexThrows) {
   auto vocab = createExampleVocabulary();
@@ -327,6 +329,7 @@ TEST(VocabularyOnDisk, LookupBatchOutOfRangeIndexThrows) {
   EXPECT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 0u);
 }
 
+// _____________________________________________________________________________
 // A lookup gives its manager back, so sequential lookups share one manager.
 TEST(VocabularyOnDisk, LookupBatchReusesItsManager) {
   auto vocab = createExampleVocabulary();
@@ -339,6 +342,7 @@ TEST(VocabularyOnDisk, LookupBatchReusesItsManager) {
   }
 }
 
+// _____________________________________________________________________________
 // A lookup whose batch has one short read throws and gives its manager back,
 // and the next lookup reuses that manager. `IoUringPolicy` collects all reads
 // of the failed batch before it throws, and `SyncIoPolicy` keeps no state
@@ -365,6 +369,7 @@ TEST(VocabularyOnDisk, LookupBatchReusesTheManagerAfterAFailedRead) {
   EXPECT_EQ(vocab->numberOfIdleBatchManagersForTesting(), 1u);
 }
 
+// _____________________________________________________________________________
 // Many threads look up words of the same vocabulary at the same time. Every
 // result is correct, and the pool holds at most one manager per thread.
 TEST(VocabularyOnDisk, LookupBatchFromManyThreadsAtOnce) {
@@ -375,14 +380,25 @@ TEST(VocabularyOnDisk, LookupBatchFromManyThreadsAtOnce) {
   // Every seventh word, in descending order.
   auto indices = stridedIndices(0, numberOfWords, 7);
   ql::ranges::reverse(indices);
-  // All threads start their lookups at the same time.
-  std::latch start{numberOfThreads};
+  // All threads start their lookups at the same time: each waits until all
+  // threads have arrived.
+  std::mutex mutex;
+  std::condition_variable allArrived;
+  size_t numberOfArrivedThreads = 0;
+  auto arriveAndWait = [&]() {
+    std::unique_lock lock{mutex};
+    if (++numberOfArrivedThreads == numberOfThreads) {
+      allArrived.notify_all();
+    }
+    allArrived.wait(
+        lock, [&]() { return numberOfArrivedThreads == numberOfThreads; });
+  };
   {
     std::vector<ad_utility::JThread> threads;
     for ([[maybe_unused]] size_t t :
          ad_utility::integerRange(numberOfThreads)) {
-      threads.emplace_back([&vocab, &indices, &start]() {
-        start.arrive_and_wait();
+      threads.emplace_back([&vocab, &indices, &arriveAndWait]() {
+        arriveAndWait();
         for ([[maybe_unused]] size_t round :
              ad_utility::integerRange(numberOfRoundsPerThread)) {
           vocabulary_test::assertLookupResultMatchesVocabularyAtIndices(
@@ -395,6 +411,7 @@ TEST(VocabularyOnDisk, LookupBatchFromManyThreadsAtOnce) {
   EXPECT_LE(vocab->numberOfIdleBatchManagersForTesting(), numberOfThreads);
 }
 
+// _____________________________________________________________________________
 // After the io_uring setup has failed once (simulated here), new managers are
 // synchronous. Their lookups are correct, and they are reused like the others.
 TEST(VocabularyOnDisk, LookupBatchWithSynchronousManagers) {

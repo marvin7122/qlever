@@ -283,6 +283,9 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
   std::vector<char*> targets(numIndices);
   for (auto&& [fileOffset, index, target, offsetPair] :
        ::ranges::views::zip(fileOffsets, indices, targets, offsetPairs)) {
+    // `lookupBatch` has checked `index < size()`, so the multiplication cannot
+    // overflow.
+    AD_EXPENSIVE_CHECK(index < size());
     fileOffset = index * sizeof(uint64_t);
     target = reinterpret_cast<char*>(&offsetPair);
   }
@@ -351,7 +354,8 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
     }
     return manager;
   };
-  auto manager = managers.pool_.take(makeManager);
+  std::unique_ptr<ad_utility::BatchManagerBase> manager =
+      managers.pool_.take(makeManager);
 
   // Give the manager back on every exit path. Also after a failed read it can
   // be reused, because `IoUringPolicy` collects all reads of a batch from the
