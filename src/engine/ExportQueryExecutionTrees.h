@@ -68,6 +68,14 @@ class ExportQueryExecutionTrees {
   // has not been tuned yet.
   static constexpr uint64_t MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK = 8192;
 
+  // The maximal number of cells of one column that a chunk of the parallel CSV
+  // or TSV export converts with one batched lookup of the vocabulary words
+  // (`ql::exportIds::idsToStringAndType`). A larger batch spreads the cost of a
+  // lookup over more cells, a smaller one checks for cancellation and for the
+  // stop of the export more often, which happens between two batches. This
+  // value has not been tuned yet.
+  static constexpr size_t MAX_NUMBER_OF_CELLS_PER_LOOKUP_BATCH = 1024;
+
   // The serialized rows of one chunk of a parallel CSV or TSV export. The
   // memory is allocated with the allocator of the query, so it counts towards
   // the `memory-for-queries` budget that all queries share. An allocation that
@@ -200,9 +208,11 @@ class ExportQueryExecutionTrees {
   // a column that is `std::nullopt` or an unbound value), allocated with the
   // `allocator`. This is the unit of work of the parallel CSV or TSV export,
   // so it only reads its arguments and may be called concurrently for
-  // different `rows`. Throw a `CancellationException` if the
-  // `cancellationHandle` is cancelled. Stop early and return the lines so far
-  // as soon as `stop` is requested (the export then no longer needs them).
+  // different `rows`. The vocabulary words of each column are read with
+  // batched lookups of at most `MAX_NUMBER_OF_CELLS_PER_LOOKUP_BATCH` cells.
+  // Throw a `CancellationException` if the `cancellationHandle` is cancelled.
+  // Stop early and return an incomplete (possibly empty) chunk as soon as
+  // `stop` is requested (the export then no longer needs it).
   template <ad_utility::MediaType format>
   static CsvOrTsvChunk csvOrTsvRows(
       const Index& index,

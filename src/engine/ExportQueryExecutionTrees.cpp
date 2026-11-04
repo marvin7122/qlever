@@ -106,18 +106,35 @@ STREAMABLE_GENERATOR_TYPE computeResultForAsk(
 }
 
 // _____________________________________________________________________________
+// Return a reference to the function that escapes a field of a CSV or TSV
+// export: `RdfEscaping::escapeForTsv` for TSV, `RdfEscaping::escapeForCsv`
+// otherwise. It is returned by reference so that it can be passed as the
+// escape function of `idToStringAndType` and `idsToStringAndType` without a
+// copy. Both the sequential and the parallel export use it, so that their
+// bytes are the same.
+template <ad_utility::MediaType format>
+constexpr auto& csvOrTsvEscapeFunction() {
+  if constexpr (format == ad_utility::MediaType::tsv) {
+    return RdfEscaping::escapeForTsv;
+  } else {
+    return RdfEscaping::escapeForCsv;
+  }
+}
+
 // Convert the `id` to its field in a CSV or TSV export (`std::nullopt` for an
-// unbound value). This is the per-cell work of both the sequential and the
-// parallel CSV or TSV export.
+// unbound value). This is the per-cell work of the sequential CSV or TSV
+// export.
 template <ad_utility::MediaType format>
 auto idToCsvOrTsvField(const Index& index, Id id,
                        const LocalVocab& localVocab) {
-  constexpr auto& escapeFunction = format == ad_utility::MediaType::tsv
-                                       ? RdfEscaping::escapeForTsv
-                                       : RdfEscaping::escapeForCsv;
   return ql::exportIds::idToStringAndType<format == ad_utility::MediaType::csv>(
-      index, id, localVocab, escapeFunction);
+      index, id, localVocab, csvOrTsvEscapeFunction<format>());
 }
+
+// The fields of one column of a chunk of a CSV or TSV export, in the order of
+// the rows (`std::nullopt` for an unbound value).
+using CsvOrTsvFields =
+    std::vector<std::optional<std::pair<std::string, const char*>>>;
 }  // namespace
 
 // _____________________________________________________________________________
@@ -136,26 +153,65 @@ ExportQueryExecutionTrees::csvOrTsvRows(
   // error on the name from the `using enum` of the class at this place.
   constexpr char separator = format == ad_utility::MediaType::tsv ? '\t' : ',';
   CsvOrTsvChunk lines{allocator};
-  for (uint64_t row : rows) {
+  const uint64_t firstRow = rows.empty() ? 0 : *rows.begin();
+  const size_t numberOfRows = rows.size();
+  AD_CONTRACT_CHECK(firstRow + numberOfRows <= table.idTable().numRows());
+
+  // Serialize the rows in windows of at most
+  // `MAX_NUMBER_OF_CELLS_PER_LOOKUP_BATCH` rows, so that the fields of a window
+  // are the only ones that exist next to the `lines`. These fields are not
+  // allocated with the `allocator`: a window holds at most one string per cell
+  // of the window, and it is released before the next window starts.
+  for (size_t windowBegin = 0; windowBegin < numberOfRows;
+       windowBegin += MAX_NUMBER_OF_CELLS_PER_LOOKUP_BATCH) {
     if (stop.isRequested()) {
       return lines;
     }
-    for (const auto& [j, column] : ::ranges::views::enumerate(columns)) {
-      if (j > 0) {
-        lines.push_back(separator);
-      }
+    const size_t windowSize = std::min(MAX_NUMBER_OF_CELLS_PER_LOOKUP_BATCH,
+                                       numberOfRows - windowBegin);
+
+    // Convert each selected column of the window with one batched lookup
+    // (`std::nullopt` for a column that is `std::nullopt`). The vocabulary
+    // words of a column are thus read together instead of one by one.
+    std::vector<std::optional<CsvOrTsvFields>> fieldsPerColumn;
+    fieldsPerColumn.reserve(columns.size());
+    for (const auto& column : columns) {
       if (!column.has_value()) {
+        fieldsPerColumn.emplace_back(std::nullopt);
         continue;
       }
-      auto optionalStringAndType = idToCsvOrTsvField<format>(
-          index, table.idTable()(row, column.value().columnIndex_),
-          table.localVocab());
-      if (optionalStringAndType.has_value()) [[likely]] {
-        lines.append(optionalStringAndType.value().first);
+      if (stop.isRequested()) {
+        return lines;
       }
+      ql::span<const Id> ids = table.idTable()
+                                   .getColumn(column.value().columnIndex_)
+                                   .subspan(firstRow + windowBegin, windowSize);
+      CsvOrTsvFields fields =
+          ql::exportIds::idsToStringAndType<format ==
+                                            ad_utility::MediaType::csv>(
+              index, ids, table.localVocab(), csvOrTsvEscapeFunction<format>());
+      cancellationHandle.throwIfCancelled();
+      fieldsPerColumn.emplace_back(std::move(fields));
     }
-    lines.push_back('\n');
-    cancellationHandle.throwIfCancelled();
+
+    // Append the fields of the window row by row, separated by `separator`.
+    for (size_t i = 0; i < windowSize; ++i) {
+      for (const auto& [j, fields] :
+           ::ranges::views::enumerate(fieldsPerColumn)) {
+        if (j > 0) {
+          lines.push_back(separator);
+        }
+        if (!fields.has_value()) {
+          continue;
+        }
+        const auto& optionalStringAndType = fields.value()[i];
+        if (optionalStringAndType.has_value()) [[likely]] {
+          lines.append(optionalStringAndType.value().first);
+        }
+      }
+      lines.push_back('\n');
+      cancellationHandle.throwIfCancelled();
+    }
   }
   return lines;
 }
