@@ -795,11 +795,12 @@ constexpr size_t maxNumberOfRowsPerConstructChunk = qlever::constructExport::
 // values (OPTIONAL) in a single block (`ORDER BY` forces an `OrderBy`), a lazy
 // scan of many small blocks (`rowsPerBlock = 2`), whose rows are copied into
 // chunks across the block boundaries, terms of the `LocalVocab` (BIND), blank
-// nodes after an OFFSET, exactly one chunk, one chunk plus one row, one row, no
-// row, and an export limit of one chunk plus 808 rows. With
-// `max-num-threads-per-query` = 1, only two chunks are in flight. The number of
-// tasks on the executor shows that every chunk is a task, also for a lazy
-// result, and that a `construct-deduplication` uses the sequential export.
+// nodes after an OFFSET, a template without variables (no column is copied),
+// exactly one chunk, one chunk plus one row, one row, no row, and an export
+// limit of one chunk plus 808 rows. With `max-num-threads-per-query` = 1, only
+// two chunks are in flight. The number of tasks on the executor shows that
+// every chunk is a task, also for a lazy result, and that a
+// `construct-deduplication` uses the sequential export.
 TEST(ExportQueryExecutionTrees, ParallelConstructExport) {
   auto config = makeConfigWithManyRows(numberOfSubjectsForParallelExport);
   QueryExecutionContext& sequentialQec = *ad_utility::testing::getQec(config);
@@ -815,6 +816,7 @@ TEST(ExportQueryExecutionTrees, ParallelConstructExport) {
            "CONSTRUCT { ?s <l> ?l } WHERE { ?s <p> ?o BIND(CONCAT(STR(?s), "
            "\"-x\") AS ?l) }"s,
            "CONSTRUCT { _:x <p> ?o } WHERE { ?s <p> ?o } OFFSET 7 LIMIT 9000"s,
+           "CONSTRUCT { _:x <p> <o> } WHERE { ?s <p> ?o }"s,
            absl::StrCat(orderedScan, " LIMIT ",
                         maxNumberOfRowsPerConstructChunk),
            absl::StrCat(orderedScan, " LIMIT ",
@@ -949,7 +951,7 @@ TEST(ExportQueryExecutionTrees, ParallelConstructExportOfSeveralBlocks) {
             numberOfRows + (numberOfRows - (numberOfRows + 6) / 7));
 
   // The OFFSET ends inside the first block, and still every row gets a blank
-  // node of its own, numbered from the OFFSET (see #367).
+  // node of its own, numbered from the OFFSET.
   auto withOffset = exportBlocks(
       "CONSTRUCT { _:n <q> ?a } WHERE { ?a ?b ?c } OFFSET 8000 LIMIT 25000",
       ntriples, true);
