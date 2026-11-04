@@ -465,9 +465,9 @@ ad_utility::testing::TestIndexConfig makeConfigWithManyRows(
     }
   }
   ad_utility::testing::TestIndexConfig config{std::move(kg)};
-  // With the default of 2 triples per batch, the index builder would keep more
-  // files open than the usual limit of 1024 allows.
-  config.numTriplesPerBatch = 10'000;
+  // With the default of 2 triples per batch of the test indexes, the index
+  // builder would keep more than the usual limit of 1,024 files open.
+  config.additionalSettings = {{"num-triples-per-batch", "10000"}};
   return config;
 }
 
