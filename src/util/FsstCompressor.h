@@ -8,10 +8,12 @@
 #include <absl/cleanup/cleanup.h>
 #include <fsst.h>
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "backports/span.h"
 #include "util/Concepts.h"
 #include "util/Exception.h"
 #include "util/Log.h"
@@ -33,6 +35,11 @@ struct CastToUnsignedPtr {
 };
 constexpr CastToUnsignedPtr castToUnsignedPtr{};
 }  // namespace detail
+
+// Two buffers that a decoder reuses for the words of a batch (see
+// `decompressWithScratch` below), so that it does not allocate and zero-fill a
+// new string per word. They only grow.
+using FsstDecompressionScratch = std::array<std::string, 2>;
 
 // A simple C++ wrapper around the C-API of the `FSST` library. It consists of
 // two types, a thredsafe `FsstDecoder` that can be used to perform
@@ -61,15 +68,43 @@ class FsstDecoder {
   // Decompress a  single string.
   std::string decompress(std::string_view str) const {
     std::string output;
-    auto cast = detail::castToUnsignedPtr;
-    output.resize(8 * str.size());
-    size_t size = fsst_decompress(&decoder_, str.size(), cast(str.data()),
-                                  output.size(), cast(output.data()));
     // FSST compresses at most by a factor of 8.
-    AD_CORRECTNESS_CHECK(size <= output.size());
-    output.resize(size);
+    output.resize(8 * str.size());
+    output.resize(decompressInto(str, output));
     return output;
   }
+
+  // Decompress `str` into `out`, which must have room for the decompressed
+  // string (at most `8 * str.size()` bytes, see `decompress`), and return the
+  // decompressed size.
+  [[nodiscard]] size_t decompressInto(std::string_view str,
+                                      ql::span<char> out) const {
+    auto cast = detail::castToUnsignedPtr;
+    size_t size = fsst_decompress(&decoder_, str.size(), cast(str.data()),
+                                  out.size(), cast(out.data()));
+    AD_CORRECTNESS_CHECK(size <= out.size());
+    return size;
+  }
+
+  // Decompress `str` into `buffer`, which is first grown (never shrunk) to the
+  // worst-case size `8 * str.size()`, and return a view of the decompressed
+  // bytes in `buffer`, valid until `buffer` is changed.
+  [[nodiscard]] std::string_view decompressIntoBuffer(
+      std::string_view str, std::string& buffer) const {
+    if (buffer.size() < 8 * str.size()) {
+      buffer.resize(8 * str.size());
+    }
+    const size_t size = decompressInto(str, buffer);
+    return {buffer.data(), size};
+  }
+
+  // Like `decompress`, but the result is a view into `scratch`, valid until
+  // `scratch` is used again.
+  [[nodiscard]] std::string_view decompressWithScratch(
+      std::string_view str, FsstDecompressionScratch& scratch) const {
+    return decompressIntoBuffer(str, scratch[0]);
+  }
+
   // Allow this type to be trivially serializable,
   CPP_template(typename T, typename U)(
       requires ql::concepts::same_as<T, FsstDecoder>)
@@ -112,6 +147,22 @@ class FsstRepeatedDecoder {
     ql::ranges::for_each(ql::views::reverse(decoders_), decompressSingle);
     return result;
   }
+
+  // Like `decompress`, but each step writes into one of the two buffers of
+  // `scratch` (alternating, so that the input of a step is never the buffer it
+  // writes to), instead of a new string. The result is a view into `scratch`,
+  // valid until `scratch` is used again.
+  [[nodiscard]] std::string_view decompressWithScratch(
+      std::string_view str, FsstDecompressionScratch& scratch) const {
+    std::string_view nextInput = str;
+    size_t nextBuffer = 0;
+    for (const FsstDecoder& decoder : ql::views::reverse(decoders_)) {
+      nextInput = decoder.decompressIntoBuffer(nextInput, scratch[nextBuffer]);
+      nextBuffer ^= 1;
+    }
+    return nextInput;
+  }
+
   // Allow this type to be trivially serializable,
   CPP_template_2(typename T, typename U)(
       requires ql::concepts::same_as<T, FsstRepeatedDecoder>)
