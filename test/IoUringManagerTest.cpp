@@ -1101,8 +1101,11 @@ TEST_F(IoUringPolicyFailureTest, brokenSubmitThrowsAfterReapingTheKernelReads) {
   EXPECT_THAT(batch.result(), Each(Eq(std::string(4, '\0'))));
   EXPECT_EQ(script.numberOfTakenRequests, 0U);
 
-  // 63 completions are not yet reaped and one read is queued when the submit
-  // fails. (A fresh policy, whose ring holds no no-ops of the first batch.)
+  // The kernel took 64 reads before the submit of the next ones fails. (A
+  // fresh policy, whose ring holds no no-ops of the first batch.) The real ring
+  // typically completes these cached reads within the submit, so the wave that
+  // makes room reaps all of them, and none is in the kernel when the submit
+  // fails; that case is `brokenSubmitReapsTheKernelReadsBeforeThrowing`.
   RingScript script2;
   auto policy2 = makePolicy(ringSize, script2);
   ReadBatchForTesting again = batch;
@@ -1128,6 +1131,29 @@ TEST_F(IoUringPolicyFailureTest, brokenSubmitThrowsAfterReapingTheKernelReads) {
   next.addTo(policy, fd, 2);
   policy.wait(2);
   EXPECT_THAT(next.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
+}
+
+// _____________________________________________________________________________
+// A broken submit while the kernel holds reads of the batch: the first submit
+// takes 3 of the 6 reads and completes none of them, the second one fails with
+// `EBADF`. `addBatch` reaps the 3 reads before it throws, and the 3 reads that
+// never reached the kernel are cancelled.
+TEST(IoUringPolicyOnFakeRing, brokenSubmitReapsTheKernelReadsBeforeThrowing) {
+  using ad_utility::testing::FakeIoUring;
+  auto [content, batch] = chunkedFileAndBatch(6);
+  FakeIoUring::Faults faults;
+  faults.scriptedSubmits = {3, -EBADF};
+  faults.completeOnSubmit = false;
+  auto [fake, policy] = makePolicyOnFakeRing(
+      std::make_unique<FakeIoUring>(content, 8, faults, 0));
+  AD_EXPECT_THROW_WITH_MESSAGE(batch.addTo(policy, -1, 0),
+                               HasSubstr("io_uring_submit failed"));
+  // Checked right after the throw, before any other call reaps completions.
+  EXPECT_EQ(fake.numberOfReadsInRing(), 0U);
+  EXPECT_EQ(fake.faultCounts().cancelledReads, 3U);
+  EXPECT_THAT(batch.result(),
+              ElementsAre("AAAA", "BBBB", "CCCC", std::string(4, '\0'),
+                          std::string(4, '\0'), std::string(4, '\0')));
 }
 
 // _____________________________________________________________________________
