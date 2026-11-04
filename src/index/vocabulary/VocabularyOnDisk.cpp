@@ -25,6 +25,7 @@
 #include "util/MmapVector.h"
 #include "util/StringUtils.h"
 #include "util/Views.h"
+#include "util/io_uring/RingReadProbe.h"
 
 using OffsetAndSize = VocabularyOnDisk::OffsetAndSize;
 
@@ -453,12 +454,18 @@ void VocabularyOnDisk::open(const std::string& filename,
       std::unique_ptr<ad_utility::BatchManagerBase>>>(
       NUM_VOCAB_BATCH_IO_MANAGERS);
   bool preferIoUring = true;
+  // How the ring reads page-cache hits of this file system decides whether the
+  // fast path pays off (`auto`); probed once per device and process.
+  const ad_utility::CachedRingRead cachedRingRead =
+      ad_utility::cachedRingReadOfDevice(offsetsFile_.fd());
   for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
     ioManagers_->push(ad_utility::makeBatchManager(
         preferIoUring, ad_utility::defaultBatchManagerRingSize, pageCacheRead,
-        [] {
-          return getRuntimeParameter<
-              &RuntimeParameters::vocabularyPageCacheFastPath_>();
+        [cachedRingRead] {
+          return ad_utility::usePageCacheFastPath(
+              getRuntimeParameter<
+                  &RuntimeParameters::vocabularyPageCacheFastPath_>(),
+              cachedRingRead);
         }));
   }
 }

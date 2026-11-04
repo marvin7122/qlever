@@ -18,6 +18,7 @@
 #include "util/Log.h"
 #include "util/Parameters.h"
 #include "util/Synchronized.h"
+#include "util/io_uring/RingReadProbe.h"
 
 // A set of parameters that can be accessed with a runtime and a compile time
 // interface. They are currently managed using a synchronized singleton for the
@@ -39,6 +40,10 @@ struct RuntimeParameters {
 
   using LogLevelParameter =
       ad_utility::Parameter<LogLevel, LogLevel::FromString, LogLevel::ToString>;
+  using PageCacheFastPathModeParameter = ad_utility::Parameter<
+      ad_utility::PageCacheFastPathMode,
+      ad_utility::PageCacheFastPathMode::FromStringWithBooleans,
+      ad_utility::PageCacheFastPathMode::ToString>;
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS BELOW, ALSO REGISTER THEM IN THE
@@ -263,10 +268,16 @@ struct RuntimeParameters {
 
   // Serve the reads of `VocabularyOnDisk::lookupBatch` that hit the page cache
   // with `preadv2(RWF_NOWAIT)` instead of the batch manager (`io_uring` or
-  // synchronous reads, see `PageCacheFirstPolicy`). Has no effect where
+  // synchronous reads, see `PageCacheFirstPolicy`): `on`, `off`, or `auto`
+  // (the default: only where the ring hands page-cache hits to worker threads,
+  // see `ad_utility::probeCachedRingRead`). `true` and `false` are accepted as
+  // `on` and `off`. Has no effect where
   // `preadv2(RWF_NOWAIT)` is not compiled in or not supported (see
   // `ad_utility::PageCacheReader`).
-  Bool vocabularyPageCacheFastPath_{true, "vocabulary-page-cache-fast-path"};
+  PageCacheFastPathModeParameter vocabularyPageCacheFastPath_{
+      ad_utility::PageCacheFastPathMode{
+          ad_utility::PageCacheFastPathMode::Enum::Auto},
+      "vocabulary-page-cache-fast-path"};
 
   // The maximal number of blocks per permutation that are queued for or
   // currently being compressed and written (see

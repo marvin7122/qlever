@@ -661,6 +661,8 @@ addLinkAndDiscoverTestNoLibs(SyncIoPolicyTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(PageCacheFirstPolicyTest qlever_util)
 
+addLinkAndDiscoverTestNoLibs(RingReadProbeTest qlever_util)
+
 addLinkAndDiscoverTestNoLibs(VariantRangeFilterTest)
 
 addLinkAndDiscoverTest(ConstructTemplatePreprocessorTest engine)

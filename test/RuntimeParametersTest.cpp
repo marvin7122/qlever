@@ -205,3 +205,19 @@ TEST(RuntimeParameters, allParametersAreRegistered) {
                                 reinterpret_cast<char*>(&params)));
   EXPECT_EQ(numParameters, keys.size());
 }
+
+// _____________________________________________________________________________
+// `vocabulary-page-cache-fast-path` was a boolean; `true` and `false` still
+// work and mean `on` and `off`.
+TEST(RuntimeParameters, pageCacheFastPathAcceptsTheOldBooleans) {
+  using Enum = ad_utility::PageCacheFastPathMode::Enum;
+  RuntimeParameters params;
+  EXPECT_EQ(params.vocabularyPageCacheFastPath_.get().value(), Enum::Auto);
+  params.setFromString("vocabulary-page-cache-fast-path", "false");
+  EXPECT_EQ(params.vocabularyPageCacheFastPath_.get().value(), Enum::Off);
+  params.setFromString("vocabulary-page-cache-fast-path", "true");
+  EXPECT_EQ(params.vocabularyPageCacheFastPath_.get().value(), Enum::On);
+  params.setFromString("vocabulary-page-cache-fast-path", "auto");
+  EXPECT_EQ(params.vocabularyPageCacheFastPath_.get().value(), Enum::Auto);
+  EXPECT_EQ(params.vocabularyPageCacheFastPath_.toString(), "auto");
+}
