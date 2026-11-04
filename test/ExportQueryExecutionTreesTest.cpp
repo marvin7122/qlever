@@ -467,7 +467,11 @@ ad_utility::testing::TestIndexConfig makeConfigWithManyRows(
       absl::StrAppend(&kg, "<s", i, "> <q> _:b", i, " .\n");
     }
   }
-  return ad_utility::testing::TestIndexConfig{std::move(kg)};
+  ad_utility::testing::TestIndexConfig config{std::move(kg)};
+  // With the default of 2 triples per batch, the index builder would keep more
+  // files open than the usual limit of 1024 allows.
+  config.numTriplesPerBatch = 10'000;
+  return config;
 }
 
 // The maximal number of rows of a chunk, and the number of subjects of the

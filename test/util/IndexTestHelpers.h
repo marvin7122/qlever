@@ -105,6 +105,11 @@ struct TestIndexConfig {
   bool usePatterns = true;
   bool usePrefixCompression = true;
   size_t rowsPerBlock = 2;
+  // The number of triples per batch while the index is built. The small
+  // default gives several batches also for tiny knowledge graphs; a larger
+  // knowledge graph needs a larger value, because the index builder keeps a
+  // file open for each batch.
+  size_t numTriplesPerBatch = 2;
   bool createTextIndex = false;
   bool addWordsFromLiterals = true;
   std::optional<std::pair<std::string, std::string>>
@@ -168,20 +173,21 @@ struct TestIndexConfig {
   // Hashing.
   template <typename H>
   friend H AbslHashValue(H h, const TestIndexConfig& c) {
-    return H::combine(
-        std::move(h), c.turtleInput, c.loadAllPermutations, c.usePatterns,
-        c.usePrefixCompression, c.rowsPerBlock, c.createTextIndex,
-        c.addWordsFromLiterals, c.contentsOfWordsFileAndDocsfile,
-        c.parserBufferSize, c.scoringMetric, c.bAndKParam, c.indexType,
-        c.encodedPrefixesWithoutAngleBrackets, c.encodedIriPatterns,
-        c.addHasWordTriples, c.secondaryVocabWords, c.numThreads,
-        c.parseInParallel, c.additionalSettings, c.geoPointEncoding.value());
+    return H::combine(std::move(h), c.turtleInput, c.loadAllPermutations,
+                      c.usePatterns, c.usePrefixCompression, c.rowsPerBlock,
+                      c.numTriplesPerBatch, c.createTextIndex,
+                      c.addWordsFromLiterals, c.contentsOfWordsFileAndDocsfile,
+                      c.parserBufferSize, c.scoringMetric, c.bAndKParam,
+                      c.indexType, c.encodedPrefixesWithoutAngleBrackets,
+                      c.encodedIriPatterns, c.addHasWordTriples,
+                      c.secondaryVocabWords, c.numThreads, c.parseInParallel,
+                      c.additionalSettings, c.geoPointEncoding.value());
   }
   QL_DEFINE_DEFAULTED_EQUALITY_OPERATOR_LOCAL(
       TestIndexConfig, turtleInput, loadAllPermutations, usePatterns,
-      usePrefixCompression, rowsPerBlock, createTextIndex, addWordsFromLiterals,
-      contentsOfWordsFileAndDocsfile, parserBufferSize, scoringMetric,
-      bAndKParam, indexType, vocabularyType,
+      usePrefixCompression, rowsPerBlock, numTriplesPerBatch, createTextIndex,
+      addWordsFromLiterals, contentsOfWordsFileAndDocsfile, parserBufferSize,
+      scoringMetric, bAndKParam, indexType, vocabularyType,
       encodedPrefixesWithoutAngleBrackets, encodedIriPatterns,
       addHasWordTriples, secondaryVocabWords, numThreads, parseInParallel,
       additionalSettings, geoPointEncoding)
