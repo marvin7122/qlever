@@ -484,6 +484,7 @@ INSTANTIATE_TEST_SUITE_P(
         FormattedTriplesParam{ad_utility::MediaType::csv, "<s>,<p>,<o>\n"},
         FormattedTriplesParam{ad_utility::MediaType::tsv, "<s>\t<p>\t<o>\n"}));
 
+// _____________________________________________________________________________
 // The formatted triples of several batches come in chunks of many triples, and
 // their concatenation is byte for byte the serialization of each triple, for
 // IRIs and literals of the vocabulary (viewed in the batch-lookup results,
@@ -533,7 +534,7 @@ TEST_F(ConstructTripleGeneratorTest, formattedChunksAreTheSerializedTriples) {
     std::vector<std::vector<IntOrId>> rows;
     std::string expectedTurtle;
     std::string expectedNTriples;
-    for (size_t i = 0; i < numberOfRows; ++i) {
+    for (size_t i : ql::views::iota(size_t{0}, numberOfRows)) {
       const bool isS = i % 3 != 0;
       const Object& object = objects.at(i % objects.size());
       rows.push_back({getId(isS ? "<s>" : "<q>"), object.id_});
@@ -560,7 +561,7 @@ TEST_F(ConstructTripleGeneratorTest, formattedChunksAreTheSerializedTriples) {
       EXPECT_EQ(absl::StrJoin(chunks, ""), expected);
       // More than one chunk, each but the last at least the chunk size.
       ASSERT_GT(chunks.size(), 1u);
-      for (size_t i = 0; i + 1 < chunks.size(); ++i) {
+      for (size_t i : ql::views::iota(size_t{0}, chunks.size() - 1)) {
         EXPECT_GE(chunks[i].size(),
                   ConstructTripleGenerator::FORMATTED_CHUNK_BYTES);
       }
