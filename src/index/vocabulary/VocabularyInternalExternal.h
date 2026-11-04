@@ -50,7 +50,10 @@ class VocabularyInternalExternal {
   const auto& externalVocab() const { return externalVocab_; }
 
   // Read the vocabulary from a file. The file must have been created using a
-  // `WordWriter`.
+  // `WordWriter`. If the runtime parameter `vocabulary-internal-rank-directory`
+  // is set, the internal vocabulary finds the positions of its indices with a
+  // rank directory instead of a binary search, if the directory is smaller
+  // than the indices (see `PositionLookup::RankDirectoryIfSmaller`).
   void open(const std::string& filename);
 
   // Return the total number of words

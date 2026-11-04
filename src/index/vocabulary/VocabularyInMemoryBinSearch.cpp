@@ -11,11 +11,14 @@
 #include <utility>
 
 #include "backports/algorithm.h"
+#include "util/Log.h"
+#include "util/Timer.h"
 
 using std::string;
 
 // _____________________________________________________________________________
-void VocabularyInMemoryBinSearch::open(const string& fileName) {
+void VocabularyInMemoryBinSearch::open(const string& fileName,
+                                       PositionLookup positionLookup) {
   AD_CORRECTNESS_CHECK(
       words().size() == 0 && indices().empty(),
       "Calling open on the same vocabulary twice is probably a bug");
@@ -28,19 +31,20 @@ void VocabularyInMemoryBinSearch::open(const string& fileName) {
   {
     ad_utility::serialization::FileReadSerializer idFile(
         absl::StrCat(fileName, idsSuffix));
-    idFile >> indices_;
-  }
-}
+    IndexStorage indices;
+    idFile >> indices;
+    ad_utility::Timer timer{ad_utility::Timer::Started};
+    indices_ = Indices{std::move(indices), positionLookup};
 
-// _____________________________________________________________________________
-std::optional<size_t> VocabularyInMemoryBinSearch::positionOfIndex(
-    uint64_t index) const {
-  auto indices = this->indices();
-  auto it = ql::ranges::lower_bound(indices, index);
-  if (it != indices.end() && *it == index) {
-    return static_cast<size_t>(it - indices.begin());
+    if (numberOfBytesOfRankDirectory() > 0) {
+      const auto indexView = indices_.view();
+      AD_LOG_INFO << "Built the rank directory over the " << indexView.size()
+                  << " vocabulary indices in [0, " << endIndex() << ") in "
+                  << timer.msecs().count()
+                  << " ms: " << numberOfBytesOfRankDirectory() << " bytes"
+                  << std::endl;
+    }
   }
-  return std::nullopt;
 }
 
 // _____________________________________________________________________________
@@ -48,12 +52,6 @@ uint64_t VocabularyInMemoryBinSearch::indexAtPosition(size_t position) const {
   auto indices = this->indices();
   AD_CORRECTNESS_CHECK(position < indices.size());
   return indices[position];
-}
-
-// _____________________________________________________________________________
-uint64_t VocabularyInMemoryBinSearch::endIndex() const {
-  auto indices = this->indices();
-  return indices.empty() ? 0 : indices[indices.size() - 1] + 1;
 }
 
 // _____________________________________________________________________________

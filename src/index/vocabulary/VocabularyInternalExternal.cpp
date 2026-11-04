@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "backports/algorithm.h"
+#include "global/RuntimeParameters.h"
 #include "util/GlobalExecutor.h"
 #include "util/TransparentFunctors.h"
 
@@ -221,7 +222,12 @@ VocabularyInternalExternal::WordWriter::~WordWriter() {
 void VocabularyInternalExternal::open(const std::string& filename) {
   AD_LOG_INFO << "Reading vocabulary from file " << filename << " ..."
               << std::endl;
-  internalVocab_.open(absl::StrCat(filename, internalSuffix));
+  internalVocab_.open(
+      absl::StrCat(filename, internalSuffix),
+      getRuntimeParameter<
+          &RuntimeParameters::vocabularyInternalRankDirectory_>()
+          ? VocabularyInMemoryBinSearch::PositionLookup::RankDirectoryIfSmaller
+          : VocabularyInMemoryBinSearch::PositionLookup::BinarySearch);
   externalVocab_.open(absl::StrCat(filename, externalSuffix));
   AD_LOG_INFO << "Done, number of words: " << size() << std::endl;
   AD_LOG_INFO << "Number of words in internal vocabulary (these are also part "
