@@ -23,15 +23,19 @@ namespace ad_utility {
 // the view waits for all its tasks before the flag is destroyed. A
 // transformation must not store it beyond that call.
 class AsyncTransformStopFlag {
-  // Non-owning; points into the `AsyncTransformView` that created this flag.
-  const std::atomic<bool>* flag_;
+  // Non-owning; refers to the flag in the `AsyncTransformView` that created
+  // this flag.
+  const std::atomic<bool>& flag_;
 
  public:
   explicit AsyncTransformStopFlag(const std::atomic<bool>& flag)
-      : flag_{&flag} {}
+      : flag_{flag} {}
+  ~AsyncTransformStopFlag() noexcept = default;
 
-  // Return true iff the view no longer needs the result.
-  bool isRequested() const { return flag_->load(std::memory_order_relaxed); }
+  // Return true iff the view no longer needs the result. The relaxed load is
+  // enough: the flag is only a hint to skip work whose result is discarded, no
+  // data is published through it, and a late observation only costs extra rows.
+  bool isRequested() const { return flag_.load(std::memory_order_relaxed); }
 };
 
 }  // namespace ad_utility

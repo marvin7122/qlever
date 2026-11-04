@@ -666,12 +666,11 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
         // client disconnect), the view requests the `stop` of the chunks that
         // are still in flight, so that they stop instead of serializing rows
         // that nobody reads. The destructor of the view waits for them.
+        const auto allocator = qec.getAllocator().template as<char>();
         auto serializeChunk =
             [&qec, &selectedColumnIndices, &table = pair, &cancellationHandle,
-             allocator =
-                 ad_utility::AllocatorWithLimit<char>{qec.getAllocator()}](
-                ql::ranges::iota_view<uint64_t, uint64_t> rows,
-                ad_utility::AsyncTransformStopFlag stop) {
+             &allocator](ql::ranges::iota_view<uint64_t, uint64_t> rows,
+                         ad_utility::AsyncTransformStopFlag stop) {
               return csvOrTsvRows<format>(qec.getIndex(), selectedColumnIndices,
                                           table, rows, allocator,
                                           *cancellationHandle, stop);

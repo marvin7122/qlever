@@ -140,7 +140,7 @@ class AsyncTransformView
   // Tell the pending tasks that their results are no longer needed (see
   // NOTE 5). The members are destroyed after this, and the `queue_` (which is
   // destroyed first) waits for the tasks.
-  ~AsyncTransformView() { stopRequested_ = true; }
+  ~AsyncTransformView() noexcept { stopRequested_ = true; }
 
   // Return the result for the next element, or `std::nullopt` once all the
   // elements have been yielded.

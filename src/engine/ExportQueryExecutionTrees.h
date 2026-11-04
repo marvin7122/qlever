@@ -68,11 +68,11 @@ class ExportQueryExecutionTrees {
   // has not been tuned yet.
   static constexpr uint64_t MAX_NUMBER_OF_ROWS_PER_CSV_OR_TSV_CHUNK = 8192;
 
-  // The serialized rows of one chunk of a parallel CSV or TSV export. The
-  // memory is allocated with the allocator of the query, so it counts towards
-  // the `memory-for-queries` budget that all queries share. An allocation that
-  // does not fit first evicts unpinned entries of the query cache and then
-  // fails the export.
+  // The serialized lines (each terminated by a newline) of one chunk of a
+  // parallel CSV or TSV export. The memory is allocated with the allocator of
+  // the query, so it counts towards the `memory-for-queries` budget that all
+  // queries share. An allocation that does not fit first evicts unpinned
+  // entries of the query cache and then fails the export.
   using CsvOrTsvChunk = std::basic_string<char, std::char_traits<char>,
                                           ad_utility::AllocatorWithLimit<char>>;
 

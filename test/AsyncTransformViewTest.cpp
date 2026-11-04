@@ -22,6 +22,7 @@
 #include <thread>
 #include <vector>
 
+#include "util/GTestHelpers.h"
 #include "util/GlobalExecutor.h"
 #include "util/Random.h"
 #include "util/views/AsyncTransformView.h"
@@ -269,7 +270,7 @@ TEST(AsyncTransformView, destructionWithPendingElements) {
 }
 
 // _____________________________________________________________________________
-TEST(AsyncTransformView, stopIsRequestedOnDestruction) {
+TEST(AsyncTransformView, stopIsNotRequestedWhileConsumed) {
   boost::asio::thread_pool pool{2};
   // Only a transformation that asks for an `AsyncTransformStopFlag` gets one;
   // a second parameter of another type (like `bool`) does not.
@@ -288,7 +289,11 @@ TEST(AsyncTransformView, stopIsRequestedOnDestruction) {
                             pool.get_executor()};
     EXPECT_THAT(::ranges::to_vector(view), ElementsAre(0, 2, 4, 6));
   }
+}
 
+// _____________________________________________________________________________
+TEST(AsyncTransformView, stopIsRequestedOnDestruction) {
+  boost::asio::thread_pool pool{2};
   // Element 1 is still pending when the view is destroyed. It waits for the
   // stop flag, which the destructor requests before it waits for the element.
   // (If the flag were never set, the element would give up after the `timeout`
@@ -299,11 +304,7 @@ TEST(AsyncTransformView, stopIsRequestedOnDestruction) {
     if (i == 0) {
       return i;
     }
-    auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (!stop.isRequested() && std::chrono::steady_clock::now() < deadline) {
-      std::this_thread::sleep_for(1ms);
-    }
-    if (stop.isRequested()) {
+    if (waitUntil([&stop]() { return stop.isRequested(); }, timeout)) {
       ++numberOfStopsSeen;
     }
     return i;

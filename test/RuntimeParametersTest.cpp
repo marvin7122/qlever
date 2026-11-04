@@ -53,6 +53,15 @@ TEST(RuntimeParameters, setFromAssignment) {
   EXPECT_EQ(params.serviceMaxRedirects_.get(), 5u);
 }
 
+// Test that `parallel-csv-tsv-export` is off by default and can be switched on
+// via the runtime interface.
+TEST(RuntimeParameters, parallelCsvTsvExportIsOffByDefault) {
+  RuntimeParameters params;
+  EXPECT_FALSE(params.parallelCsvTsvExport_.get());
+  params.setFromAssignment("parallel-csv-tsv-export=true");
+  EXPECT_TRUE(params.parallelCsvTsvExport_.get());
+}
+
 // Test that the value `0` is rejected for
 // `lazy-index-scan-num-blocks-in-flight` (a lazy scan reads at least one block
 // ahead of its consumer).

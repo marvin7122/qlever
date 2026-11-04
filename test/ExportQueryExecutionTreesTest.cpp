@@ -375,6 +375,20 @@ std::chrono::milliseconds toChrono(std::string_view string) {
 }  // namespace
 
 namespace {
+// The requirements of Boost.Asio on the properties and function objects that
+// `CountingExecutor` forwards to its underlying executor.
+template <typename Property>
+concept QueryableProperty =
+    boost::asio::can_query_v<const ql::any_io_executor&, Property>;
+template <typename Property>
+concept RequirableProperty =
+    boost::asio::can_require_v<const ql::any_io_executor&, Property>;
+template <typename Property>
+concept PreferableProperty =
+    boost::asio::can_prefer_v<const ql::any_io_executor&, Property>;
+template <typename Function>
+concept ExecutableFunction = std::invocable<std::decay_t<Function>&>;
+
 // An executor that runs its function objects on an underlying executor and
 // counts them, so that a test can check whether an export submitted tasks.
 class CountingExecutor {
@@ -390,22 +404,22 @@ class CountingExecutor {
   bool operator==(const CountingExecutor&) const = default;
 
   // All properties are forwarded to the underlying executor.
-  template <ad_utility::detail::QueryableProperty Property>
+  template <QueryableProperty Property>
   decltype(auto) query(const Property& property) const {
     return boost::asio::query(executor_, property);
   }
 
-  template <ad_utility::detail::RequirableProperty Property>
+  template <RequirableProperty Property>
   CountingExecutor require(const Property& property) const {
     return {boost::asio::require(executor_, property), numberOfTasks_};
   }
 
-  template <ad_utility::detail::PreferableProperty Property>
+  template <PreferableProperty Property>
   CountingExecutor prefer(const Property& property) const {
     return {boost::asio::prefer(executor_, property), numberOfTasks_};
   }
 
-  template <ad_utility::detail::ExecutableFunction Function>
+  template <ExecutableFunction Function>
   void execute(Function&& function) const {
     ++*numberOfTasks_;
     executor_.execute(AD_FWD(function));
