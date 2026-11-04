@@ -564,6 +564,14 @@ TEST(ExportQueryExecutionTrees, ParallelCsvTsvExport) {
            absl::StrCat(orderedScan, " LIMIT 0"),
            "SELECT ?s WHERE { ?s <p> <nonexistent> }"s,
            "SELECT ?s ?o WHERE { ?s <p> ?o }"s,
+           // One column that mixes vocabulary IRIs and literals, `LocalVocab`
+           // literals (from `CONCAT`), integers, and unbound values, such that
+           // the batched lookup has to put each field back into its row.
+           "SELECT ?x WHERE { ?s <p> ?o BIND(IF(STRENDS(STR(?s), \"1\"), ?s, "
+           "IF(STRENDS(STR(?s), \"2\"), CONCAT(?o, \"!\"), "
+           "IF(STRENDS(STR(?s), \"3\"), 42, "
+           "IF(STRENDS(STR(?s), \"4\"), ?unbound, ?o)))) AS ?x) } "
+           "ORDER BY DESC(?o)"s,
        }) {
     for (auto mediaType : {csv, tsv}) {
       auto trace = generateLocationTrace(AD_CURRENT_SOURCE_LOC(), query);
