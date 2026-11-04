@@ -35,8 +35,8 @@ template <typename Transformation, typename Element>
 constexpr bool takesStopFlag =
     std::is_invocable_v<const Transformation&, Element, AsyncTransformStopFlag>;
 
-// The result type of the `Transformation` for an `Element`, with or without the
-// stop flag.
+// The type that the view stores and yields for an `Element`: the decayed return
+// type of the `Transformation`, called with or without the stop flag.
 template <typename Transformation, typename Element>
 using Result = std::decay_t<typename std::conditional_t<
     takesStopFlag<Transformation, Element>,

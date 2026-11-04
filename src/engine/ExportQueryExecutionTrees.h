@@ -203,6 +203,8 @@ class ExportQueryExecutionTrees {
   // different `rows`. Throw a `CancellationException` if the
   // `cancellationHandle` is cancelled. Stop early and return the lines so far
   // as soon as `stop` is requested (the export then no longer needs them).
+  // Every row in `rows` and every column index in `columns` must be valid for
+  // `table` (checked).
   template <ad_utility::MediaType format>
   static CsvOrTsvChunk csvOrTsvRows(
       const Index& index,

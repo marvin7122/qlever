@@ -457,7 +457,7 @@ ad_utility::testing::TestIndexConfig makeConfigWithManyRows(
     size_t numberOfSubjects) {
   std::string kg;
   const std::string padding(400, 'x');
-  for (size_t i = 0; i < numberOfSubjects; ++i) {
+  for (size_t i : ql::views::iota(size_t{0}, numberOfSubjects)) {
     absl::StrAppend(&kg, "<s", i, "> <p> \"o", i, ", \\\"q\\\"\\t", padding,
                     "\" .\n");
     if (i % 3 == 0) {
@@ -489,9 +489,9 @@ constexpr size_t numberOfSubjectsForParallelExport =
     2 * maxNumberOfRowsPerChunk + 3616;
 }  // namespace
 
-// _____________________________________________________________________________
 // The serialization of one chunk: separators, unbound values and columns that
 // are not in the result, early stop, cancellation, and the memory limit.
+// _____________________________________________________________________________
 TEST(ExportQueryExecutionTrees, csvOrTsvRows) {
   using ad_utility::testing::IntId;
   using Columns =
@@ -523,6 +523,13 @@ TEST(ExportQueryExecutionTrees, csvOrTsvRows) {
                 cancellationHandle, ad_utility::AsyncTransformStopFlag{stop})},
             "1,,\n3,,4\n");
 
+  // A row or a column index that is not valid for the table violates the
+  // contract.
+  EXPECT_THROW(tsvRows(Rows{0, 4}), ad_utility::Exception);
+  columns.emplace_back(QueryExecutionTree::VariableAndColumnIndex{"?c", 5});
+  EXPECT_THROW(tsvRows(Rows{0, 3}), ad_utility::Exception);
+  columns.pop_back();
+
   // Once `stop` is set, no more rows are serialized.
   stop = true;
   EXPECT_EQ(tsvRows(Rows{0, 3}), "");
@@ -545,7 +552,6 @@ TEST(ExportQueryExecutionTrees, csvOrTsvRows) {
   EXPECT_THROW(tsvRows(Rows{0, 3}), ad_utility::CancellationException);
 }
 
-// _____________________________________________________________________________
 // The parallel CSV and TSV export on four threads gives the same output as the
 // sequential export, which converts and yields one cell after the other as
 // before `parallel-csv-tsv-export` existed. `ORDER BY DESC(...)` forces an
@@ -559,6 +565,7 @@ TEST(ExportQueryExecutionTrees, csvOrTsvRows) {
 // chunks). With `max-num-threads-per-query` = 1, only two chunks are in
 // flight. The number of tasks on the executor shows whether the parallel path
 // is taken.
+// _____________________________________________________________________________
 TEST(ExportQueryExecutionTrees, ParallelCsvTsvExport) {
   auto config = makeConfigWithManyRows(numberOfSubjectsForParallelExport);
   QueryExecutionContext& sequentialQec = *ad_utility::testing::getQec(config);
@@ -619,10 +626,10 @@ TEST(ExportQueryExecutionTrees, ParallelCsvTsvExport) {
       numberOfSubjectsForParallelExport + 1);
 }
 
-// _____________________________________________________________________________
 // A lazy result with several blocks of more than one chunk: the view of the
 // parallel export is rebuilt for each block, and OFFSET and LIMIT cut across
 // block boundaries.
+// _____________________________________________________________________________
 TEST(ExportQueryExecutionTrees, ParallelCsvTsvExportOfSeveralLargeBlocks) {
   using ad_utility::testing::IntId;
   MultiThreadQec parallel{ad_utility::testing::TestIndexConfig{}};
@@ -633,10 +640,12 @@ TEST(ExportQueryExecutionTrees, ParallelCsvTsvExportOfSeveralLargeBlocks) {
     int64_t rowNumber = 0;
     for (size_t numberOfRows : {9000, 20000, 3, 17000}) {
       IdTable block{2, ad_utility::testing::makeAllocator()};
-      for (size_t i = 0; i < numberOfRows; ++i, ++rowNumber) {
+      for ([[maybe_unused]] size_t i :
+           ql::views::iota(size_t{0}, numberOfRows)) {
         block.push_back({IntId(rowNumber), rowNumber % 7 == 0
                                                ? Id::makeUndefined()
                                                : IntId(-rowNumber)});
+        ++rowNumber;
       }
       blocks.push_back(std::move(block));
     }
@@ -679,12 +688,12 @@ TEST(ExportQueryExecutionTrees, ParallelCsvTsvExportOfSeveralLargeBlocks) {
       9000 + 20000 + 3 + 17000 + 1);
 }
 
-// _____________________________________________________________________________
 // A cancellation while the chunks of a parallel CSV export are serialized is
 // thrown by the consumer or a worker. The consumer of `computeResult` sees what
 // the server sends: the output so far, followed by an error message (see
 // `convertStreamGeneratorForChunkedTransfer`). A consumer that stops early (as
 // on a client disconnect) can destroy the export while chunks are in flight.
+// _____________________________________________________________________________
 TEST(ExportQueryExecutionTrees, ParallelCsvExportCancellationAndEarlyStop) {
   auto config = makeConfigWithManyRows(numberOfSubjectsForParallelExport);
   MultiThreadQec parallel{config};
@@ -742,15 +751,15 @@ TEST(ExportQueryExecutionTrees, ParallelCsvExportCancellationAndEarlyStop) {
   }
 }
 
-// _____________________________________________________________________________
 // The parallel TSV export of more than one chunk of text records (which are
 // read from the text index by the workers) gives the same output as the
 // sequential export.
+// _____________________________________________________________________________
 TEST(ExportQueryExecutionTrees, ParallelTsvExportOfTextRecords) {
   constexpr size_t numberOfTextRecords = maxNumberOfRowsPerChunk + 808;
   std::string wordsFile;
   std::string docsFile;
-  for (size_t i = 1; i <= numberOfTextRecords; ++i) {
+  for (size_t i : ql::views::iota(size_t{1}, numberOfTextRecords + 1)) {
     absl::StrAppend(&wordsFile,
                     createWordsFileLineAsString("alpha", false, i, 1),
                     createWordsFileLineAsString("<s>", true, i, 1));
@@ -2211,8 +2220,8 @@ TEST(ExportQueryExecutionTrees, CornerCases) {
       ::testing::ContainsRegex("should be unreachable"));
 }
 
-// _____________________________________________________________________________
 // Test the correct exporting of ASK queries.
+// _____________________________________________________________________________
 TEST(ExportQueryExecutionTrees, AskQuery) {
   auto askResultTrue = [](bool lazy) {
     TestCaseAskQuery testCase;
@@ -2683,9 +2692,9 @@ TEST(ExportQueryExecutionTrees, EncodedIriManagerUsage) {
   EXPECT_THAT(tsvResult, HasSubstr("http://test.com/id/111"));
 }
 
-// _____________________________________________________________________________
 // Test that a `sparql-results+json` export includes a `meta` field if and
 // only if the respective runtime parameter is enabled.
+// _____________________________________________________________________________
 TEST(ExportQueryExecutionTrees, SparqlJsonWithMetaField) {
   std::string kg = "<x> <y> <z>";
   std::string query = "SELECT ?s ?p ?o WHERE {?s ?p ?o}";
@@ -2719,7 +2728,6 @@ TEST(ExportQueryExecutionTrees, SparqlJsonWithMetaField) {
   }
 }
 
-// _____________________________________________________________________________
 // Regression test for the `Full` deduplication of CONSTRUCT results: the same
 // RDF term may reach the CONSTRUCT template through two different kinds of
 // `Id`. A term that comes straight from the data is a `VocabIndex` `Id`, while
@@ -2732,6 +2740,7 @@ TEST(ExportQueryExecutionTrees, SparqlJsonWithMetaField) {
 // `ConstructDeduplicator::canonicalize` maps the `LocalVocabIndex` `Id` back
 // onto the index vocabulary's `VocabIndex` `Id`, the two keys differ and the
 // duplicate survives.
+// _____________________________________________________________________________
 TEST(ExportQueryExecutionTrees, ConstructFullDeduplicationAcrossLocalVocab) {
   const std::string kg =
       "<http://example.org/x> <http://example.org/name> \"Alice\" . "

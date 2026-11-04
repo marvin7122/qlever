@@ -135,6 +135,13 @@ ExportQueryExecutionTrees::csvOrTsvRows(
   // NOTE: The `MediaType` is spelled out: GCC 11 had an internal compiler
   // error on the name from the `using enum` of the class at this place.
   constexpr char separator = format == ad_utility::MediaType::tsv ? '\t' : ',';
+  // The precondition of the function, checked once per call and not per cell.
+  AD_CONTRACT_CHECK(rows.empty() || *rows.begin() + rows.size() - 1 <
+                                        table.idTable().numRows());
+  AD_CONTRACT_CHECK(ql::ranges::all_of(columns, [&](const auto& column) {
+    return !column.has_value() ||
+           column.value().columnIndex_ < table.idTable().numColumns();
+  }));
   CsvOrTsvChunk lines{allocator};
   for (uint64_t row : rows) {
     if (stop.isRequested()) {
@@ -649,8 +656,9 @@ STREAMABLE_GENERATOR_TYPE ExportQueryExecutionTrees::selectQueryResultToStream(
         // (the elements of a `transform_view` are temporaries).
         std::vector<ql::ranges::iota_view<uint64_t, uint64_t>> chunks;
         chunks.reserve(numberOfChunks);
-        for (uint64_t begin = firstRow; begin < endRow;
-             begin += numberOfRowsPerChunk) {
+        for (uint64_t chunkIndex :
+             ql::views::iota(uint64_t{0}, numberOfChunks)) {
+          uint64_t begin = firstRow + chunkIndex * numberOfRowsPerChunk;
           chunks.emplace_back(begin,
                               std::min(begin + numberOfRowsPerChunk, endRow));
         }

@@ -18,7 +18,12 @@ namespace ad_utility {
 // the results of the pending elements are no longer needed (see NOTE 5 in
 // `AsyncTransformView.h`). It is a type of its own (and not convertible to
 // `bool`), so that a transformation only receives it if it asks for it.
+// It refers to the flag of the view (it is a non-owning reference), and it is
+// only valid during the call of the transformation that received it, because
+// the view waits for all its tasks before the flag is destroyed. A
+// transformation must not store it beyond that call.
 class AsyncTransformStopFlag {
+  // Non-owning; points into the `AsyncTransformView` that created this flag.
   const std::atomic<bool>* flag_;
 
  public:
