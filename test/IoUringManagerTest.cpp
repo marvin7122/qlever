@@ -722,7 +722,10 @@ class ScriptedRing final : public ad_utility::IoUringInterface {
 
 // Tests of `IoUringPolicy` for failed reads and failing io_uring calls. The
 // policy must not throw while the kernel may still write into the target
-// buffers of a batch, since the callers free them when they unwind.
+// buffers of a batch, since the callers free them when they unwind. The tests
+// of this fixture run on a `ScriptedRing`, which needs a real ring; the tests
+// `IoUringPolicyOnFakeRing` run on `FakeIoUring`, also where io_uring is
+// blocked at runtime.
 class IoUringPolicyFailureTest : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -850,27 +853,30 @@ TEST_F(IoUringPolicyFailureTest, transientSubmitFailuresAreRetried) {
             ::ranges::to_vector(content2));
   EXPECT_EQ(script.numberOfBackOffs, 23U);
   EXPECT_EQ(script.numberOfReapedCompletions, script.numberOfTakenRequests);
+}
 
-  // The same within one submit of the queued reads: ten failures, a partial
-  // submit, ten more failures.
+// Transient submit failures are retried also within one submit of the queued
+// reads: ten failures, a partial submit, ten more failures.
+TEST(IoUringPolicyOnFakeRing,
+     transientSubmitFailuresWithinOneSubmitAreRetried) {
   using ad_utility::testing::FakeIoUring;
   FakeIoUring::Faults faults;
   faults.scriptedSubmits.assign(10, -EAGAIN);
   faults.scriptedSubmits.push_back(1);
   faults.scriptedSubmits.insert(faults.scriptedSubmits.end(), 10, -ENOMEM);
-  ad_utility::IoUringPolicy fakePolicy{
-      std::make_unique<FakeIoUring>(content, 8, faults, 0)};
-  ReadBatchForTesting onFake;
-  onFake.add({{0, 4}, {4, 4}, {8, 4}});
-  onFake.addTo(fakePolicy, -1, 0);
-  fakePolicy.wait(0);
-  EXPECT_THAT(onFake.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
+  ad_utility::IoUringPolicy policy{
+      std::make_unique<FakeIoUring>("AAAABBBBCCCC", 8, faults, 0)};
+  ReadBatchForTesting batch;
+  batch.add({{0, 4}, {4, 4}, {8, 4}});
+  batch.addTo(policy, -1, 0);
+  policy.wait(0);
+  EXPECT_THAT(batch.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
 }
 
 // After a whole ring of reads was cancelled, the ring holds only queued no-ops.
 // The next batch hands them to the kernel first, also if a submit takes only
 // some of them.
-TEST_F(IoUringPolicyFailureTest, ringFullOfNoOpsIsSubmittedPartially) {
+TEST(IoUringPolicyOnFakeRing, ringFullOfNoOpsIsSubmittedPartially) {
   using ad_utility::testing::FakeIoUring;
   const std::string file = "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJ";
   FakeIoUring::Faults faults;
@@ -992,7 +998,7 @@ TEST_F(IoUringPolicyFailureTest, interruptedWaitsAreRetried) {
 
 // The failure of a read is thrown by the `wait()` of its own batch, whichever
 // call reaps its completion, and is never dropped.
-TEST_F(IoUringPolicyFailureTest, failedReadIsThrownByTheWaitOfItsOwnBatch) {
+TEST(IoUringPolicyOnFakeRing, failedReadIsThrownByTheWaitOfItsOwnBatch) {
   using ad_utility::testing::FakeIoUring;
   const std::string file = "AAAABBBB";
   for (uint32_t seed = 0; seed < 20; ++seed) {
@@ -1012,7 +1018,7 @@ TEST_F(IoUringPolicyFailureTest, failedReadIsThrownByTheWaitOfItsOwnBatch) {
 }
 
 // The first failed read of a batch is the one that its `wait()` throws.
-TEST_F(IoUringPolicyFailureTest, firstFailureOfABatchIsThrown) {
+TEST(IoUringPolicyOnFakeRing, firstFailureOfABatchIsThrown) {
   using ad_utility::testing::FakeIoUring;
   // A ring with a single SQE handles the reads one after the other.
   ad_utility::IoUringPolicy policy{
@@ -1029,7 +1035,7 @@ TEST_F(IoUringPolicyFailureTest, firstFailureOfABatchIsThrown) {
 // batch. A batch fails iff one of its reads failed, or the submit failed at
 // least `MAX_SUBMIT_RETRIES + 1` times. Half of the seeds use a completion
 // queue that is no larger than the submission queue.
-TEST_F(IoUringPolicyFailureTest, randomFaults) {
+TEST(IoUringPolicyOnFakeRing, randomFaults) {
   using ad_utility::testing::FakeIoUring;
   std::string file;
   for (size_t i = 0; i < 1000; ++i) {
