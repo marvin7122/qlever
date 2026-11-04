@@ -890,7 +890,7 @@ std::vector<std::string> chunksOf(std::string_view file) {
   return chunks;
 }
 
-constexpr size_t REAP_WAVE = ad_utility::IoUringPolicy::REAP_WAVE;
+constexpr size_t REAP_WAVE = ad_utility::DEFAULT_REAP_WAVE;
 constexpr size_t REAP_CHUNK =
     ad_utility::IoUringInterface::MAX_COMPLETIONS_PER_POP;
 
@@ -1468,6 +1468,73 @@ TEST(IoUringPolicyWaves, fullRingIsRefilledInWaves) {
   EXPECT_EQ(fake.callCounts().waits, 64 / REAP_WAVE);
   EXPECT_EQ(fake.callCounts().chunks, 64 / REAP_WAVE);
   EXPECT_THAT(batch.result(), ElementsAreArray(chunksOf(file)));
+}
+
+// _____________________________________________________________________________
+// With `reapWave = 4`, a full ring of 16 is refilled in waves of 4: every wait
+// asks for 4 completions, (64 - 16) / 4 times in `addBatch` and 16 / 4 times in
+// `wait()`.
+TEST(IoUringPolicyWaves, fullRingIsRefilledInConfiguredWaves) {
+  using ad_utility::testing::FakeIoUring;
+  auto [file, batch] = chunkedFileAndBatch(64);
+  FakeIoUring::Faults faults;
+  faults.completeOnSubmit = false;
+  auto fakePtr = std::make_unique<FakeIoUring>(file, 16, faults, 0);
+  FakeIoUring& fake = *fakePtr;
+  ad_utility::BatchManagerParameters parameters;
+  parameters.reapWave = 4;
+  ad_utility::IoUringPolicy policy{std::move(fakePtr), parameters};
+  batch.addTo(policy, -1, 0);
+  EXPECT_THAT(fake.callCounts().waitSizes, Each(4U));
+  EXPECT_EQ(fake.callCounts().waits, (64 - 16) / 4);
+  policy.wait(0);
+  EXPECT_THAT(fake.callCounts().waitSizes, Each(4U));
+  EXPECT_EQ(fake.callCounts().waits, 64 / 4);
+  EXPECT_THAT(batch.result(), ElementsAreArray(chunksOf(file)));
+}
+
+// _____________________________________________________________________________
+// A blocked `wait()` asks for `min(reapWave, remaining reads of its batch)`
+// completions: 6 reads with `reapWave = 4` take a wait for 4 and a wait for 2.
+TEST(IoUringPolicyWaves, waitIsClampedToTheRemainingReads) {
+  using ad_utility::testing::FakeIoUring;
+  auto [file, batch] = chunkedFileAndBatch(6);
+  FakeIoUring::Faults faults;
+  faults.completeOnSubmit = false;
+  auto fakePtr = std::make_unique<FakeIoUring>(file, 64, faults, 0);
+  FakeIoUring& fake = *fakePtr;
+  ad_utility::BatchManagerParameters parameters;
+  parameters.reapWave = 4;
+  ad_utility::IoUringPolicy policy{std::move(fakePtr), parameters};
+  batch.addTo(policy, -1, 0);
+  policy.wait(0);
+  EXPECT_THAT(fake.callCounts().waitSizes, ElementsAre(4U, 2U));
+  EXPECT_THAT(batch.result(), ElementsAreArray(chunksOf(file)));
+}
+
+// _____________________________________________________________________________
+// If the wave is not set, it is `DEFAULT_REAP_WAVE`, or the number of SQEs of a
+// smaller ring. A set wave must be in [1, number of SQEs].
+TEST(IoUringPolicyWaves, waveIsValidated) {
+  using ad_utility::testing::FakeIoUring;
+  const auto makePolicyWithWave = [](size_t ringSize,
+                                     std::optional<unsigned> wave) {
+    ad_utility::BatchManagerParameters parameters;
+    parameters.reapWave = wave;
+    return ad_utility::IoUringPolicy{
+        std::make_unique<FakeIoUring>("", ringSize, FakeIoUring::Faults{}, 0),
+        parameters};
+  };
+  const auto expectRejected = HasSubstr("The wave of an IoUringPolicy");
+  AD_EXPECT_THROW_WITH_MESSAGE(makePolicyWithWave(8, 0), expectRejected);
+  AD_EXPECT_THROW_WITH_MESSAGE(makePolicyWithWave(8, 9), expectRejected);
+  AD_EXPECT_THROW_WITH_MESSAGE(makePolicyWithWave(1, 2), expectRejected);
+  EXPECT_NO_THROW(makePolicyWithWave(8, 1));
+  EXPECT_NO_THROW(makePolicyWithWave(8, 8));
+  EXPECT_NO_THROW(makePolicyWithWave(8, std::nullopt));
+  // The default wave of 8 does not fit in rings of 4 and 1 SQEs.
+  EXPECT_NO_THROW(makePolicyWithWave(4, std::nullopt));
+  EXPECT_NO_THROW(makePolicyWithWave(1, std::nullopt));
 }
 
 // _____________________________________________________________________________

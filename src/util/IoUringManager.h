@@ -70,6 +70,11 @@ CPP_concept ReadPolicyConcept =
 // `BatchManagerParameters::maxSubmitRetries`.
 inline constexpr unsigned DEFAULT_MAX_SUBMIT_RETRIES = 16;
 
+// The size of the waves of an `IoUringPolicy` by default, if its ring has room
+// for that many requests, see `BatchManagerParameters::reapWave`. The value is
+// not tuned.
+inline constexpr unsigned DEFAULT_REAP_WAVE = 8;
+
 // The tunables of a `ReadPolicy`, forwarded by `BatchManager` and
 // `makeBatchManager`. The defaults are the values to use unless a test needs
 // others. `SyncIoPolicy` ignores them.
@@ -79,6 +84,16 @@ struct BatchManagerParameters {
   // `IoUringPolicy` cancels the queued reads. Must be >= 1, so that a single
   // transient failure does not cancel reads.
   unsigned maxSubmitRetries = DEFAULT_MAX_SUBMIT_RETRIES;
+
+  // The size of a wave of an `IoUringPolicy`: when no completion is ready while
+  // `addBatch` finds the ring full, or while `wait()`, the destructor or a
+  // failed `addBatch` reaps the reads of a batch, it waits for up to this many
+  // completions at once, then reaps all ready ones (see `reapWave`). This
+  // amortizes the `io_uring_enter` call of the wait over the wave. If set, it
+  // must be in [1, the number of SQEs of the ring]: a wave of 0 would not
+  // block, and a wave never exceeds the requests in the ring anyway. If unset,
+  // it is `min(DEFAULT_REAP_WAVE, the number of SQEs of the ring)`.
+  std::optional<unsigned> reapWave = std::nullopt;
 };
 
 // Abstract base of `BatchManager` so a pool can hold managers of different
@@ -288,13 +303,6 @@ class IoUringPolicy : public NoCopyNoMove {
  public:
   using BatchHandle = uint64_t;
 
-  // The size of a wave: when no completion is ready while `addBatch` finds the
-  // ring full, or while `wait()`, the destructor or a failed `addBatch` reaps
-  // the reads of a batch, wait for up to this many completions at once, then
-  // reap all ready ones (see `reapWave`). This amortizes the `io_uring_enter`
-  // call of the wait over the wave. The value is not tuned.
-  static constexpr unsigned REAP_WAVE = 8;
-
  private:
   // The request id of a no-op (the no-ops of cancelled reads keep this id). The
   // reads get their ids from a counter that starts at 0, so no read gets this
@@ -309,6 +317,8 @@ class IoUringPolicy : public NoCopyNoMove {
   const size_t ringSize_;
   // See `BatchManagerParameters::maxSubmitRetries`.
   const unsigned maxSubmitRetries_;
+  // The wave of `reapWave`, see `BatchManagerParameters::reapWave`.
+  const unsigned reapWave_;
 
   // Total number of reads that occupy a ring slot but have not yet been reaped
   // via a completion queue entry (CQE), i.e. that are prepared or submitted but
@@ -386,13 +396,14 @@ class IoUringPolicy : public NoCopyNoMove {
   }
 
   // The number of CQEs that `reapWave` takes out of the completion queue at
-  // once. It reaps every ready CQE, which can be more than a wave (they may
-  // have been ready before it waited), in several chunks then.
+  // once. It reaps every ready CQE, in several chunks if more are ready than
+  // fit in one: a wave can be larger than a chunk, and CQEs may have been ready
+  // before it waited. Independent of the size of the wave.
   static constexpr size_t REAP_CHUNK =
       IoUringInterface::MAX_COMPLETIONS_PER_POP;
 
   // Reap every ready CQE and update the outstanding bookkeeping. If none is
-  // ready, first block until at least `min(REAP_WAVE,
+  // ready, first block until at least `min(reapWave_,
   // numberOfRequestsToComplete)` CQEs are ready. `numberOfRequestsToComplete`
   // is the number of requests the caller waits for; it must be > 0 and at most
   // `numberOfRequestsInKernel()`, so that the wave never waits for more
@@ -426,14 +437,16 @@ class IoUringPolicy : public NoCopyNoMove {
  public:
   // Set up a liburing ring with (at least) `ringSize` SQEs. `ringSize` must be
   // > 0 (power of 2 preferred; liburing rounds up). Throws if
-  // `parameters.maxSubmitRetries` is 0.
+  // `parameters.maxSubmitRetries` is 0, or if `parameters.reapWave` is set and
+  // not in [1, `ringSize`] (liburing may round `ringSize` up, so the bound is
+  // that of the ring that was set up).
   explicit IoUringPolicy(unsigned ringSize,
                          BatchManagerParameters parameters = {});
 
   // Run on `ring` instead of a liburing ring, for tests. The policy keeps at
   // most `ring->sqCapacity()` requests in the ring. Throws if `ring` is null,
   // has no SQE, has fewer CQEs than SQEs, or if `parameters.maxSubmitRetries`
-  // is 0.
+  // is 0, or `parameters.reapWave` is set and not in [1, `ring->sqCapacity()`].
   explicit IoUringPolicy(std::unique_ptr<IoUringInterface> ring,
                          BatchManagerParameters parameters = {});
   ~IoUringPolicy();

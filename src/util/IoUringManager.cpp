@@ -206,7 +206,9 @@ IoUringPolicy::IoUringPolicy(std::unique_ptr<IoUringInterface> ring,
       // each of them has a free SQE, and at most `ringSize_` completions are
       // ever pending.
       ringSize_{ring_ != nullptr ? ring_->sqCapacity() : 0},
-      maxSubmitRetries_{parameters.maxSubmitRetries} {
+      maxSubmitRetries_{parameters.maxSubmitRetries},
+      reapWave_{parameters.reapWave.value_or(static_cast<unsigned>(
+          std::min<size_t>(DEFAULT_REAP_WAVE, ringSize_)))} {
   AD_CONTRACT_CHECK(ring_ != nullptr,
                     "An IoUringPolicy needs a ring to run on.");
   AD_CONTRACT_CHECK(ringSize_ > 0,
@@ -217,6 +219,9 @@ IoUringPolicy::IoUringPolicy(std::unique_ptr<IoUringInterface> ring,
   AD_CONTRACT_CHECK(maxSubmitRetries_ >= 1,
                     "An IoUringPolicy must retry a failed submit at least "
                     "once, or a single transient failure cancels reads.");
+  AD_CONTRACT_CHECK(reapWave_ >= 1 && reapWave_ <= ringSize_,
+                    "The wave of an IoUringPolicy must be at least 1 and at "
+                    "most the number of SQEs of its ring.");
 }
 
 //______________________________________________________________________________
@@ -496,7 +501,7 @@ void IoUringPolicy::reapWave(size_t numberOfRequestsToComplete) {
   // while unwinding) nor tearing down the ring is safe.
   if (numberOfReady == 0) {
     const auto waveSize = static_cast<unsigned>(
-        std::min<size_t>(REAP_WAVE, numberOfRequestsToComplete));
+        std::min<size_t>(reapWave_, numberOfRequestsToComplete));
     int result = 0;
     do {
       result = ring_->waitForCompletions(waveSize);
