@@ -8,6 +8,7 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <functional>
 #include <string>
 #include <string_view>
 
@@ -120,23 +121,49 @@ http::request<http::string_body, Fields> getStringBodyRequest(
 // parsing the request, then another response type is used.
 using ResponseT = http::response<streamable_body>;
 
+// A function that compresses a response body with a `CompressionMethod` (see
+// `streams::compressStream`): it takes ownership of the body and returns a lazy
+// generator whose concatenated output is the body compressed with the method
+// (or the body unchanged for `CompressionMethod::NONE`). The returned generator
+// may use the state that the function captured (for example, an executor), so
+// that state has to stay valid until the generator is fully consumed or
+// destroyed, which for a response is when it has been sent.
+using CompressBody = std::function<cppcoro::generator<std::string>(
+    cppcoro::generator<std::string>, content_encoding::CompressionMethod)>;
+
+// The default `CompressBody`, which compresses on the thread that advances the
+// body.
+//
+// NOTE: This is a template, so that `compressStream` is only instantiated
+// where a response is actually created. Libraries that include this header
+// without linking `Boost::iostreams` (for example, `index` via
+// `ResponseMiddleware.h`) would otherwise fail to link.
+template <typename Body = cppcoro::generator<std::string>>
+Body compressSequentially(Body body,
+                          content_encoding::CompressionMethod method) {
+  return streams::compressStream(std::move(body), method);
+}
+
 // Assign the generator to the body of the response. If a supported
-// compression is specified in the request, this method is applied to the
-// body and the corresponding response headers are set.
+// compression is specified in the request, the body is compressed with
+// `compressBody` and the corresponding response headers are set. The state
+// that `compressBody` uses has to outlive the response body (see
+// `CompressBody`).
 //
 // NOTE: The body is advanced on the executor that is passed to the
 // `HttpMessageSender` when sending the response, so (potentially expensive)
 // generators are fine here if that executor is not one of the IO threads.
 CPP_template(typename RequestType)(requires HttpRequest<RequestType>)
 void setBody(ResponseT& response, const RequestType& request,
-             cppcoro::generator<std::string>&& generator) {
+             cppcoro::generator<std::string>&& generator,
+             CompressBody compressBody = compressSequentially<>) {
   using ad_utility::content_encoding::CompressionMethod;
 
   CompressionMethod method =
       ad_utility::content_encoding::getCompressionMethodForRequest(request);
 
   if (method != CompressionMethod::NONE) {
-    response.body() = streams::compressStream(std::move(generator), method);
+    response.body() = compressBody(std::move(generator), method);
     ad_utility::content_encoding::setContentEncodingHeaderForCompressionMethod(
         method, response);
   } else {
@@ -145,17 +172,15 @@ void setBody(ResponseT& response, const RequestType& request,
 }
 
 CPP_template(typename RequestType)(requires HttpRequest<RequestType>)
-ResponseT
-    createHttpResponseFromGenerator(cppcoro::generator<std::string>&& body,
-                                    http::status status,
-                                    const RequestType& request,
-                                    std::optional<MediaType> mediaType,
-                                    bool preparePayload) {
+ResponseT createHttpResponseFromGenerator(
+    cppcoro::generator<std::string>&& body, http::status status,
+    const RequestType& request, std::optional<MediaType> mediaType,
+    bool preparePayload, CompressBody compressBody = compressSequentially<>) {
   ResponseT response{status, request.version()};
   if (mediaType.has_value()) {
     response.set(http::field::content_type, toString(mediaType.value()));
   }
-  setBody(response, request, std::move(body));
+  setBody(response, request, std::move(body), std::move(compressBody));
   response.keep_alive(request.keep_alive());
   if (preparePayload) {
     // Set Content-Length (if available) or Transfer-Encoding to `chunked`.
@@ -228,12 +253,15 @@ auto createOkResponse(std::string text, const RequestType& request,
                                       request, mediaType);
 }
 
-// Create a HttpResponse from a generator with status 200 OK.
+// Create a HttpResponse from a generator with status 200 OK. If the request
+// asks for a compression, the body is compressed with `compressBody`.
 CPP_template(typename RequestType)(requires HttpRequest<RequestType>)
 auto createOkResponse(cppcoro::generator<std::string>&& generator,
-                      const RequestType& request, MediaType mediaType) {
+                      const RequestType& request, MediaType mediaType,
+                      CompressBody compressBody = compressSequentially<>) {
   return createHttpResponseFromGenerator(std::move(generator), http::status::ok,
-                                         request, mediaType, true);
+                                         request, mediaType, true,
+                                         std::move(compressBody));
 }
 
 // Create a HttpResponse from a string with status 200 OK and mime type

@@ -37,6 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     liburing-dev \
     libzstd-dev \
+    zlib1g-dev \
     mold \
     ninja-build \
     pkg-config \

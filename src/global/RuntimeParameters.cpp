@@ -12,6 +12,7 @@
 
 #include "backports/algorithm.h"
 #include "util/Algorithm.h"
+#include "util/ParallelCompressorStream.h"
 
 // _____________________________________________________________________________
 RuntimeParameters::RuntimeParameters() {
@@ -73,6 +74,8 @@ RuntimeParameters::RuntimeParameters() {
   add(disableCaching_);
   add(logLevel_);
   add(constructDeduplication_);
+  add(parallelResponseCompression_);
+  add(parallelResponseCompressionBlockSize_);
 
   // Propagate runtime log level changes immediately to the global atomic in
   // Log.h. The action fires once immediately on registration, so the atomic is
@@ -104,6 +107,22 @@ RuntimeParameters::RuntimeParameters() {
   permutationWriterNumBlocksInFlight_.setParameterConstraint(
       mustBeStrictlyPositive);
   sortNumTasksInFlight_.setParameterConstraint(mustBeStrictlyPositive);
+
+  // The block size of the parallel compression must lie in the range that
+  // `compressStreamInParallel` supports.
+  parallelResponseCompressionBlockSize_.setParameterConstraint(
+      [](ad_utility::MemorySize value, std::string_view parameterName) {
+        using ad_utility::streams::MAX_COMPRESSION_BLOCK_SIZE;
+        using ad_utility::streams::MIN_COMPRESSION_BLOCK_SIZE;
+        if (value.getBytes() < MIN_COMPRESSION_BLOCK_SIZE.getBytes() ||
+            value.getBytes() > MAX_COMPRESSION_BLOCK_SIZE.getBytes()) {
+          throw std::runtime_error{
+              absl::StrCat("Parameter ", parameterName, " must be between ",
+                           MIN_COMPRESSION_BLOCK_SIZE.getBytes(), " and ",
+                           MAX_COMPRESSION_BLOCK_SIZE.getBytes(),
+                           " bytes, was ", value.getBytes(), " bytes")};
+        }
+      });
 }
 
 // _____________________________________________________________________________

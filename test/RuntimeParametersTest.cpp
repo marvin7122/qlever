@@ -12,6 +12,7 @@
 
 #include "global/RuntimeParameters.h"
 #include "util/GTestHelpers.h"
+#include "util/ParallelCompressorStream.h"
 
 using ::testing::AllOf;
 using ::testing::HasSubstr;
@@ -111,6 +112,36 @@ TEST(RuntimeParameters, sortNumTasksInFlightIsStrictlyPositive) {
   EXPECT_EQ(params.sortNumTasksInFlight_.get(), 1u);
 }
 
+// Test the default of `parallel-response-compression-block-size` (the default
+// block size of the compression), a valid value, the bounds of the valid range,
+// and that values outside of the range are rejected with their range.
+TEST(RuntimeParameters, parallelResponseCompressionBlockSizeIsInRange) {
+  RuntimeParameters params;
+  EXPECT_EQ(params.parallelResponseCompressionBlockSize_.get(),
+            ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE);
+  EXPECT_EQ(params.parallelResponseCompressionBlockSize_.get(),
+            ad_utility::MemorySize::bytes(128 * 1024));
+  EXPECT_NO_THROW(params.setFromAssignment(
+      "parallel-response-compression-block-size=1000000 B"));
+  EXPECT_EQ(params.parallelResponseCompressionBlockSize_.get(),
+            ad_utility::MemorySize::bytes(1'000'000));
+  EXPECT_NO_THROW(params.setFromAssignment(
+      "parallel-response-compression-block-size=32768 B"));
+  EXPECT_NO_THROW(params.setFromAssignment(
+      "parallel-response-compression-block-size=16777216 B"));
+  for (std::string tooSmallOrLarge : {"32767 B", "1 B", "16777217 B", "1 GB"}) {
+    AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+        params.setFromAssignment("parallel-response-compression-block-size=" +
+                                 tooSmallOrLarge),
+        AllOf(HasSubstr("parallel-response-compression-block-size"),
+              HasSubstr("must be between 32768 and 16777216 bytes")),
+        std::runtime_error);
+  }
+  // A rejected value does not change the parameter.
+  EXPECT_EQ(params.parallelResponseCompressionBlockSize_.get(),
+            ad_utility::MemorySize::bytes(16'777'216));
+}
+
 // Test that `getKeys` and `toMap` (the building blocks of
 // `--set-runtime-parameter help`) are consistent with each other.
 TEST(RuntimeParameters, getKeysAndToMapAreConsistent) {
@@ -199,6 +230,8 @@ TEST(RuntimeParameters, allParametersAreRegistered) {
   check(params.disableCaching_);
   check(params.logLevel_);
   check(params.constructDeduplication_);
+  check(params.parallelResponseCompression_);
+  check(params.parallelResponseCompressionBlockSize_);
   EXPECT_EQ(totalSize,
             static_cast<size_t>(reinterpret_cast<char*>(&params.runtimeMap_) -
                                 reinterpret_cast<char*>(&params)));

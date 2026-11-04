@@ -5,6 +5,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <boost/asio/thread_pool.hpp>
 #include <boost/beast/http.hpp>
 #include <future>
 #include <optional>
@@ -21,9 +22,12 @@
 #include "engine/Server.h"
 #include "engine/UpdateMetadata.h"
 #include "parser/SparqlParser.h"
+#include "util/CompressorStream.h"
 #include "util/GTestHelpers.h"
 #include "util/HttpRequestHelpers.h"
 #include "util/IndexTestHelpers.h"
+#include "util/ParallelCompressorStream.h"
+#include "util/StringGeneratorTestHelpers.h"
 #include "util/http/HttpUtils.h"
 #include "util/http/UrlParser.h"
 #include "util/json.h"
@@ -79,6 +83,62 @@ TEST(ServerTest, chooseBestFittingMediaType) {
             binaryQleverExport);
   EXPECT_EQ(choose({binaryQleverExport, sparqlJson}, askQuery), sparqlJson);
   EXPECT_EQ(choose({binaryQleverExport}, constructQuery), turtle);
+}
+
+// _____________________________________________________________________________
+// The results of queries are compressed sequentially by default, and with
+// `parallel-response-compression` by `compressStreamInParallel` on the given
+// executor. The two outputs differ for a body of several blocks (even though
+// both decompress to the body), so the test can tell them apart.
+TEST(ServerTest, compressBodyForQuery) {
+  boost::asio::thread_pool pool{2};
+  std::string text;
+  size_t row = 0;
+  while (text.size() <
+         3 * ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE.getBytes()) {
+    absl::StrAppend(&text, "\"row\",", row++, "\n");
+  }
+  // The body comes in pieces, as the body of a response does.
+  constexpr size_t numberOfBytesPerPiece = 1000;
+  auto body = [&text]() {
+    return ad_utility::testing::inPieces(text, numberOfBytesPerPiece);
+  };
+  auto allocator = qlever::makeUnlimitedAllocator<char>();
+  for (auto method : {ad_utility::content_encoding::CompressionMethod::DEFLATE,
+                      ad_utility::content_encoding::CompressionMethod::GZIP}) {
+    // The body, compressed as `Server` does for the current value of
+    // `parallel-response-compression`.
+    auto compressWithServer = [&pool, &body, &allocator, method]() {
+      return ad_utility::testing::concatenate(Server::compressBodyForQuery(
+          pool.get_executor(), allocator)(body(), method));
+    };
+    auto sequential = ad_utility::testing::concatenate(
+        ad_utility::streams::compressStream(body(), method));
+    auto parallel = ad_utility::testing::concatenate(
+        ad_utility::streams::compressStreamInParallel(
+            body(), method, pool.get_executor(), 1,
+            ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE, allocator));
+    ASSERT_NE(sequential, parallel);
+    EXPECT_EQ(compressWithServer(), sequential);
+    auto cleanup = setRuntimeParameterForTest<
+        &RuntimeParameters::parallelResponseCompression_>(true);
+    EXPECT_EQ(compressWithServer(), parallel);
+  }
+
+  // The memory of the blocks counts against the allocator of the query, so a
+  // limit that is too small makes the compression fail, and nothing stays
+  // reserved.
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::parallelResponseCompression_>(true);
+  const auto smallLimit = ad_utility::MemorySize::bytes(1000);
+  auto limitedAllocator = qlever::makeAllocatorWithLimit<char>(smallLimit);
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      ad_utility::testing::concatenate(
+          Server::compressBodyForQuery(pool.get_executor(), limitedAllocator)(
+              body(), ad_utility::content_encoding::CompressionMethod::GZIP)),
+      ::testing::HasSubstr("Tried to allocate"),
+      ad_utility::detail::AllocationExceedsLimitException);
+  EXPECT_EQ(limitedAllocator.amountMemoryLeft(), smallLimit);
 }
 
 // _____________________________________________________________________________

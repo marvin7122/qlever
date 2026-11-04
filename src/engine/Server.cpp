@@ -38,6 +38,7 @@
 #include "util/ConcurrencyLimitedExecutor.h"
 #include "util/Exception.h"
 #include "util/MemorySize/MemorySize.h"
+#include "util/ParallelCompressorStream.h"
 #include "util/ParseException.h"
 #include "util/ParseableDuration.h"
 #include "util/QueryEventLog.h"
@@ -1115,6 +1116,32 @@ ad_utility::websocket::OwningQueryId Server::getQueryId(
 }
 
 // _____________________________________________________________________________
+ad_utility::httpUtils::CompressBody Server::compressBodyForQuery(
+    qlever::Executor executor, qlever::Allocator<char> allocator) {
+  if (!getRuntimeParameter<
+          &RuntimeParameters::parallelResponseCompression_>()) {
+    return ad_utility::httpUtils::compressSequentially<>;
+  }
+
+  // As for the other parallel work of a query, a thread can compress the next
+  // block while its previous one waits to be sent.
+  const size_t maxNumberOfBlocksInFlight =
+      2 * getRuntimeParameter<&RuntimeParameters::maxNumThreadsPerQuery_>();
+
+  const ad_utility::MemorySize blockSize = getRuntimeParameter<
+      &RuntimeParameters::parallelResponseCompressionBlockSize_>();
+
+  return [executor = std::move(executor), maxNumberOfBlocksInFlight, blockSize,
+          allocator = std::move(allocator)](
+             cppcoro::generator<std::string> body,
+             ad_utility::content_encoding::CompressionMethod method) {
+    return ad_utility::streams::compressStreamInParallel(
+        std::move(body), method, executor, maxNumberOfBlocksInFlight, blockSize,
+        allocator);
+  };
+}
+
+// _____________________________________________________________________________
 CPP_template_def(typename RequestT, typename SendT)(
     requires ad_utility::httpUtils::HttpRequest<RequestT>)
 Awaitable<void> Server::sendStreamableResponse(
@@ -1137,7 +1164,13 @@ Awaitable<void> Server::sendStreamableResponse(
   auto responseGenerator = co_await std::move(coroutine);
 
   auto response = ad_utility::httpUtils::createOkResponse(
-      std::move(responseGenerator), request, mediaType);
+      std::move(responseGenerator), request, mediaType,
+      compressBodyForQuery(
+          plannedQuery.queryExecutionTree().getQec()->executor(),
+          plannedQuery.queryExecutionTree()
+              .getQec()
+              ->getAllocator()
+              .as<char>()));
   if (plannedQuery.parsedQuery().responseMiddleware_.has_value()) {
     response =
         plannedQuery.parsedQuery().responseMiddleware_.value().applyQuery(

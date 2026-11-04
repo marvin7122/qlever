@@ -284,6 +284,39 @@ struct RuntimeParameters {
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
 
+  // If set, the result of a query that the client asks for compressed (with
+  // `Accept-Encoding: deflate` or `gzip`) is compressed on the executor of the
+  // query, in blocks (see `parallel-response-compression-block-size`), instead
+  // of on the thread that produces the response body (see
+  // `streams::compressStreamInParallel`). At most
+  // `2 * max-num-threads-per-query` blocks are in flight per query. The
+  // compressed bytes differ, but they decompress to the same result.
+  Bool parallelResponseCompression_{false, "parallel-response-compression"};
+
+  // The minimal size of a block of the input (except the last one) that
+  // `parallel-response-compression` compresses on its own. Pieces of the
+  // response body are joined until a block has this size, and a piece that is
+  // that large is one block. The default is 128 KiB, the block size of `pigz`:
+  // it keeps the loss of compression ratio at the block boundaries small (a
+  // block uses the last 32 KiB of the previous one as its dictionary), lets a
+  // response of a few MiB use several threads, and bounds the memory of the
+  // blocks in flight: each of the `2 * max-num-threads-per-query` blocks holds
+  // its input (the block size plus the 32 KiB dictionary) and, while it is
+  // compressed, an output buffer of the `deflateBound` of its input (about the
+  // block size), afterwards its compressed bytes. So the memory is at most
+  // about `2 * max-num-threads-per-query * (block size + compressed bound)`.
+  // It is counted against the memory limit of the query: a query that would
+  // exceed the limit fails with the usual out-of-memory error. The value must
+  // lie between 32 KiB (the dictionary of a block must lie in the previous
+  // block) and 16 MiB (larger blocks delay the first byte and multiply the
+  // memory without improving the ratio noticeably); this is enforced by a
+  // parameter constraint. The output is one valid gzip or deflate stream for
+  // every block size. A parameter value like `128 KiB` is written as
+  // `131072 B`, as the unit `KiB` does not exist (`kB` means 1000 bytes).
+  MemorySizeParameter parallelResponseCompressionBlockSize_{
+      ad_utility::MemorySize::bytes(128 * 1024),
+      "parallel-response-compression-block-size"};
+
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
   // CONSTRUCTOR, S.T. THEY CAN ALSO BE ACCESSED VIA THE RUNTIME INTERFACE.
