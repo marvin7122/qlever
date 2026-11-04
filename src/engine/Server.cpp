@@ -1120,7 +1120,7 @@ ad_utility::httpUtils::CompressBody Server::compressBodyForQuery(
     qlever::Executor executor) {
   if (!getRuntimeParameter<
           &RuntimeParameters::parallelResponseCompression_>()) {
-    return ad_utility::httpUtils::compressSequentially;
+    return ad_utility::httpUtils::compressSequentially<>;
   }
   // As for the other parallel work of a query, a thread can compress the next
   // block while its previous one waits to be sent.

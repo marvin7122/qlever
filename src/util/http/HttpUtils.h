@@ -128,9 +128,14 @@ using CompressBody = std::function<cppcoro::generator<std::string>(
 
 // The default `CompressBody`, which compresses on the thread that advances the
 // body.
-inline cppcoro::generator<std::string> compressSequentially(
-    cppcoro::generator<std::string> body,
-    content_encoding::CompressionMethod method) {
+//
+// NOTE: This is a template, so that `compressStream` is only instantiated
+// where a response is actually created. Libraries that include this header
+// without linking `Boost::iostreams` (for example, `index` via
+// `ResponseMiddleware.h`) would otherwise fail to link.
+template <typename Body = cppcoro::generator<std::string>>
+Body compressSequentially(Body body,
+                          content_encoding::CompressionMethod method) {
   return streams::compressStream(std::move(body), method);
 }
 
@@ -144,7 +149,7 @@ inline cppcoro::generator<std::string> compressSequentially(
 CPP_template(typename RequestType)(requires HttpRequest<RequestType>)
 void setBody(ResponseT& response, const RequestType& request,
              cppcoro::generator<std::string>&& generator,
-             CompressBody compressBody = compressSequentially) {
+             CompressBody compressBody = compressSequentially<>) {
   using ad_utility::content_encoding::CompressionMethod;
 
   CompressionMethod method =
@@ -163,7 +168,7 @@ CPP_template(typename RequestType)(requires HttpRequest<RequestType>)
 ResponseT createHttpResponseFromGenerator(
     cppcoro::generator<std::string>&& body, http::status status,
     const RequestType& request, std::optional<MediaType> mediaType,
-    bool preparePayload, CompressBody compressBody = compressSequentially) {
+    bool preparePayload, CompressBody compressBody = compressSequentially<>) {
   ResponseT response{status, request.version()};
   if (mediaType.has_value()) {
     response.set(http::field::content_type, toString(mediaType.value()));
@@ -246,7 +251,7 @@ auto createOkResponse(std::string text, const RequestType& request,
 CPP_template(typename RequestType)(requires HttpRequest<RequestType>)
 auto createOkResponse(cppcoro::generator<std::string>&& generator,
                       const RequestType& request, MediaType mediaType,
-                      CompressBody compressBody = compressSequentially) {
+                      CompressBody compressBody = compressSequentially<>) {
   return createHttpResponseFromGenerator(std::move(generator), http::status::ok,
                                          request, mediaType, true,
                                          std::move(compressBody));
