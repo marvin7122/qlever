@@ -14,6 +14,7 @@
 #include "engine/ConstructTripleInstantiator.h"
 #include "engine/ConstructTypes.h"
 #include "global/Constants.h"
+#include "util/Views.h"
 
 namespace {
 using namespace qlever::constructExport;
@@ -488,10 +489,10 @@ TEST(FormatTriple, UnsupportedMediaType) {
 //                       TESTS FOR `createStringTriple`
 // ============================================================================
 
-// _____________________________________________________________________________
 // A term that views a word of a batch-lookup result is formatted like a term
 // that owns the same string, in every format and position, and stays valid
 // when the other owners of the result are gone.
+// _____________________________________________________________________________
 TEST(FormatTriple, BorrowedTermsAreFormattedLikeOwnedTerms) {
   const std::vector<std::string> words{"<http://borrowed>",
                                        "\"line\nbreak\"@en",
@@ -500,7 +501,7 @@ TEST(FormatTriple, BorrowedTermsAreFormattedLikeOwnedTerms) {
   {
     VocabBatchLookupResult lookupResult =
         StringVectorVocabBatchLookupData::fromWords(words);
-    for (size_t i = 0; i < words.size(); ++i) {
+    for (const size_t i : ad_utility::integerRange(words.size())) {
       borrowed.push_back(std::make_shared<const EvaluatedTermData>(
           BorrowedVocabWord{lookupResult, i}));
     }
@@ -512,9 +513,10 @@ TEST(FormatTriple, BorrowedTermsAreFormattedLikeOwnedTerms) {
   const std::vector<EvaluatedTerm> others{
       makeTerm("<http://s>"), makeTerm("_:b0"), makeTerm("42", XSD_INT_TYPE),
       makeTerm("NaN", XSD_DOUBLE_TYPE)};
-  using enum ad_utility::MediaType;
-  for (const auto format : {turtle, ntriples, csv, tsv}) {
-    for (size_t i = 0; i < words.size(); ++i) {
+  using ad_utility::MediaType;
+  for (const auto format : {MediaType::turtle, MediaType::ntriples,
+                            MediaType::csv, MediaType::tsv}) {
+    for (const size_t i : ad_utility::integerRange(words.size())) {
       ASSERT_TRUE(borrowed.at(i)->isBorrowed());
       for (const auto& other : others) {
         EXPECT_EQ(formatTriple({borrowed.at(i), other, borrowed.at(i)}, format),
