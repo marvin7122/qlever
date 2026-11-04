@@ -65,6 +65,22 @@ CPP_concept ReadPolicyConcept =
     concepts::unsigned_integral<typename T::BatchHandle> &&
     CPP_requires_ref(ReadPolicy_, T);
 
+// How often in a row an `io_uring_submit` that fails with `EAGAIN` or `ENOMEM`
+// (or takes no SQE) is retried by default, see
+// `BatchManagerParameters::maxSubmitRetries`.
+inline constexpr unsigned DEFAULT_MAX_SUBMIT_RETRIES = 16;
+
+// The tunables of a `ReadPolicy`, forwarded by `BatchManager` and
+// `makeBatchManager`. The defaults are the values to use unless a test needs
+// others. `SyncIoPolicy` ignores them.
+struct BatchManagerParameters {
+  // How often in a row an `io_uring_submit` that fails with `EAGAIN` or
+  // `ENOMEM` (or takes no SQE) is retried, after a back-off, before the
+  // `IoUringPolicy` cancels the queued reads. Must be >= 1, so that a single
+  // transient failure does not cancel reads.
+  unsigned maxSubmitRetries = DEFAULT_MAX_SUBMIT_RETRIES;
+};
+
 // Abstract base of `BatchManager` so a pool can hold managers of different
 // `ReadPolicy`s behind a unified interface and pick the backend at runtime.
 class BatchManagerBase {
@@ -98,7 +114,9 @@ class BatchManager final : public BatchManagerBase {
  public:
   using BatchHandle = typename BatchManagerBase::BatchHandle;
 
-  explicit BatchManager(unsigned ringSize = 256) : policy_(ringSize) {}
+  explicit BatchManager(unsigned ringSize = 256,
+                        BatchManagerParameters parameters = {})
+      : policy_(ringSize, parameters) {}
 
   BatchManager(const BatchManager&) = delete;
   BatchManager& operator=(const BatchManager&) = delete;
@@ -139,12 +157,16 @@ class BatchManager final : public BatchManagerBase {
 struct SyncIoPolicy {
   using BatchHandle = uint64_t;
 
-  // `ringSize` is ignored; it exists only so the policy is constructible the
-  // same way as `IoUringPolicy`.
+  // `ringSize` and `parameters` are ignored; they exist only so the policy is
+  // constructible the same way as `IoUringPolicy`.
   //
   // NOTE: GCC rejects `[[maybe_unused]]` on a defaulted parameter; cast to
   // void.
-  explicit SyncIoPolicy(unsigned ringSize = 256) { (void)ringSize; }
+  explicit SyncIoPolicy(unsigned ringSize = 256,
+                        BatchManagerParameters parameters = {}) {
+    (void)ringSize;
+    (void)parameters;
+  }
 
   ~SyncIoPolicy() = default;
   SyncIoPolicy(const SyncIoPolicy&) = delete;
@@ -262,11 +284,6 @@ class IoUringPolicy : public NoCopyNoMove {
  public:
   using BatchHandle = uint64_t;
 
-  // How often in a row an `io_uring_submit` that fails with `EAGAIN` or
-  // `ENOMEM` (or takes no SQE) is retried, after a back-off, before the queued
-  // reads are cancelled.
-  static constexpr unsigned MAX_SUBMIT_RETRIES = 16;
-
  private:
   // The request id of a no-op (the no-ops of cancelled reads keep this id). The
   // reads get their ids from a counter that starts at 0, so no read gets this
@@ -279,6 +296,8 @@ class IoUringPolicy : public NoCopyNoMove {
   std::unique_ptr<IoUringInterface> ring_;
   // The most requests (reads and no-ops) that the policy keeps in the ring.
   const size_t ringSize_;
+  // See `BatchManagerParameters::maxSubmitRetries`.
+  const unsigned maxSubmitRetries_;
 
   // Total number of reads that occupy a ring slot but have not yet been reaped
   // via a completion queue entry (CQE), i.e. that are prepared or submitted but
@@ -366,7 +385,7 @@ class IoUringPolicy : public NoCopyNoMove {
 
   // Hand the queued SQEs to the kernel. Retries `EINTR` at once, and retries
   // `EAGAIN` and `ENOMEM` (or a submit that takes no SQE) up to
-  // `MAX_SUBMIT_RETRIES` times in a row after a back-off. If the submit fails
+  // `maxSubmitRetries_` times in a row after a back-off. If the submit fails
   // for good, cancels the queued reads and returns the error.
   std::optional<std::string> submitQueued();
 
@@ -379,13 +398,17 @@ class IoUringPolicy : public NoCopyNoMove {
 
  public:
   // Set up a liburing ring with (at least) `ringSize` SQEs. `ringSize` must be
-  // > 0 (power of 2 preferred; liburing rounds up).
-  explicit IoUringPolicy(unsigned ringSize);
+  // > 0 (power of 2 preferred; liburing rounds up). Throws if
+  // `parameters.maxSubmitRetries` is 0.
+  explicit IoUringPolicy(unsigned ringSize,
+                         BatchManagerParameters parameters = {});
 
   // Run on `ring` instead of a liburing ring, for tests. The policy keeps at
   // most `ring->sqCapacity()` requests in the ring. Throws if `ring` is null,
-  // has no SQE, or has fewer CQEs than SQEs.
-  explicit IoUringPolicy(std::unique_ptr<IoUringInterface> ring);
+  // has no SQE, has fewer CQEs than SQEs, or if `parameters.maxSubmitRetries`
+  // is 0.
+  explicit IoUringPolicy(std::unique_ptr<IoUringInterface> ring,
+                         BatchManagerParameters parameters = {});
   ~IoUringPolicy();
 
   // Enqueue a batch of read requests and submit them to the kernel. Blocks the
@@ -420,11 +443,13 @@ using BatchIoManager = BatchManager<SyncIoPolicy>;
 // the first failure, every subsequent call goes straight to the sync manager,
 // so we don't repeat a failing syscall.
 inline std::unique_ptr<BatchManagerBase> makeBatchManager(
-    bool& preferIoUring, unsigned ringSize = 256) {
+    bool& preferIoUring, unsigned ringSize = 256,
+    BatchManagerParameters parameters = {}) {
 #ifdef QLEVER_HAS_IO_URING
   if (preferIoUring) {
     try {
-      return std::make_unique<BatchManager<IoUringPolicy>>(ringSize);
+      return std::make_unique<BatchManager<IoUringPolicy>>(ringSize,
+                                                           parameters);
     } catch (const std::exception& e) {
       preferIoUring = false;
       AD_LOG_WARN << "io_uring is compiled in but unavailable at runtime ("
@@ -437,7 +462,7 @@ inline std::unique_ptr<BatchManagerBase> makeBatchManager(
 #else
   preferIoUring = false;
 #endif
-  return std::make_unique<BatchManager<SyncIoPolicy>>(ringSize);
+  return std::make_unique<BatchManager<SyncIoPolicy>>(ringSize, parameters);
 }
 
 }  // namespace ad_utility

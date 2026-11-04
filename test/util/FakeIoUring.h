@@ -51,8 +51,8 @@ class FakeIoUring final : public IoUringInterface {
     // The probability that a submit starts a burst of `EAGAIN`, the error with
     // which the kernel reports that it has no memory for the requests. A burst
     // makes 1 to `maxEagainBurst` submits in a row fail. A burst of more than
-    // `IoUringPolicy::MAX_SUBMIT_RETRIES` failures makes the policy cancel the
-    // queued reads; it rides out shorter ones.
+    // `BatchManagerParameters::maxSubmitRetries` failures makes the policy
+    // cancel the queued reads; it rides out shorter ones.
     double submitOutOfMemory = 0;
     size_t maxEagainBurst = 1;
     double waitInterrupted = 0;

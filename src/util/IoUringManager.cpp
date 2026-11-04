@@ -192,17 +192,20 @@ std::unique_ptr<IoUringInterface> makeLiburingRing(unsigned ringSize) {
 }
 
 //______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(unsigned ringSize)
-    : IoUringPolicy(makeLiburingRing(ringSize)) {}
+IoUringPolicy::IoUringPolicy(unsigned ringSize,
+                             BatchManagerParameters parameters)
+    : IoUringPolicy(makeLiburingRing(ringSize), parameters) {}
 
 //______________________________________________________________________________
-IoUringPolicy::IoUringPolicy(std::unique_ptr<IoUringInterface> ring)
+IoUringPolicy::IoUringPolicy(std::unique_ptr<IoUringInterface> ring,
+                             BatchManagerParameters parameters)
     : ring_{std::move(ring)},
       // `addBatch` keeps at most `ringSize_` requests in the ring, counting
       // those that are queued, in the kernel, or completed but not reaped. So
       // each of them has a free SQE, and at most `ringSize_` completions are
       // ever pending.
-      ringSize_{ring_ != nullptr ? ring_->sqCapacity() : 0} {
+      ringSize_{ring_ != nullptr ? ring_->sqCapacity() : 0},
+      maxSubmitRetries_{parameters.maxSubmitRetries} {
   AD_CONTRACT_CHECK(ring_ != nullptr,
                     "An IoUringPolicy needs a ring to run on.");
   AD_CONTRACT_CHECK(ringSize_ > 0,
@@ -210,6 +213,9 @@ IoUringPolicy::IoUringPolicy(std::unique_ptr<IoUringInterface> ring)
   AD_CONTRACT_CHECK(ring_->cqCapacity() >= ringSize_,
                     "The ring of an IoUringPolicy needs at least as many CQEs "
                     "as SQEs, or completions could be dropped.");
+  AD_CONTRACT_CHECK(maxSubmitRetries_ >= 1,
+                    "An IoUringPolicy must retry a failed submit at least "
+                    "once, or a single transient failure cancels reads.");
 }
 
 //______________________________________________________________________________
@@ -348,7 +354,7 @@ std::optional<std::string> IoUringPolicy::submitQueued() {
     }
     const bool isTransient =
         result == 0 || result == -EAGAIN || result == -ENOMEM;
-    if (!isTransient || numberOfRetries == MAX_SUBMIT_RETRIES) {
+    if (!isTransient || numberOfRetries == maxSubmitRetries_) {
       cancelQueuedReads();
       // Only the no-ops of the cancelled reads are left in the queue.
       AD_CORRECTNESS_CHECK(ring_->numberOfQueued() == numberOfNoOpsQueued_,
@@ -356,9 +362,8 @@ std::optional<std::string> IoUringPolicy::submitQueued() {
       return absl::StrCat(
           "io_uring_submit failed in IoUringPolicy: ",
           result == 0 ? "no SQE was taken" : errorText(-result),
-          isTransient
-              ? absl::StrCat(" (after ", MAX_SUBMIT_RETRIES, " retries)")
-              : "");
+          isTransient ? absl::StrCat(" (after ", maxSubmitRetries_, " retries)")
+                      : "");
     }
     ++numberOfRetries;
     ring_->backOff();

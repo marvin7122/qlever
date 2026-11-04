@@ -763,8 +763,7 @@ std::pair<std::string, ReadBatchForTesting> chunkedFileAndBatch(
   return {std::move(content), std::move(batch)};
 }
 
-constexpr size_t MAX_SUBMIT_RETRIES =
-    ad_utility::IoUringPolicy::MAX_SUBMIT_RETRIES;
+constexpr size_t MAX_SUBMIT_RETRIES = ad_utility::DEFAULT_MAX_SUBMIT_RETRIES;
 
 // A policy on a `FakeIoUring`, and the fake ring, which the policy owns.
 struct PolicyOnFakeRing {
@@ -897,6 +896,52 @@ TEST(IoUringPolicyOnFakeRing,
   batch.addTo(policy, -1, 0);
   policy.wait(0);
   EXPECT_THAT(batch.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
+}
+
+// _____________________________________________________________________________
+// With `maxSubmitRetries = 2`, two consecutive `EAGAIN` are ridden out, and the
+// third makes `addBatch` cancel the batch after exactly 2 back-offs.
+TEST(IoUringPolicyOnFakeRing, maxSubmitRetriesIsConfigurable) {
+  using ad_utility::testing::FakeIoUring;
+  const std::string file = "AAAABBBBCCCC";
+  ad_utility::BatchManagerParameters parameters;
+  parameters.maxSubmitRetries = 2;
+  const auto makeRing = [&file](size_t numberOfFailures) {
+    FakeIoUring::Faults faults;
+    faults.scriptedSubmits.assign(numberOfFailures, -EAGAIN);
+    return std::make_unique<FakeIoUring>(file, 8, faults, 0);
+  };
+  ReadBatchForTesting batch;
+  batch.add({{0, 4}, {4, 4}, {8, 4}});
+
+  {
+    ad_utility::IoUringPolicy policy{makeRing(2), parameters};
+    batch.addTo(policy, -1, 0);
+    policy.wait(0);
+    EXPECT_THAT(batch.result(), ElementsAre("AAAA", "BBBB", "CCCC"));
+  }
+
+  ReadBatchForTesting failing;
+  failing.add({{0, 4}, {4, 4}, {8, 4}});
+  auto fakePtr = makeRing(3);
+  FakeIoUring& fake = *fakePtr;
+  ad_utility::IoUringPolicy policy{std::move(fakePtr), parameters};
+  AD_EXPECT_THROW_WITH_MESSAGE(failing.addTo(policy, -1, 0),
+                               HasSubstr("(after 2 retries)"));
+  EXPECT_EQ(fake.faultCounts().cancelledReads, 3U);
+}
+
+// _____________________________________________________________________________
+// A policy must retry a failed submit at least once.
+TEST(IoUringPolicyOnFakeRing, zeroSubmitRetriesAreRejected) {
+  using ad_utility::testing::FakeIoUring;
+  ad_utility::BatchManagerParameters parameters;
+  parameters.maxSubmitRetries = 0;
+  AD_EXPECT_THROW_WITH_MESSAGE(
+      (ad_utility::IoUringPolicy{
+          std::make_unique<FakeIoUring>("", 8, FakeIoUring::Faults{}, 0),
+          parameters}),
+      HasSubstr("must retry a failed submit at least once"));
 }
 
 // _____________________________________________________________________________
