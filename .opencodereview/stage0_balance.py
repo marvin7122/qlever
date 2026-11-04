@@ -47,8 +47,10 @@ def check_balance(url, token, budget):
     print(f"[stage0] DeepSeek: available={info.get('is_available')}, USD balance={usd}", file=sys.stderr)
     if info.get("is_available") is False:
         return False, "DeepSeek reports the account as unavailable (`is_available: false`)"
-    if usd and usd[0] < budget:
-        return False, f"the DeepSeek balance is ${usd[0]:.2f}, below the review budget of ${budget:.2f}"
+    # User decision 2026-11-04: no "balance >= review budget" gate. A run only
+    # needs a positive balance; the per-leg budgets still cap what it spends.
+    if usd and usd[0] <= 0:
+        return False, f"the DeepSeek balance is ${usd[0]:.2f}"
     return True, ""
 
 
