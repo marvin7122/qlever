@@ -103,26 +103,42 @@ TEST(ServerTest, compressBodyForQuery) {
   auto body = [&text]() {
     return ad_utility::testing::inPieces(text, numberOfBytesPerPiece);
   };
+  auto allocator = qlever::makeUnlimitedAllocator<char>();
   for (auto method : {ad_utility::content_encoding::CompressionMethod::DEFLATE,
                       ad_utility::content_encoding::CompressionMethod::GZIP}) {
     // The body, compressed as `Server` does for the current value of
     // `parallel-response-compression`.
-    auto compressWithServer = [&pool, &body, method]() {
-      return ad_utility::testing::concatenate(
-          Server::compressBodyForQuery(pool.get_executor())(body(), method));
+    auto compressWithServer = [&pool, &body, &allocator, method]() {
+      return ad_utility::testing::concatenate(Server::compressBodyForQuery(
+          pool.get_executor(), allocator)(body(), method));
     };
     auto sequential = ad_utility::testing::concatenate(
         ad_utility::streams::compressStream(body(), method));
     auto parallel = ad_utility::testing::concatenate(
         ad_utility::streams::compressStreamInParallel(
             body(), method, pool.get_executor(), 1,
-            ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE));
+            ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE, allocator));
     ASSERT_NE(sequential, parallel);
     EXPECT_EQ(compressWithServer(), sequential);
     auto cleanup = setRuntimeParameterForTest<
         &RuntimeParameters::parallelResponseCompression_>(true);
     EXPECT_EQ(compressWithServer(), parallel);
   }
+
+  // The memory of the blocks counts against the allocator of the query, so a
+  // limit that is too small makes the compression fail, and nothing stays
+  // reserved.
+  auto cleanup = setRuntimeParameterForTest<
+      &RuntimeParameters::parallelResponseCompression_>(true);
+  const auto smallLimit = ad_utility::MemorySize::bytes(1000);
+  auto limitedAllocator = qlever::makeAllocatorWithLimit<char>(smallLimit);
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      ad_utility::testing::concatenate(
+          Server::compressBodyForQuery(pool.get_executor(), limitedAllocator)(
+              body(), ad_utility::content_encoding::CompressionMethod::GZIP)),
+      ::testing::HasSubstr("Tried to allocate"),
+      ad_utility::detail::AllocationExceedsLimitException);
+  EXPECT_EQ(limitedAllocator.amountMemoryLeft(), smallLimit);
 }
 
 // _____________________________________________________________________________

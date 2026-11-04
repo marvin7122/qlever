@@ -36,6 +36,12 @@ namespace pc = ad_utility::streams::detail::parallelCompression;
 constexpr size_t minBlock =
     ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE.getBytes();
 
+// An allocator without a memory limit, for the tests that do not look at the
+// accounting of the memory.
+qlever::Allocator<char> unlimitedAllocator() {
+  return qlever::makeUnlimitedAllocator<char>();
+}
+
 // Yield the `pieces` as they are (including empty ones).
 cppcoro::generator<std::string> yieldAll(std::vector<std::string> pieces) {
   for (auto& piece : pieces) {
@@ -143,6 +149,9 @@ class ParallelCompressorStream
           ad_utility::content_encoding::CompressionMethod> {
  protected:
   boost::asio::thread_pool pool_{4};
+  // The allocator whose memory limit the compression counts against. A test
+  // can replace it by one with a limit.
+  qlever::Allocator<char> allocator_ = unlimitedAllocator();
 
   // Compress the `input` on the `pool_`, and check that both decoders give
   // the `expected` bytes. Return the compressed bytes.
@@ -154,7 +163,7 @@ class ParallelCompressorStream
     auto compressed = ad_utility::testing::concatenate(
         ad_utility::streams::compressStreamInParallel(
             std::move(input), GetParam(), pool_.get_executor(),
-            maxNumberOfBlocksInFlight, blockSize));
+            maxNumberOfBlocksInFlight, blockSize, allocator_));
     EXPECT_EQ(inflateStrictly(compressed, GetParam(), expected.size()),
               expected);
     EXPECT_EQ(decompressWithBoost(compressed, GetParam()), expected);
@@ -234,7 +243,7 @@ TEST_P(ParallelCompressorStream, blocksUseTheDictionary) {
        ad_utility::chunkedIotaView(size_t{0}, text.size(), minBlock)) {
     numberOfBytesWithoutDictionary +=
         pc::compressBlock({text.substr(begin, end - begin), std::string{}},
-                          format)
+                          format, unlimitedAllocator())
             .deflateData_.bytes_.size();
   }
   EXPECT_GT(numberOfBytesWithoutDictionary, 10 * unit.size());
@@ -275,10 +284,37 @@ TEST_P(ParallelCompressorStream, blockSizeOutsideOfTheRangeIsRejected) {
             streams::MAX_COMPRESSION_BLOCK_SIZE.getBytes() + 1)}) {
     AD_EXPECT_THROW_WITH_MESSAGE(
         streams::compressStreamInParallel(yieldAll({"x"}), GetParam(),
-                                          pool_.get_executor(), 1, blockSize)
+                                          pool_.get_executor(), 1, blockSize,
+                                          allocator_)
             .begin(),
         ::testing::HasSubstr("minBlockSize"));
   }
+}
+
+// _____________________________________________________________________________
+// The memory of the blocks in flight counts against the memory limit, and all
+// of it is released after the compression, also if the limit is exceeded.
+TEST_P(ParallelCompressorStream, memoryLimit) {
+  auto text = csvLikeText(8 * minBlock + 17);
+  // A limit that suffices: the result is correct, and nothing stays reserved.
+  const auto sufficientLimit = ad_utility::MemorySize::megabytes(64);
+  allocator_ = qlever::makeAllocatorWithLimit<char>(sufficientLimit);
+  compressAndCheck(ad_utility::testing::inPieces(text, 1000), text);
+  EXPECT_EQ(allocator_.amountMemoryLeft(), sufficientLimit);
+
+  // A limit that is smaller than the input and the output buffer of two
+  // blocks: the compression fails with the usual out-of-memory error.
+  const auto smallLimit = ad_utility::MemorySize::bytes(2 * minBlock);
+  allocator_ = qlever::makeAllocatorWithLimit<char>(smallLimit);
+  AD_EXPECT_THROW_WITH_MESSAGE_AND_TYPE(
+      ad_utility::testing::concatenate(
+          ad_utility::streams::compressStreamInParallel(
+              ad_utility::testing::inPieces(text, 1000), GetParam(),
+              pool_.get_executor(), 8,
+              ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE, allocator_)),
+      ::testing::HasSubstr("Tried to allocate"),
+      ad_utility::detail::AllocationExceedsLimitException);
+  EXPECT_EQ(allocator_.amountMemoryLeft(), smallLimit);
 }
 
 // _____________________________________________________________________________
@@ -289,7 +325,7 @@ TEST_P(ParallelCompressorStream, noneIsTheIdentity) {
           ad_utility::testing::inPieces(text, 1000),
           ad_utility::content_encoding::CompressionMethod::NONE,
           pool_.get_executor(), 2,
-          ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE));
+          ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE, allocator_));
   EXPECT_EQ(output, text);
 }
 
@@ -297,6 +333,8 @@ TEST_P(ParallelCompressorStream, noneIsTheIdentity) {
 // An exception from the input (in the server, for example, the cancellation
 // of the query) reaches the consumer, also while blocks are in flight.
 TEST_P(ParallelCompressorStream, exceptionInTheInputIsPropagated) {
+  const auto memoryLimit = ad_utility::MemorySize::gigabytes(1);
+  allocator_ = qlever::makeAllocatorWithLimit<char>(memoryLimit);
   auto throwing = []() -> cppcoro::generator<std::string> {
     for ([[maybe_unused]] size_t i : ql::views::iota(size_t{0}, size_t{10})) {
       co_yield csvLikeText(minBlock);
@@ -305,10 +343,12 @@ TEST_P(ParallelCompressorStream, exceptionInTheInputIsPropagated) {
   };
   auto generator = ad_utility::streams::compressStreamInParallel(
       throwing(), GetParam(), pool_.get_executor(), 4,
-      ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE);
+      ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE, allocator_);
   AD_EXPECT_THROW_WITH_MESSAGE(
       ad_utility::testing::concatenate(std::move(generator)),
       ::testing::HasSubstr("Operation was manually cancelled."));
+  // The memory of the blocks in flight is released.
+  EXPECT_EQ(allocator_.amountMemoryLeft(), memoryLimit);
 }
 
 // An endless input of 1 MiB pieces, which counts the pieces that are read.
@@ -326,12 +366,14 @@ cppcoro::generator<std::string> endlessInput(size_t& numberOfPiecesRead) {
 TEST_P(ParallelCompressorStream, earlyDestruction) {
   constexpr size_t maxNumberOfBlocksInFlight = 4;
   constexpr size_t numberOfBlocksConsumed = 2;
+  const auto memoryLimit = ad_utility::MemorySize::gigabytes(1);
+  allocator_ = qlever::makeAllocatorWithLimit<char>(memoryLimit);
   size_t numberOfPiecesRead = 0;
   {
     auto generator = ad_utility::streams::compressStreamInParallel(
         endlessInput(numberOfPiecesRead), GetParam(), pool_.get_executor(),
         maxNumberOfBlocksInFlight,
-        ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE);
+        ad_utility::streams::DEFAULT_COMPRESSION_BLOCK_SIZE, allocator_);
     // The header, and then the consumed blocks.
     auto it = generator.begin();
     for ([[maybe_unused]] size_t i :
@@ -340,7 +382,11 @@ TEST_P(ParallelCompressorStream, earlyDestruction) {
       ++it;
     }
     ASSERT_NE(it, generator.end());
+    // The blocks in flight are counted against the memory limit.
+    EXPECT_LT(allocator_.amountMemoryLeft(), memoryLimit);
   }
+  // The destruction releases the memory of the blocks in flight.
+  EXPECT_EQ(allocator_.amountMemoryLeft(), memoryLimit);
   // The consumed blocks and the (at most) blocks in flight, one piece each.
   EXPECT_LE(numberOfPiecesRead,
             numberOfBlocksConsumed + maxNumberOfBlocksInFlight);
@@ -379,10 +425,12 @@ TEST(ParallelCompressorStreamFrame, trailerOfSeveralBlocks) {
     std::string_view rest = text;
     for (size_t blockSize : {minBlock, size_t{1}, 2 * minBlock}) {
       frame.add(pc::compressBlock(
-          {std::string{rest.substr(0, blockSize)}, std::string{}}, format));
+          {std::string{rest.substr(0, blockSize)}, std::string{}}, format,
+          unlimitedAllocator()));
       rest.remove_prefix(blockSize);
     }
-    frame.add(pc::compressBlock({std::string{rest}, std::string{}}, format));
+    frame.add(pc::compressBlock({std::string{rest}, std::string{}}, format,
+                                unlimitedAllocator()));
     auto trailer = frame.finalBlockAndTrailer();
     const auto* data = reinterpret_cast<const Bytef*>(text.data());
     auto byte = [&trailer](size_t i) {
@@ -451,8 +499,8 @@ TEST(ParallelCompressorStreamFrame, sizeModulo2To32) {
 TEST(ParallelCompressorStreamFrame, formatsCannotBeMixed) {
   pc::StreamFrame zlib{pc::StreamFormat::Zlib};
   AD_EXPECT_THROW_WITH_MESSAGE(
-      zlib.add(
-          pc::compressBlock({"abc", std::string{}}, pc::StreamFormat::Gzip)),
+      zlib.add(pc::compressBlock({"abc", std::string{}}, pc::StreamFormat::Gzip,
+                                 unlimitedAllocator())),
       ::testing::HasSubstr("A block was compressed for another stream format"));
 }
 
@@ -461,7 +509,8 @@ TEST(ParallelCompressorStreamFrame, formatsCannotBeMixed) {
 // empty stored block `00 00 FF FF`), so it is byte-aligned and not final.
 TEST(ParallelCompressorStreamFrame, blockEndsWithSyncFlush) {
   for (auto format : {pc::StreamFormat::Zlib, pc::StreamFormat::Gzip}) {
-    auto block = pc::compressBlock({csvLikeText(1000), std::string{}}, format);
+    auto block = pc::compressBlock({csvLikeText(1000), std::string{}}, format,
+                                   unlimitedAllocator());
     EXPECT_THAT(block.deflateData_.bytes_,
                 ::testing::EndsWith(std::string{"\0\0\xff\xff", 4}));
     EXPECT_EQ(block.uncompressedSize_, ad_utility::MemorySize::bytes(1000));

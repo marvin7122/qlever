@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 #include <variant>
 
 #include "backports/algorithm.h"
@@ -61,8 +62,49 @@ Checksum checksum(StreamFormat format, std::string_view bytes) noexcept {
 }  // namespace
 
 // _____________________________________________________________________________
+MemoryReservation::MemoryReservation(qlever::Allocator<char> allocator,
+                                     size_t numberOfBytes)
+    : numberOfBytes_{numberOfBytes} {
+  if (numberOfBytes_ > 0) {
+    data_ = allocator.allocate(numberOfBytes_);
+    allocator_ = std::move(allocator);
+  }
+}
+
+// _____________________________________________________________________________
+MemoryReservation::MemoryReservation(MemoryReservation&& other) noexcept
+    : allocator_{std::move(other.allocator_)},
+      data_{std::exchange(other.data_, nullptr)},
+      numberOfBytes_{std::exchange(other.numberOfBytes_, 0)} {}
+
+// _____________________________________________________________________________
+MemoryReservation& MemoryReservation::operator=(
+    MemoryReservation&& other) noexcept {
+  if (this != &other) {
+    release();
+    allocator_ = std::move(other.allocator_);
+    data_ = std::exchange(other.data_, nullptr);
+    numberOfBytes_ = std::exchange(other.numberOfBytes_, 0);
+  }
+  return *this;
+}
+
+// _____________________________________________________________________________
+MemoryReservation::~MemoryReservation() { release(); }
+
+// _____________________________________________________________________________
+void MemoryReservation::release() noexcept {
+  if (data_ != nullptr) {
+    allocator_->deallocate(data_, numberOfBytes_);
+    data_ = nullptr;
+  }
+  numberOfBytes_ = 0;
+}
+
+// _____________________________________________________________________________
 CompressedBlock compressBlock(const UncompressedBlock& block,
-                              StreamFormat format) {
+                              StreamFormat format,
+                              const qlever::Allocator<char>& allocator) {
   z_stream stream{};
   // Raw deflate (negative window bits, so without a zlib or gzip header and
   // trailer, which `StreamFrame` writes once for the whole stream) at level 1,
@@ -88,6 +130,7 @@ CompressedBlock compressBlock(const UncompressedBlock& block,
 
   std::string out;
   out.resize(deflateBound(&stream, block.bytes_.size()) + 16);
+  MemoryReservation bufferReservation{allocator, out.size()};
   std::string_view remainingInput = block.bytes_;
   // The input is passed in pieces that fit into the `uInt` of zlib, the last
   // one with `Z_SYNC_FLUSH`. For each piece, `deflate` is called until it
@@ -123,8 +166,10 @@ CompressedBlock compressBlock(const UncompressedBlock& block,
   // block may wait in memory until it is its turn to be sent.
   out.resize(stream.total_out);
   out.shrink_to_fit();
+  bufferReservation = MemoryReservation{};
   return {RawDeflateData{std::move(out)}, checksum(format, block.bytes_),
-          ad_utility::MemorySize::bytes(block.bytes_.size())};
+          ad_utility::MemorySize::bytes(block.bytes_.size()),
+          MemoryReservation{allocator, stream.total_out}};
 }
 
 // _____________________________________________________________________________
@@ -182,10 +227,11 @@ namespace {
 // is at least `DICTIONARY_SIZE`) bytes (except the last one), each with the
 // last `DICTIONARY_SIZE` bytes of the previous block as its dictionary.
 cppcoro::generator<UncompressedBlock> cutIntoBlocks(
-    cppcoro::generator<std::string> range, size_t minBlockSize) {
+    cppcoro::generator<std::string> range, size_t minBlockSize,
+    qlever::Allocator<char> allocator) {
   std::string dictionary;
   std::string bytes;
-  auto makeBlock = [&dictionary, &bytes]() {
+  auto makeBlock = [&dictionary, &bytes, &allocator]() {
     // Each block that has a successor has at least
     // `DICTIONARY_SIZE` bytes, so the dictionary of the next block is the end
     // of this one.
@@ -193,7 +239,9 @@ cppcoro::generator<UncompressedBlock> cutIntoBlocks(
         bytes.end() - static_cast<ptrdiff_t>(
                           std::min(bytes.size(), DICTIONARY_SIZE.getBytes())),
         bytes.end()};
-    UncompressedBlock block{std::move(bytes), std::move(dictionary)};
+    MemoryReservation reservation{allocator, bytes.size() + dictionary.size()};
+    UncompressedBlock block{std::move(bytes), std::move(dictionary),
+                            std::move(reservation)};
     dictionary = std::move(nextDictionary);
     bytes = std::string{};
     return block;
@@ -221,7 +269,7 @@ cppcoro::generator<std::string> compressStreamInParallel(
     cppcoro::generator<std::string> range,
     content_encoding::CompressionMethod compressionMethod,
     qlever::Executor executor, size_t maxNumberOfBlocksInFlight,
-    ad_utility::MemorySize minBlockSize) {
+    ad_utility::MemorySize minBlockSize, qlever::Allocator<char> allocator) {
   namespace pc = detail::parallelCompression;
   AD_CONTRACT_CHECK(maxNumberOfBlocksInFlight >= 1);
   AD_CONTRACT_CHECK(
@@ -242,9 +290,9 @@ cppcoro::generator<std::string> compressStreamInParallel(
   // When this generator is destroyed early (for example, after a client
   // disconnect), the view waits for the blocks in flight.
   ad_utility::AsyncTransformView compressedBlocks{
-      pc::cutIntoBlocks(std::move(range), minBlockSize.getBytes()),
-      [format](const pc::UncompressedBlock& block) {
-        return pc::compressBlock(block, format);
+      pc::cutIntoBlocks(std::move(range), minBlockSize.getBytes(), allocator),
+      [format, allocator](const pc::UncompressedBlock& block) {
+        return pc::compressBlock(block, format, allocator);
       },
       maxNumberOfBlocksInFlight, std::move(executor)};
   for (pc::CompressedBlock& block : compressedBlocks) {

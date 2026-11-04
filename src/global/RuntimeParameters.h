@@ -300,8 +300,13 @@ struct RuntimeParameters {
   // it keeps the loss of compression ratio at the block boundaries small (a
   // block uses the last 32 KiB of the previous one as its dictionary), lets a
   // response of a few MiB use several threads, and bounds the memory of the
-  // blocks in flight (about `2 * max-num-threads-per-query * 2` times the block
-  // size, as each block holds its input and its output buffer). The value must
+  // blocks in flight: each of the `2 * max-num-threads-per-query` blocks holds
+  // its input (the block size plus the 32 KiB dictionary) and, while it is
+  // compressed, an output buffer of the `deflateBound` of its input (about the
+  // block size), afterwards its compressed bytes. So the memory is at most
+  // about `2 * max-num-threads-per-query * (block size + compressed bound)`.
+  // It is counted against the memory limit of the query: a query that would
+  // exceed the limit fails with the usual out-of-memory error. The value must
   // lie between 32 KiB (the dictionary of a block must lie in the previous
   // block) and 16 MiB (larger blocks delay the first byte and multiply the
   // memory without improving the ratio noticeably); this is enforced by a

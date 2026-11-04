@@ -1117,7 +1117,7 @@ ad_utility::websocket::OwningQueryId Server::getQueryId(
 
 // _____________________________________________________________________________
 ad_utility::httpUtils::CompressBody Server::compressBodyForQuery(
-    qlever::Executor executor) {
+    qlever::Executor executor, qlever::Allocator<char> allocator) {
   if (!getRuntimeParameter<
           &RuntimeParameters::parallelResponseCompression_>()) {
     return ad_utility::httpUtils::compressSequentially<>;
@@ -1131,12 +1131,13 @@ ad_utility::httpUtils::CompressBody Server::compressBodyForQuery(
   const ad_utility::MemorySize blockSize = getRuntimeParameter<
       &RuntimeParameters::parallelResponseCompressionBlockSize_>();
 
-  return [executor = std::move(executor), maxNumberOfBlocksInFlight, blockSize](
+  return [executor = std::move(executor), maxNumberOfBlocksInFlight, blockSize,
+          allocator = std::move(allocator)](
              cppcoro::generator<std::string> body,
              ad_utility::content_encoding::CompressionMethod method) {
     return ad_utility::streams::compressStreamInParallel(
-        std::move(body), method, executor, maxNumberOfBlocksInFlight,
-        blockSize);
+        std::move(body), method, executor, maxNumberOfBlocksInFlight, blockSize,
+        allocator);
   };
 }
 
@@ -1165,7 +1166,11 @@ Awaitable<void> Server::sendStreamableResponse(
   auto response = ad_utility::httpUtils::createOkResponse(
       std::move(responseGenerator), request, mediaType,
       compressBodyForQuery(
-          plannedQuery.queryExecutionTree().getQec()->executor()));
+          plannedQuery.queryExecutionTree().getQec()->executor(),
+          plannedQuery.queryExecutionTree()
+              .getQec()
+              ->getAllocator()
+              .as<char>()));
   if (plannedQuery.parsedQuery().responseMiddleware_.has_value()) {
     response =
         plannedQuery.parsedQuery().responseMiddleware_.value().applyQuery(
