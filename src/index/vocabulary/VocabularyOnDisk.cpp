@@ -1,6 +1,12 @@
-// Copyright 2022, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2022 - 2026, The QLever Authors, in particular:
+//
+// 2022 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #include "index/vocabulary/VocabularyOnDisk.h"
 
@@ -10,7 +16,9 @@
 #include <algorithm>
 #include <array>
 
+#include "backports/filesystem.h"
 #include "global/Constants.h"
+#include "global/RuntimeParameters.h"
 #include "util/ExceptionHandling.h"
 #include "util/InputRangeUtils.h"
 #include "util/Iterators.h"
@@ -156,9 +164,74 @@ VocabularyScanRange VocabularyOnDisk::scanAll() const {
 }
 
 // _____________________________________________________________________________
+void VocabularyOnDisk::readThroughManager(ad_utility::BatchManagerBase& manager,
+                                          int fd,
+                                          ql::span<const size_t> numBytes,
+                                          ql::span<const uint64_t> offsets,
+                                          ql::span<char*> buffers,
+                                          ql::span<const size_t> positions) {
+  if (positions.empty()) {
+    return;
+  }
+  auto select = [&positions](auto values) {
+    return ::ranges::to_vector(
+        positions |
+        ql::views::transform([&values](size_t i) { return values[i]; }));
+  };
+  auto selectedNumBytes = select(numBytes);
+  auto selectedOffsets = select(offsets);
+  auto selectedBuffers = select(buffers);
+  manager.wait(
+      manager.addBatch(fd, selectedNumBytes, selectedOffsets, selectedBuffers));
+}
+
+// _____________________________________________________________________________
+std::vector<size_t> VocabularyOnDisk::readResidentOrPageCacheHits(
+    const ad_utility::ResidentFileMapping* mapping, int fd,
+    ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
+    ql::span<char*> buffers) {
+  if (mapping == nullptr) {
+    return ad_utility::readPageCacheHits(fd, numBytes, offsets, buffers);
+  }
+  // The reads that the mapping could not serve, compacted (in order, so that
+  // adjacent ranges are still coalesced by `readPageCacheHits`).
+  auto candidates = mapping->tryReadAll(numBytes, offsets, buffers);
+  if (candidates.empty()) {
+    return candidates;
+  }
+  std::vector<size_t> candidateNumBytes;
+  std::vector<uint64_t> candidateOffsets;
+  std::vector<char*> candidateBuffers;
+  candidateNumBytes.reserve(candidates.size());
+  candidateOffsets.reserve(candidates.size());
+  candidateBuffers.reserve(candidates.size());
+  for (size_t i : candidates) {
+    candidateNumBytes.push_back(numBytes[i]);
+    candidateOffsets.push_back(offsets[i]);
+    candidateBuffers.push_back(buffers[i]);
+  }
+  auto missedCandidates = ad_utility::readPageCacheHits(
+      fd, candidateNumBytes, candidateOffsets, candidateBuffers);
+  // Mark the served candidates resident and translate the missed ones back to
+  // the original indices (both lists are ascending).
+  std::vector<size_t> missed;
+  missed.reserve(missedCandidates.size());
+  auto nextMissed = missedCandidates.begin();
+  for (size_t k = 0; k < candidates.size(); ++k) {
+    if (nextMissed != missedCandidates.end() && *nextMissed == k) {
+      missed.push_back(candidates[k]);
+      ++nextMissed;
+    } else {
+      mapping->markResident(candidateOffsets[k], candidateNumBytes[k]);
+    }
+  }
+  return missed;
+}
+
+// _____________________________________________________________________________
 std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
-    ad_utility::BatchManagerBase& manager,
-    ql::span<const size_t> indices) const {
+    ad_utility::BatchManagerBase& manager, ql::span<const size_t> indices,
+    bool pageCacheFastPath, bool residentReads) const {
   // For each requested index `i`, read its offset together with the next offset
   // (which bounds the string) as one 16-byte pair from `.offsets`.
   const size_t numIndices = indices.size();
@@ -172,41 +245,103 @@ std::vector<VocabularyOnDisk::OffsetPair> VocabularyOnDisk::readOffsetPairs(
     fileOffset = index * sizeof(uint64_t);
     target = reinterpret_cast<char*>(&offsetPair);
   }
-  manager.wait(
-      manager.addBatch(offsetsFile_.fd(), sizes, fileOffsets, targets));
+  if (!pageCacheFastPath) {
+    manager.wait(
+        manager.addBatch(offsetsFile_.fd(), sizes, fileOffsets, targets));
+    return offsetPairs;
+  }
+
+  // The pairs of consecutive indices overlap in the file, so read each run of
+  // consecutive indices `[runBegins[r], runBegins[r + 1])` as one range of
+  // `runLength + 1` offsets into `runOffsets`.
+  std::vector<size_t> runBegins{0};
+  for (size_t i = 1; i < numIndices; ++i) {
+    if (indices[i] != indices[i - 1] + 1) {
+      runBegins.push_back(i);
+    }
+  }
+  runBegins.push_back(numIndices);
+  const size_t numRuns = runBegins.size() - 1;
+  std::vector<uint64_t> runOffsets(numIndices + numRuns);
+  std::vector<size_t> runSizes(numRuns);
+  std::vector<uint64_t> runFileOffsets(numRuns);
+  std::vector<char*> runTargets(numRuns);
+  for (size_t run = 0; run < numRuns; ++run) {
+    const size_t begin = runBegins[run];
+    const size_t length = runBegins[run + 1] - begin;
+    runSizes[run] = (length + 1) * sizeof(uint64_t);
+    runFileOffsets[run] = fileOffsets[begin];
+    runTargets[run] = reinterpret_cast<char*>(runOffsets.data() + begin + run);
+  }
+  auto missedRuns = readResidentOrPageCacheHits(
+      residentReads ? &offsetsMapping_ : nullptr, offsetsFile_.fd(), runSizes,
+      runFileOffsets, runTargets);
+
+  // Fill the pairs of the served runs, and collect the pairs of the missed runs
+  // for `manager`.
+  std::vector<size_t> missedPositions;
+  auto missedRun = missedRuns.begin();
+  for (size_t run = 0; run < numRuns; ++run) {
+    const size_t begin = runBegins[run];
+    const size_t end = runBegins[run + 1];
+    if (missedRun != missedRuns.end() && *missedRun == run) {
+      ++missedRun;
+      for (size_t i = begin; i < end; ++i) {
+        missedPositions.push_back(i);
+      }
+      continue;
+    }
+    const uint64_t* runStart = runOffsets.data() + begin + run;
+    for (size_t i = begin; i < end; ++i) {
+      offsetPairs[i] = OffsetPair{runStart[i - begin], runStart[i - begin + 1]};
+    }
+  }
+  readThroughManager(manager, offsetsFile_.fd(), sizes, fileOffsets, targets,
+                     missedPositions);
+  if (residentReads) {
+    offsetsMapping_.markAllResident(sizes, fileOffsets, missedPositions);
+  }
   return offsetPairs;
 }
 
 // _____________________________________________________________________________
 VocabBatchLookupResult VocabularyOnDisk::readStrings(
     ad_utility::BatchManagerBase& manager,
-    ql::span<const OffsetPair> offsetPairs) const {
+    ql::span<const OffsetPair> offsetPairs, bool pageCacheFastPath,
+    bool residentReads) const {
   // Read the string data. String `i` starts at `offset_` with length
-  // `nextOffset_ - offset_`; the strings are packed contiguously into `buffer`.
+  // `nextOffset_ - offset_`; the strings are packed contiguously into the
+  // builder's buffer, with one precomputed view per word at its fixed offset.
   const size_t numIndices = offsetPairs.size();
   std::vector<size_t> sizes(numIndices);
   std::vector<uint64_t> fileOffsets(numIndices);
   for (auto&& [size, fileOffset, offsetPair] :
        ::ranges::views::zip(sizes, fileOffsets, offsetPairs)) {
-    size = offsetPair.nextOffset_ - offsetPair.offset_;
-    fileOffset = offsetPair.offset_;
+    size = offsetPair.wordSize();
+    fileOffset = offsetPair.offset();
   }
 
-  auto data = std::make_shared<VocabBatchLookupData>();
-  data->buffer().resize(::ranges::accumulate(sizes, size_t{0}));
-  data->views().resize(numIndices);
-
-  std::vector<char*> targets(numIndices);
-  size_t bufferOffset = 0;
-  for (auto&& [target, view, size] :
-       ::ranges::views::zip(targets, data->views(), sizes)) {
-    target = data->buffer().data() + bufferOffset;
-    view = std::string_view(target, size);
-    bufferOffset += size;
+  // `lookupBatch` rejects empty input, so `sizes` is non-empty here, as the
+  // builder requires.
+  AD_CORRECTNESS_CHECK(!sizes.empty());
+  ContiguousVocabBatchBuilder builder(sizes);
+  // Bind the returned array: `addBatch` takes a span, and the pointers must
+  // stay alive until `wait` returns.
+  auto targets = builder.targets();
+  ql::span<char*> targetSpan{targets};
+  if (pageCacheFastPath) {
+    const auto* mapping = residentReads ? &wordsMapping_ : nullptr;
+    auto missed = readResidentOrPageCacheHits(mapping, file_.fd(), sizes,
+                                              fileOffsets, targetSpan);
+    readThroughManager(manager, file_.fd(), sizes, fileOffsets, targetSpan,
+                       missed);
+    if (mapping != nullptr) {
+      mapping->markAllResident(sizes, fileOffsets, missed);
+    }
+  } else {
+    manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targetSpan));
   }
-
-  manager.wait(manager.addBatch(file_.fd(), sizes, fileOffsets, targets));
-  return VocabBatchLookupData::asResult(std::move(data));
+  return std::move(builder).finalize();
 }
 
 // _____________________________________________________________________________
@@ -225,8 +360,24 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
         "`VocabularyOnDisk::lookupBatch`");
   }};
 
-  auto offsetPairs = readOffsetPairs(*manager, indices);
-  return readStrings(*manager, offsetPairs);
+  const bool pageCacheFastPath =
+      getRuntimeParameter<
+          &RuntimeParameters::vocabularyIouringPageCacheFastPath_>() &&
+      ad_utility::pageCacheFastPathIsSupported();
+  const bool residentReads =
+      pageCacheFastPath &&
+      getRuntimeParameter<&RuntimeParameters::vocabularyMmapResidentReads_>();
+  // Apply the resident cap (0 means unbounded). The setter is cheap when the
+  // value is unchanged (one atomic exchange) and recounts plus enforces only
+  // on change.
+  const size_t residentCapPages =
+      getRuntimeParameter<&RuntimeParameters::vocabularyMmapResidentCapMb_>() *
+      256;
+  wordsMapping_.setResidentCapPages(residentCapPages);
+  offsetsMapping_.setResidentCapPages(residentCapPages);
+  auto offsetPairs =
+      readOffsetPairs(*manager, indices, pageCacheFastPath, residentReads);
+  return readStrings(*manager, offsetPairs, pageCacheFastPath, residentReads);
 }
 
 // _____________________________________________________________________________
@@ -279,6 +430,13 @@ VocabularyOnDisk::WordWriter::~WordWriter() {
 void VocabularyOnDisk::open(const std::string& filename) {
   file_.open(filename, "r");
   offsetsFile_.open(filename + offsetSuffix_, "r");
+  // Map both files for `vocabulary-mmap-resident-reads`. If a mapping fails,
+  // all reads of that file take the other paths.
+  wordsMapping_ = ad_utility::ResidentFileMapping(
+      file_.fd(), static_cast<size_t>(ql::filesystem::file_size(filename)));
+  offsetsMapping_ = ad_utility::ResidentFileMapping(
+      offsetsFile_.fd(), static_cast<size_t>(ql::filesystem::file_size(
+                             filename + std::string{offsetSuffix_})));
 
   // Read the offset count from the `MmapVectorMetaData` trailer, which is
   // the canonical layout used by both old and new vocabulary files.
