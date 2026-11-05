@@ -8,8 +8,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_UTIL_IOURINGMANAGER_H
-#define QLEVER_SRC_UTIL_IOURINGMANAGER_H
+#ifndef QLEVER_SRC_UTIL_IO_URING_IOURINGMANAGER_H
+#define QLEVER_SRC_UTIL_IO_URING_IOURINGMANAGER_H
 
 #include <gtest/gtest_prod.h>
 
@@ -38,8 +38,8 @@
 #endif
 
 #include "backports/span.h"
-#include "util/IoUringManagerConcepts.h"
-#include "util/PageCacheFirstPolicy.h"
+#include "util/io_uring/IoUringManagerConcepts.h"
+#include "util/io_uring/PageCacheFirstPolicy.h"
 
 namespace ad_utility {
 
@@ -289,4 +289,4 @@ inline std::unique_ptr<BatchManagerBase> makeBatchManager(
 
 }  // namespace ad_utility
 
-#endif  // QLEVER_SRC_UTIL_IOURINGMANAGER_H
+#endif  // QLEVER_SRC_UTIL_IO_URING_IOURINGMANAGER_H

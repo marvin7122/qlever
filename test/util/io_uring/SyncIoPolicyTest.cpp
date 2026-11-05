@@ -13,9 +13,9 @@
 #include <string>
 #include <vector>
 
-#include "util/GTestHelpers.h"
-#include "util/IoUringManager.h"
-#include "util/IoUringManagerTestHelpers.h"
+#include "../GTestHelpers.h"
+#include "IoUringManagerTestHelpers.h"
+#include "util/io_uring/IoUringManager.h"
 
 namespace {
 

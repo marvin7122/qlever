@@ -8,8 +8,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_SRC_UTIL_PAGECACHEFIRSTPOLICY_H
-#define QLEVER_SRC_UTIL_PAGECACHEFIRSTPOLICY_H
+#ifndef QLEVER_SRC_UTIL_IO_URING_PAGECACHEFIRSTPOLICY_H
+#define QLEVER_SRC_UTIL_IO_URING_PAGECACHEFIRSTPOLICY_H
 
 #include <cstdint>
 #include <type_traits>
@@ -17,7 +17,7 @@
 
 #include "backports/algorithm.h"
 #include "backports/span.h"
-#include "util/IoUringManagerConcepts.h"
+#include "util/io_uring/IoUringManagerConcepts.h"
 
 namespace ad_utility {
 
@@ -119,4 +119,4 @@ class PageCacheFirstPolicy {
 
 }  // namespace ad_utility
 
-#endif  // QLEVER_SRC_UTIL_PAGECACHEFIRSTPOLICY_H
+#endif  // QLEVER_SRC_UTIL_IO_URING_PAGECACHEFIRSTPOLICY_H

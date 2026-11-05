@@ -8,8 +8,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_TEST_UTIL_IOURINGMANAGERTESTHELPERS_H
-#define QLEVER_TEST_UTIL_IOURINGMANAGERTESTHELPERS_H
+#ifndef QLEVER_TEST_UTIL_IO_URING_IOURINGMANAGERTESTHELPERS_H
+#define QLEVER_TEST_UTIL_IO_URING_IOURINGMANAGERTESTHELPERS_H
 
 #include <gtest/gtest.h>
 
@@ -20,10 +20,10 @@
 #include <utility>
 #include <vector>
 
+#include "../GTestHelpers.h"
 #include "backports/algorithm.h"
 #include "backports/span.h"
 #include "util/File.h"
-#include "GTestHelpers.h"
 
 namespace ioUringManagerTestHelpers {
 
@@ -123,4 +123,4 @@ class ReadBatchForTesting {
 
 }  // namespace ioUringManagerTestHelpers
 
-#endif  // QLEVER_TEST_UTIL_IOURINGMANAGERTESTHELPERS_H
+#endif  // QLEVER_TEST_UTIL_IO_URING_IOURINGMANAGERTESTHELPERS_H
