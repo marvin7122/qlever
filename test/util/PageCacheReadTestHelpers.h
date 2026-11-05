@@ -16,8 +16,8 @@
 #include <cstdint>
 #include <utility>
 
-#include "util/IoUringManager.h"
-#include "util/PageCacheReadHook.h"
+#include "util/io_uring/IoUringManager.h"
+#include "util/io_uring/PageCacheReadHook.h"
 
 namespace pageCacheReadTestHelpers {
 

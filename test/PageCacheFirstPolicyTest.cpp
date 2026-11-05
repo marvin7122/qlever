@@ -20,12 +20,12 @@
 
 #include "util/Exception.h"
 #include "util/GTestHelpers.h"
-#include "util/IoUringManager.h"
 #include "util/IoUringManagerTestHelpers.h"
-#include "util/PageCacheFirstPolicy.h"
-#include "util/PageCacheReadHook.h"
 #include "util/PageCacheReadTestHelpers.h"
 #include "util/Views.h"
+#include "util/io_uring/IoUringManager.h"
+#include "util/io_uring/PageCacheFirstPolicy.h"
+#include "util/io_uring/PageCacheReadHook.h"
 
 namespace {
 

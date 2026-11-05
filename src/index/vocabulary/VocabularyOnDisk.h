@@ -21,11 +21,11 @@
 #include "util/Algorithm.h"
 #include "util/File.h"
 #include "util/Generator.h"
-#include "util/IoUringManager.h"
 #include "util/Iterators.h"
 #include "util/Serializer/Serializer.h"
 #include "util/ThreadSafeQueue.h"
 #include "util/UninitializedAllocator.h"
+#include "util/io_uring/IoUringManager.h"
 
 // On-disk vocabulary of strings. Each entry is a pair of <ID, String>. The IDs
 // are ascending, but not (necessarily) contiguous. If the strings are sorted,
