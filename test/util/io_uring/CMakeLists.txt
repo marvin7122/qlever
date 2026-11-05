@@ -1,0 +1,3 @@
+addLinkAndDiscoverTestNoLibs(IoUringManagerTest qlever_util)
+addLinkAndDiscoverTestNoLibs(SyncIoPolicyTest qlever_util)
+addLinkAndDiscoverTestNoLibs(PageCacheFirstPolicyTest qlever_util)

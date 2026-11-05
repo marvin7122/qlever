@@ -180,6 +180,7 @@ add_subdirectory(joinAlgorithms)
 add_subdirectory(libqlever)
 add_subdirectory(parallelBlockMerge)
 add_subdirectory(blockSort)
+add_subdirectory(util/io_uring)
 
 # Only register tests whose libraries are built (not the case for Emscripten).
 if (TARGET benchmark)
@@ -654,12 +655,6 @@ addLinkAndDiscoverTestNoLibs(ConstexprMapTest)
 addLinkAndDiscoverTest(ParallelExecutorTest)
 
 addLinkAndDiscoverTest(MathTest)
-
-addLinkAndDiscoverTestNoLibs(IoUringManagerTest qlever_util)
-
-addLinkAndDiscoverTestNoLibs(SyncIoPolicyTest qlever_util)
-
-addLinkAndDiscoverTestNoLibs(PageCacheFirstPolicyTest qlever_util)
 
 addLinkAndDiscoverTestNoLibs(VariantRangeFilterTest)
 

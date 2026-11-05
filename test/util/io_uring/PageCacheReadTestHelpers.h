@@ -7,8 +7,8 @@
 // You may not use this file except in compliance with the Apache 2.0 License,
 // which can be found in the `LICENSE` file at the root of the QLever project.
 
-#ifndef QLEVER_TEST_UTIL_PAGECACHEREADTESTHELPERS_H
-#define QLEVER_TEST_UTIL_PAGECACHEREADTESTHELPERS_H
+#ifndef QLEVER_TEST_UTIL_IO_URING_PAGECACHEREADTESTHELPERS_H
+#define QLEVER_TEST_UTIL_IO_URING_PAGECACHEREADTESTHELPERS_H
 
 #include <sys/uio.h>
 
@@ -79,4 +79,4 @@ inline int64_t notSupported(int, const ::iovec*, int, int64_t) noexcept {
 
 }  // namespace pageCacheReadTestHelpers
 
-#endif  // QLEVER_TEST_UTIL_PAGECACHEREADTESTHELPERS_H
+#endif  // QLEVER_TEST_UTIL_IO_URING_PAGECACHEREADTESTHELPERS_H
