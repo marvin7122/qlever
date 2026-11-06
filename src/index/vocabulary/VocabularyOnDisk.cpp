@@ -214,16 +214,10 @@ VocabBatchLookupResult VocabularyOnDisk::lookupBatch(
     ql::span<const size_t> indices) const {
   AD_CONTRACT_CHECK(!indices.empty());
 
-  auto manager = ioManagers_->pop().value();
-  // Return the `manager` to the pool on every exit path (including exceptions,
-  // e.g. an out-of-range index in phase 1), so we never leak an `IoManager`
-  // (and its io_uring buffers) out of the pool.
-  absl::Cleanup returnManager{[this, &manager]() {
-    ad_utility::terminateIfThrows(
-        [this, &manager]() { ioManagers_->push(std::move(manager)); },
-        "returning the `IoManager` to the pool in "
-        "`VocabularyOnDisk::lookupBatch`");
-  }};
+  // The lease gives the manager back to the pool on every exit path (including
+  // exceptions, e.g. an out-of-range index in phase 1), so we never leak an
+  // `IoManager` (and its io_uring buffers) out of the pool.
+  auto manager = ioManagers_->acquire();
 
   auto offsetPairs = readOffsetPairs(*manager, indices);
   return readStrings(*manager, offsetPairs);
@@ -287,12 +281,12 @@ void VocabularyOnDisk::open(const std::string& filename) {
   AD_CORRECTNESS_CHECK(numOffsets > 0);
   size_ = numOffsets - 1;
 
-  // Initialize pool of persistent `BatchIoManager`s for `lookupBatch`.
-  ioManagers_ = std::make_unique<ad_utility::data_structures::ThreadSafeQueue<
-      std::unique_ptr<ad_utility::BatchManagerBase>>>(
-      NUM_VOCAB_BATCH_IO_MANAGERS);
-  bool preferIoUring = true;
-  for (size_t i = 0; i < NUM_VOCAB_BATCH_IO_MANAGERS; ++i) {
-    ioManagers_->push(ad_utility::makeBatchManager(preferIoUring));
-  }
+  // Initialize the pool of persistent `BatchIoManager`s for `lookupBatch`. The
+  // managers are created when a lookup finds none idle. `preferIoUring` is
+  // cleared by the first failed io_uring setup, so that no later manager
+  // repeats it (see `makeBatchManager`).
+  ioManagers_ = std::make_unique<ad_utility::BatchManagerPool>(
+      MAX_VOCAB_BATCH_IO_MANAGERS, [preferIoUring = true]() mutable {
+        return ad_utility::makeBatchManager(preferIoUring);
+      });
 }

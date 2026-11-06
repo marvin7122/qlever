@@ -377,9 +377,11 @@ constexpr inline size_t MAX_LENGTH_OPERATION_ECHO = 5000;
 constexpr inline std::string_view GSP_DIRECT_GRAPH_IDENTIFICATION_PREFIX =
     "http-graph-store";
 
-// The number of `BatchIoManager`s pooled by `VocabularyOnDisk` for batched
-// vocabulary lookups (`lookupBatch`). Each manager owns an io_uring ring; the
-// pool size bounds how many batch lookups can be served concurrently.
-constexpr inline size_t NUM_VOCAB_BATCH_IO_MANAGERS = 8;
+// The maximum number of `BatchIoManager`s of `VocabularyOnDisk` for batched
+// vocabulary lookups (`lookupBatch`). A manager is created when a lookup finds
+// none idle, so this bound is not a tuning parameter: it only limits the memory
+// of the io_uring rings (a few tens of KiB each), and it is the number of
+// batch lookups that can run concurrently before one has to wait.
+constexpr inline size_t MAX_VOCAB_BATCH_IO_MANAGERS = 64;
 
 #endif  // QLEVER_SRC_GLOBAL_CONSTANTS_H
