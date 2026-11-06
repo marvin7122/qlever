@@ -1,11 +1,19 @@
-// Copyright 2016, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Authors: Johannes Kalmbach <johannes.kalmbach@gmail.com>
+// Copyright 2016 - 2026, The QLever Authors, in particular:
+//
+// 2016 - 2026 Johannes Kalmbach <johannes.kalmbach@gmail.com>, UFR
+// 2026        Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 #define QLEVER_SRC_INDEX_VOCABULARYONDISK_H
 
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -17,6 +25,7 @@
 #include "util/Generator.h"
 #include "util/IoUringManager.h"
 #include "util/Iterators.h"
+#include "util/ResidentFileMapping.h"
 #include "util/Serializer/Serializer.h"
 #include "util/ThreadSafeQueue.h"
 
@@ -40,10 +49,28 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   // The number of words stored in the vocabulary.
   size_t size_ = 0;
 
+  // Read-only mappings of `file_` and `offsetsFile_` with the pages that this
+  // process has read before (see `vocabulary-mmap-resident-reads`).
+  ad_utility::ResidentFileMapping wordsMapping_;
+  ad_utility::ResidentFileMapping offsetsMapping_;
+
   // Pool of persistent `BatchIoManager`s for `lookupBatch`.
   mutable std::unique_ptr<ad_utility::data_structures::ThreadSafeQueue<
       std::unique_ptr<ad_utility::BatchManagerBase>>>
       ioManagers_;
+
+  // Descriptors of `file_` and `offsetsFile_` that are opened with `O_DIRECT`
+  // when the runtime parameter `vocabulary-iouring-direct-io` is first used
+  // (see `batchReadOptions`). A descriptor stays closed if the file system
+  // does not support `O_DIRECT`; the reads from that file then use the page
+  // cache.
+  struct DirectIoFiles {
+    std::string filename_;
+    std::once_flag opened_;
+    ad_utility::export_prototypes::DirectIoFile words_;
+    ad_utility::export_prototypes::DirectIoFile offsets_;
+  };
+  mutable std::unique_ptr<DirectIoFiles> directIoFiles_;
 
   // This suffix is appended to the filename of the main file, in order to get
   // the name for the file in which IDs and offsets are stored.
@@ -102,6 +129,19 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
 
   //____________________________________________________________________________
   VocabBatchLookupResult lookupBatch(ql::span<const size_t> indices) const;
+
+  // Split-phase variant of `lookupBatch`: `beginLookup` submits the offset
+  // reads and returns a handle immediately (without blocking), `finishLookup`
+  // blocks until the lookup is complete and returns the resolved strings. This
+  // lets a caller overlap the I/O of one batch with the CPU work of another
+  // (see the depth-2 pipeline in the CONSTRUCT export path).
+  std::unique_ptr<VocabLookupHandleBase> beginLookup(
+      ql::span<const size_t> indices) const;
+
+  // Complete a lookup started by `beginLookup`. `handle` must be the handle
+  // returned by `beginLookup` on this vocabulary.
+  VocabBatchLookupResult finishLookup(
+      std::unique_ptr<VocabLookupHandleBase> handle) const;
 
   //____________________________________________________________________________
   VocabLookupOutput lookupBatchesStreamed(
@@ -180,19 +220,114 @@ class VocabularyOnDisk : public VocabularyBinarySearchMixin<VocabularyOnDisk> {
   struct OffsetPair {
     uint64_t offset_;
     uint64_t nextOffset_;
+
+    [[nodiscard]] uint64_t offset() const noexcept { return offset_; }
+    // The word's size in bytes (`nextOffset_ - offset_`); the offsets must
+    // be well-formed, which is checked.
+    [[nodiscard]] size_t wordSize() const {
+      AD_CORRECTNESS_CHECK(nextOffset_ >= offset_);
+      return nextOffset_ - offset_;
+    }
   };
 
-  // Phase 1 of `lookupBatch`: for each requested index, read its `OffsetPair`
-  // (16 bytes) from the `.offsets` file in a single batched read via `manager`.
-  std::vector<OffsetPair> readOffsetPairs(ad_utility::BatchManagerBase& manager,
-                                          ql::span<const size_t> indices) const;
+  // The state of a split-phase lookup: owns the pooled I/O manager (removed
+  // from the pool by `beginLookup`) and the submitted offset-read batch until
+  // `finish` completes the lookup and returns the manager to the pool.
+  class LookupHandle : public VocabLookupHandleBase {
+   public:
+    // Requires `vocab_`, `manager_`, `indices_`, `offsetBatch_` and
+    // `offsetPairs_` to be set by `VocabularyOnDisk::beginLookup`.
+    VocabBatchLookupResult finish() override;
+
+    // Drain in-flight offset reads, then return the `manager_` if `finish`
+    // was never called. The reads target `offsetPairs_`, which dies here.
+    ~LookupHandle() override;
+
+   private:
+    // Only `VocabularyOnDisk::beginLookup` sets up the state below. The handle
+    // is only reachable through `VocabLookupHandleBase`, so no other code can
+    // mutate the targets of the in-flight reads.
+    friend class VocabularyOnDisk;
+
+    // The vocabulary that created this handle. It must outlive the handle.
+    const VocabularyOnDisk* vocab_ = nullptr;
+    std::unique_ptr<ad_utility::BatchManagerBase> manager_;
+    // The requested indices, owned so the offset reads can be completed after
+    // the caller's span has gone out of scope.
+    std::vector<size_t> indices_;
+    // The batched offset read submitted by `beginLookup`. Empty until the
+    // batch was actually submitted, so a handle whose `beginLookup` threw
+    // before the submission never waits on a batch it does not own.
+    std::optional<ad_utility::BatchManagerBase::BatchHandle> offsetBatch_;
+    // The target buffers of the submitted offset read.
+    std::vector<OffsetPair> offsetPairs_;
+    // Whether this lookup uses the page-cache fast path (see
+    // `vocabulary-iouring-page-cache-fast-path`). Fixed by `beginLookup`, so
+    // both phases of one lookup take the same path.
+    bool pageCacheFastPath_ = false;
+    // Whether this lookup copies known-resident reads from the memory
+    // mappings (see `vocabulary-mmap-resident-reads`). Fixed by `beginLookup`
+    // together with `pageCacheFastPath_`, so both phases agree.
+    bool residentReads_ = false;
+    // The positions of the phase-1 reads that missed the resident/page-cache
+    // fast path and were submitted to the manager; `finish` marks them
+    // resident once the batch has completed.
+    std::vector<size_t> missedPositions_;
+
+    // Hand the `manager_` back to the pool. Used by `finish` and the
+    // destructor; the handle owns the manager until one of them runs.
+    void returnManagerToPool();
+  };
 
   // Phase 2 of `lookupBatch`: given the `offsetPairs` from phase 1, read the
   // string data from `file_` into one contiguous buffer in a single batched
   // read via `manager`, and return it as a `VocabBatchLookupResult`.
-  VocabBatchLookupResult readStrings(
-      ad_utility::BatchManagerBase& manager,
-      ql::span<const OffsetPair> offsetPairs) const;
+  // `offsetPairs` must be non-empty (guaranteed by `lookupBatch`, which
+  // rejects empty input; the `ContiguousVocabBatchBuilder` requires it). With
+  // `pageCacheFastPath`, the words that are in the page cache are read with
+  // `readPageCacheHits` (adjacent words in one call), and only the others go
+  // through `manager`.
+  // With `residentReads`, words whose pages are known resident are copied
+  // from `wordsMapping_` first.
+  VocabBatchLookupResult readStrings(ad_utility::BatchManagerBase& manager,
+                                     ql::span<const OffsetPair> offsetPairs,
+                                     bool pageCacheFastPath,
+                                     bool residentReads) const;
+
+  // Serve the reads whose pages are known resident in `mapping` (if not null)
+  // from the mapping, then the others with `readPageCacheHits`; mark the pages
+  // of the reads served by `readPageCacheHits` resident. Return the indices
+  // (ascending) of the reads that were served by neither.
+  static std::vector<size_t> readResidentOrPageCacheHits(
+      const ad_utility::ResidentFileMapping* mapping, int fd,
+      ql::span<const size_t> numBytes, ql::span<const uint64_t> offsets,
+      ql::span<char*> buffers);
+
+  // Submit the reads of `numBytes[i]` bytes at `offsets[i]` of `fd` into
+  // `buffers[i]` for every `i` in `positions` to `manager` as one batch,
+  // without waiting. Return `std::nullopt` (and submit nothing) if
+  // `positions` is empty.
+  static std::optional<ad_utility::BatchManagerBase::BatchHandle>
+  submitThroughManager(ad_utility::BatchManagerBase& manager, int fd,
+                       ql::span<const size_t> numBytes,
+                       ql::span<const uint64_t> offsets,
+                       ql::span<char*> buffers,
+                       ql::span<const size_t> positions,
+                       const ad_utility::BatchReadOptions& options);
+
+  // The `BatchReadOptions` for the batched reads from `offsetsFile_` (if
+  // `forOffsetsFile` is set) or `file_`, as selected by the runtime parameters
+  // `vocabulary-iouring-registered-buffers` and `vocabulary-iouring-direct-io`.
+  ad_utility::BatchReadOptions batchReadOptions(bool forOffsetsFile) const;
+
+  // Read `numBytes[i]` bytes at `offsets[i]` of `fd` into `buffers[i]` for
+  // every `i` in `positions` through `manager` and wait for them.
+  static void readThroughManager(ad_utility::BatchManagerBase& manager, int fd,
+                                 ql::span<const size_t> numBytes,
+                                 ql::span<const uint64_t> offsets,
+                                 ql::span<char*> buffers,
+                                 ql::span<const size_t> positions,
+                                 const ad_utility::BatchReadOptions& options);
 };
 
 #endif  // QLEVER_SRC_INDEX_VOCABULARYONDISK_H

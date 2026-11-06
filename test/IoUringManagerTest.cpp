@@ -10,12 +10,17 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <unistd.h>
 
+#include <algorithm>
+#include <climits>
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
 #include <memory>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -29,6 +34,8 @@
 #include "util/GTestHelpers.h"
 #include "util/IoUringManager.h"
 #include "util/Log.h"
+#include "util/PageCacheReadTestHelpers.h"
+#include "util/VocabBlockCache.h"
 
 namespace {
 
@@ -103,10 +110,12 @@ class ReadBatchForTesting {
                                                     reads.size()});
   }
 
-  // Submit all accumulated reads to `manager` for file `fd`; returns the
-  // handle.
+  // Submit all accumulated reads to `manager` for file `fd`, carried out as
+  // specified by `options`; returns the handle.
   template <typename Manager>
-  typename Manager::BatchHandle submitTo(Manager& manager, int fd) {
+  typename Manager::BatchHandle submitTo(
+      Manager& manager, int fd,
+      const ad_utility::BatchReadOptions& options = {}) {
     // Build the buffer pointers here, after all buffers have been added, so the
     // addresses are stable (no further `add` will reallocate `targetBuffers_`).
     // `addBatch` copies each address into its read request, so this temporary
@@ -115,7 +124,7 @@ class ReadBatchForTesting {
         targetBuffers_ | ql::views::transform([](std::string& buffer) {
           return buffer.data();
         }));
-    return manager.addBatch(fd, numBytes_, offsets_, pointers);
+    return manager.addBatch(fd, numBytes_, offsets_, pointers, options);
   }
 
   // The bytes read by each read, in request order (valid once the batch has
@@ -373,6 +382,246 @@ TYPED_TEST(IoUringManagerTest, ReadPastEofThrows) {
                                HasSubstr("read fewer bytes than requested"));
 }
 
+namespace {
+// The block cache counters, to measure one test step by their differences.
+struct BlockCacheCounts {
+  uint64_t hits_, inFlightHits_, misses_, inserts_;
+  static BlockCacheCounts now() {
+    const auto& c = ad_utility::vocab::vocabBlockCacheCounters;
+    return {c.hits_.load(), c.inFlightHits_.load(), c.misses_.load(),
+            c.inserts_.load()};
+  }
+  BlockCacheCounts operator-(const BlockCacheCounts& other) const {
+    return {hits_ - other.hits_, inFlightHits_ - other.inFlightHits_,
+            misses_ - other.misses_, inserts_ - other.inserts_};
+  }
+};
+
+// Whether batches submitted to `Manager` reach the io_uring policy (and thus
+// the block cache): the synchronous policy ignores `BatchReadOptions`, and
+// the page-cache-first wrapper may serve the reads before the ring sees them.
+// The bytes are the same with every backend; only the counter assertions
+// below need this distinction.
+#ifdef QLEVER_HAS_IO_URING
+template <typename Manager>
+inline constexpr bool reachesBlockCache =
+    std::is_same_v<Manager,
+                   ad_utility::BatchManager<ad_utility::IoUringPolicy>>;
+#else
+template <typename Manager>
+inline constexpr bool reachesBlockCache = false;
+#endif
+
+// Read `reads` from `fd` in one batch with `options` and check the bytes.
+template <typename Manager>
+void readAndCheck(Manager& manager, int fd, const std::string& content,
+                  std::vector<std::pair<uint64_t, size_t>> reads,
+                  const ad_utility::BatchReadOptions& options) {
+  ReadBatchForTesting batch;
+  batch.add(reads);
+  manager.wait(batch.submitTo(manager, fd, options));
+  std::vector<std::string> expected;
+  for (const auto& [offset, numBytes] : reads) {
+    expected.push_back(content.substr(offset, numBytes));
+  }
+  EXPECT_THAT(batch.result(), ::testing::ElementsAreArray(expected));
+}
+}  // namespace
+
+// With a block cache, the blocks read via `O_DIRECT` are kept, and a later
+// batch that requests other bytes of the same blocks (partial-block hits) is
+// served from the cache without reading them again. Only the io_uring policy
+// uses the cache; the bytes are the same with both policies.
+TYPED_TEST(IoUringManagerTest, DirectIoBlockCacheServesPartialBlockHits) {
+  constexpr size_t block = ad_utility::export_prototypes::kDirectIoBlockSize;
+  std::string content;
+  for (size_t i = 0; i < 4 * block; ++i) {
+    content.push_back(static_cast<char>('a' + (i * 11) % 26));
+  }
+  auto [tmp, fd] = makeTempFile(content);
+  ad_utility::export_prototypes::DirectIoFile directFile;
+  try {
+    directFile.open(absl::StrCat(gtestCurrentTestName(), ".tmp"), true);
+  } catch (const std::exception& e) {
+    GTEST_SKIP() << "O_DIRECT is not supported here: " << e.what();
+  }
+  TypeParam manager(16);
+  ad_utility::BatchReadOptions options;
+  options.useRegisteredBuffers = true;
+  options.directIoFd = directFile.fd();
+  // A capacity that no other test uses, so that this thread's cache starts
+  // empty.
+  options.blockCacheNumBlocks = 17;
+  constexpr bool usesCache = reachesBlockCache<TypeParam>;
+
+  auto before = BlockCacheCounts::now();
+  readAndCheck(manager, fd, content, {{10, 5}, {block + 7, 20}}, options);
+  auto first = BlockCacheCounts::now() - before;
+  before = BlockCacheCounts::now();
+  // Other bytes of blocks 0 and 1 (partial-block hits) and block 2 (a miss).
+  readAndCheck(manager, fd, content,
+               {{100, 30}, {block + 2000, 50}, {2 * block + 5, 10}}, options);
+  auto second = BlockCacheCounts::now() - before;
+  if (usesCache) {
+    EXPECT_EQ(first.hits_, 0u);
+    EXPECT_EQ(first.misses_, 2u);
+    EXPECT_EQ(first.inserts_, 2u);
+    EXPECT_EQ(second.hits_, 2u);
+    EXPECT_EQ(second.misses_, 1u);
+    EXPECT_EQ(second.inserts_, 1u);
+  } else {
+    EXPECT_EQ(first.hits_ + first.misses_ + second.hits_ + second.misses_, 0u);
+  }
+}
+
+// A cache of one block evicts the previous block on every insert, so reading
+// block 0, then block 1, then block 0 again misses three times.
+TYPED_TEST(IoUringManagerTest, DirectIoBlockCacheEvicts) {
+  constexpr size_t block = ad_utility::export_prototypes::kDirectIoBlockSize;
+  std::string content(3 * block, 'x');
+  for (size_t i = 0; i < content.size(); ++i) {
+    content[i] = static_cast<char>('A' + (i * 5) % 26);
+  }
+  auto [tmp, fd] = makeTempFile(content);
+  ad_utility::export_prototypes::DirectIoFile directFile;
+  try {
+    directFile.open(absl::StrCat(gtestCurrentTestName(), ".tmp"), true);
+  } catch (const std::exception& e) {
+    GTEST_SKIP() << "O_DIRECT is not supported here: " << e.what();
+  }
+  TypeParam manager(16);
+  ad_utility::BatchReadOptions options;
+  options.useRegisteredBuffers = true;
+  options.directIoFd = directFile.fd();
+  options.blockCacheNumBlocks = 1;
+  constexpr bool usesCache = reachesBlockCache<TypeParam>;
+  auto before = BlockCacheCounts::now();
+  readAndCheck(manager, fd, content, {{3, 4}}, options);
+  readAndCheck(manager, fd, content, {{block + 3, 4}}, options);
+  readAndCheck(manager, fd, content, {{8, 4}}, options);
+  auto delta = BlockCacheCounts::now() - before;
+  if (usesCache) {
+    EXPECT_EQ(delta.hits_, 0u);
+    EXPECT_EQ(delta.misses_, 3u);
+    // Block 0 was inserted last, so both requests for it now hit.
+    before = BlockCacheCounts::now();
+    readAndCheck(manager, fd, content, {{8, 4}, {9, 4}}, options);
+    auto again = BlockCacheCounts::now() - before;
+    EXPECT_EQ(again.hits_, 2u);
+    EXPECT_EQ(again.misses_, 0u);
+  }
+}
+
+// Within one batch, a request for a block whose read is still in flight (not
+// the directly preceding request, so it cannot join the open read) is copied
+// from that read's slot instead of reading the block again. This includes the
+// short last block of the file, which is never inserted into the cache.
+TYPED_TEST(IoUringManagerTest, DirectIoBlockCacheJoinsInFlightReads) {
+  constexpr size_t block = ad_utility::export_prototypes::kDirectIoBlockSize;
+  std::string content;
+  for (size_t i = 0; i < 2 * block + 100; ++i) {
+    content.push_back(static_cast<char>('a' + (i * 13) % 26));
+  }
+  auto [tmp, fd] = makeTempFile(content);
+  ad_utility::export_prototypes::DirectIoFile directFile;
+  try {
+    directFile.open(absl::StrCat(gtestCurrentTestName(), ".tmp"), true);
+  } catch (const std::exception& e) {
+    GTEST_SKIP() << "O_DIRECT is not supported here: " << e.what();
+  }
+  TypeParam manager(16);
+  ad_utility::BatchReadOptions options;
+  options.useRegisteredBuffers = true;
+  options.directIoFd = directFile.fd();
+  // A capacity that no other test uses, so that this thread's cache starts
+  // empty.
+  options.blockCacheNumBlocks = 23;
+  constexpr bool usesCache = reachesBlockCache<TypeParam>;
+
+  auto before = BlockCacheCounts::now();
+  // Blocks 0, 1, 0 (in flight), 1 (joins the open read), 2 (short), 0 (in
+  // flight), 2 (joins the open read, within the bytes the short read
+  // returns).
+  readAndCheck(manager, fd, content,
+               {{0, 4},
+                {block + 1, 4},
+                {8, 4},
+                {block + 9, 4},
+                {2 * block + 10, 5},
+                {100, 7},
+                {2 * block + 50, 50}},
+               options);
+  auto delta = BlockCacheCounts::now() - before;
+  if (usesCache) {
+    EXPECT_EQ(delta.hits_, 0u);
+    EXPECT_EQ(delta.misses_, 3u);
+    EXPECT_EQ(delta.inFlightHits_, 2u);
+    // The short last block is not cached.
+    EXPECT_EQ(delta.inserts_, 2u);
+  } else {
+    EXPECT_EQ(delta.hits_ + delta.inFlightHits_ + delta.misses_, 0u);
+  }
+}
+
+// With `directIoBlockSize` = 16 KiB, every `O_DIRECT` read fetches (and the
+// cache keeps) the enclosing 16 KiB block, so a later request for another
+// 4 KiB block of it hits. Switching back to 4 KiB blocks on the same manager
+// registers the arena again with 4 KiB slots.
+TYPED_TEST(IoUringManagerTest, DirectIoLargerBlockSize) {
+  constexpr size_t smallBlock =
+      ad_utility::export_prototypes::kDirectIoBlockSize;
+  constexpr size_t largeBlock = 4 * smallBlock;
+  std::string content;
+  for (size_t i = 0; i < 3 * largeBlock + 100; ++i) {
+    content.push_back(static_cast<char>('a' + (i * 17) % 26));
+  }
+  auto [tmp, fd] = makeTempFile(content);
+  ad_utility::export_prototypes::DirectIoFile directFile;
+  try {
+    directFile.open(absl::StrCat(gtestCurrentTestName(), ".tmp"), true);
+  } catch (const std::exception& e) {
+    GTEST_SKIP() << "O_DIRECT is not supported here: " << e.what();
+  }
+  TypeParam manager(16);
+  ad_utility::BatchReadOptions options;
+  options.useRegisteredBuffers = true;
+  options.directIoFd = directFile.fd();
+  // A capacity that no other test uses, so that this thread's cache starts
+  // empty.
+  options.blockCacheNumBlocks = 29;
+  options.directIoBlockSize = largeBlock;
+  constexpr bool usesCache = reachesBlockCache<TypeParam>;
+
+  auto before = BlockCacheCounts::now();
+  readAndCheck(manager, fd, content, {{10, 5}, {largeBlock + 7, 20}}, options);
+  auto first = BlockCacheCounts::now() - before;
+  before = BlockCacheCounts::now();
+  // Other 4 KiB blocks of the two cached 16 KiB blocks, and the short last
+  // block of the file (read, but not cached).
+  readAndCheck(manager, fd, content,
+               {{smallBlock + 3, 10},
+                {largeBlock + 3 * smallBlock, 40},
+                {3 * largeBlock + 50, 50}},
+               options);
+  auto second = BlockCacheCounts::now() - before;
+  if (usesCache) {
+    EXPECT_EQ(first.misses_, 2u);
+    EXPECT_EQ(first.inserts_, 2u);
+    EXPECT_EQ(second.hits_, 2u);
+    EXPECT_EQ(second.misses_, 1u);
+    EXPECT_EQ(second.inserts_, 0u);
+  } else {
+    EXPECT_EQ(first.hits_ + first.misses_ + second.hits_ + second.misses_, 0u);
+  }
+
+  // Back to 4 KiB blocks; the request that spans two 4 KiB blocks does not fit
+  // into a slot and uses a plain read.
+  options.directIoBlockSize = smallBlock;
+  readAndCheck(manager, fd, content,
+               {{10, 5}, {largeBlock + 7, 20}, {2 * smallBlock - 3, 10}},
+               options);
+}
+
 // A read that is fully satisfied returns the requested bytes from the requested
 // offset.
 TEST(ReadFullyOrThrow, FullReadSucceeds) {
@@ -608,5 +857,224 @@ TEST(MakeBatchManager, backendMatchesFlagWhenIoUringPreferred) {
             nullptr);
 #endif
   expectManagerWorks(*manager);
+}
+
+// Run `readPageCacheHits` on `reads` (pairs of file offset and size) of `fd`
+// and return the positions of the reads that were not served together with
+// the buffers (filled with '-' before the call).
+std::pair<std::vector<size_t>, std::vector<std::string>> readHits(
+    int fd, const std::vector<std::pair<uint64_t, size_t>>& reads) {
+  std::vector<size_t> numBytes;
+  std::vector<uint64_t> offsets;
+  std::vector<std::string> buffers;
+  for (const auto& [offset, size] : reads) {
+    offsets.push_back(offset);
+    numBytes.push_back(size);
+    buffers.emplace_back(size, '-');
+  }
+  std::vector<char*> targets;
+  for (auto& buffer : buffers) {
+    targets.push_back(buffer.data());
+  }
+  auto notServed =
+      ad_utility::readPageCacheHits(fd, numBytes, offsets, targets);
+  return {std::move(notServed), std::move(buffers)};
+}
+
+// All positions `0 .. n - 1`.
+std::vector<size_t> allPositions(size_t n) {
+  std::vector<size_t> positions(n);
+  std::iota(positions.begin(), positions.end(), size_t{0});
+  return positions;
+}
+
+// A batch whose file was just written is in the page cache and is served
+// completely; adjacent ranges (the first two reads) are read in one call.
+TEST(ReadPageCacheHits, hitOnlyBatch) {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  auto [notServed, buffers] = readHits(fd, {{0, 4}, {4, 4}, {12, 4}, {4, 0}});
+  if (!ad_utility::pageCacheFastPathIsSupported()) {
+    EXPECT_EQ(notServed, allPositions(4));
+    return;
+  }
+  EXPECT_TRUE(notServed.empty());
+  EXPECT_EQ(buffers[0], "AAAA");
+  EXPECT_EQ(buffers[1], "BBBB");
+  EXPECT_EQ(buffers[2], "DDDD");
+  EXPECT_EQ(buffers[3], "");
+}
+
+// Reads that cannot be served completely (here: beyond the end of the file)
+// are all returned, whether or not `RWF_NOWAIT` is supported.
+TEST(ReadPageCacheHits, missOnlyBatch) {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  auto [notServed, buffers] = readHits(fd, {{16, 4}, {40, 4}, {20, 4}});
+  EXPECT_EQ(notServed, allPositions(3));
+}
+
+// A mixed batch: a short read in the middle of a run of adjacent ranges
+// returns the incomplete read and the rest of its run, the complete reads of
+// the run and of other runs are served.
+TEST(ReadPageCacheHits, mixedBatchWithShortRead) {
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  auto [notServed, buffers] =
+      readHits(fd, {{0, 4}, {8, 4}, {12, 2}, {14, 4}, {18, 4}, {4, 4}});
+  if (!ad_utility::pageCacheFastPathIsSupported()) {
+    EXPECT_EQ(notServed, allPositions(6));
+    return;
+  }
+  EXPECT_EQ(notServed, (std::vector<size_t>{3, 4}));
+  EXPECT_EQ(buffers[0], "AAAA");
+  EXPECT_EQ(buffers[1], "CCCC");
+  EXPECT_EQ(buffers[2], "DD");
+  EXPECT_EQ(buffers[5], "BBBB");
+}
+
+// Fault injection for `readPageCacheHits`: the tests below replace its
+// `preadv2(RWF_NOWAIT)` call. They need the fast path to be compiled in.
+using pageCacheReadTestHelpers::ScopedPageCacheRead;
+
+// Number of calls of the injected page-cache reads below.
+size_t numPageCacheReads = 0;
+
+// Fill `iov` with plain blocking `pread` calls (which work on any file
+// system, unlike `preadv2` with `RWF_NOWAIT`): the number of bytes read, a
+// short count at the end of the file, or -1 on a real I/O error. This lets the
+// tests below exercise the batching of `readPageCacheHits` without depending
+// on `RWF_NOWAIT` being supported for the test files (it is rejected with
+// `EOPNOTSUPP` in the docker builds, for example on overlayfs).
+int64_t blockingFill(int fd, const ::iovec* iov, int iovcnt, int64_t offset) {
+  int64_t total = 0;
+  for (int i = 0; i < iovcnt; ++i) {
+    auto* base = static_cast<char*>(iov[i].iov_base);
+    size_t remaining = iov[i].iov_len;
+    while (remaining > 0) {
+      ssize_t numBytesRead = ::pread(fd, base, remaining, offset + total);
+      if (numBytesRead < 0) {
+        return -1;
+      }
+      if (numBytesRead == 0) {
+        return total;
+      }
+      base += numBytesRead;
+      remaining -= static_cast<size_t>(numBytesRead);
+      total += numBytesRead;
+    }
+  }
+  return total;
+}
+
+// A fully cached run, counted.
+int64_t countedCachedRead(int fd, const ::iovec* iov, int iovcnt,
+                          int64_t offset) {
+  ++numPageCacheReads;
+  return blockingFill(fd, iov, iovcnt, offset);
+}
+
+// `EOPNOTSUPP`, counted.
+int64_t countedNotSupported(int fd, const ::iovec* iov, int iovcnt,
+                            int64_t offset) {
+  ++numPageCacheReads;
+  return pageCacheReadTestHelpers::notSupported(fd, iov, iovcnt, offset);
+}
+
+// Only the first 6 bytes of every run are "cached".
+int64_t sixBytesCached(int fd, const ::iovec* iov, int iovcnt, int64_t offset) {
+  int64_t numBytesRead = blockingFill(fd, iov, iovcnt, offset);
+  return numBytesRead < 0 ? numBytesRead : std::min<int64_t>(numBytesRead, 6);
+}
+
+// `RWF_NOWAIT` may return 0 before the end of the file (readv(2)).
+int64_t zeroBytes(int, const ::iovec*, int, int64_t) { return 0; }
+
+// Skip a test if `RWF_NOWAIT` is not available on this platform.
+#define SKIP_WITHOUT_PAGE_CACHE_FAST_PATH()                 \
+  if (!ad_utility::pageCacheFastPathIsSupported()) {        \
+    GTEST_SKIP() << "preadv2(RWF_NOWAIT) is not available"; \
+  }
+
+// Reads that are not cached (`EAGAIN`) are all returned, their buffers stay
+// untouched, and the fast path stays enabled.
+TEST(ReadPageCacheHits, notCachedReadsAreReturned) {
+  SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  ScopedPageCacheRead inject{&pageCacheReadTestHelpers::nothingCached};
+  auto [notServed, buffers] = readHits(fd, {{0, 4}, {4, 4}, {12, 4}});
+  EXPECT_EQ(notServed, allPositions(3));
+  EXPECT_EQ(buffers[0], "----");
+  EXPECT_TRUE(ad_utility::pageCacheFastPathIsSupported());
+}
+
+// A partial read serves the reads it covers completely; the incomplete read
+// and the rest of its run are returned. A read of 0 bytes serves nothing.
+TEST(ReadPageCacheHits, partialAndZeroByteReads) {
+  SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  {
+    ScopedPageCacheRead inject{&sixBytesCached};
+    auto [notServed, buffers] = readHits(fd, {{0, 4}, {4, 4}, {12, 4}});
+    EXPECT_EQ(notServed, (std::vector<size_t>{1}));
+    EXPECT_EQ(buffers[0], "AAAA");
+    EXPECT_EQ(buffers[2], "DDDD");
+  }
+  {
+    ScopedPageCacheRead inject{&zeroBytes};
+    auto [notServed, buffers] = readHits(fd, {{0, 4}, {4, 4}, {12, 4}});
+    EXPECT_EQ(notServed, allPositions(3));
+  }
+}
+
+// `EOPNOTSUPP` disables the fast path for the process: the failed run and all
+// later runs of the batch are returned without further calls, and so are all
+// reads of later batches.
+TEST(ReadPageCacheHits, notSupportedDisablesTheFastPath) {
+  SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
+  auto [tmp, fd] = makeTempFile("AAAABBBBCCCCDDDD");
+  numPageCacheReads = 0;
+  {
+    ScopedPageCacheRead inject{&countedNotSupported};
+    auto [notServed, buffers] = readHits(fd, {{0, 4}, {8, 4}, {12, 2}});
+    EXPECT_EQ(notServed, allPositions(3));
+    EXPECT_EQ(numPageCacheReads, 1u);
+    EXPECT_FALSE(ad_utility::pageCacheFastPathIsSupported());
+    auto [notServed2, buffers2] = readHits(fd, {{0, 4}});
+    EXPECT_EQ(notServed2, allPositions(1));
+    EXPECT_EQ(numPageCacheReads, 1u);
+  }
+  // The guard re-enabled the fast path.
+  EXPECT_TRUE(ad_utility::pageCacheFastPathIsSupported());
+}
+
+// A run of more than `IOV_MAX` adjacent reads is split into several calls.
+TEST(ReadPageCacheHits, runsAreSplitAtIovMax) {
+  SKIP_WITHOUT_PAGE_CACHE_FAST_PATH();
+  const size_t numReads = static_cast<size_t>(IOV_MAX) + 1;
+  std::string content(numReads, 'x');
+  content.back() = 'y';
+  auto [tmp, fd] = makeTempFile(content);
+  std::vector<std::pair<uint64_t, size_t>> reads;
+  for (size_t i = 0; i < numReads; ++i) {
+    reads.emplace_back(i, 1);
+  }
+  numPageCacheReads = 0;
+  ScopedPageCacheRead inject{&countedCachedRead};
+  auto [notServed, buffers] = readHits(fd, reads);
+  EXPECT_TRUE(notServed.empty());
+  EXPECT_EQ(numPageCacheReads, 2u);
+  EXPECT_EQ(buffers.front(), "x");
+  EXPECT_EQ(buffers.back(), "y");
+}
+
+// An empty batch is trivially served, and spans of different lengths are
+// rejected.
+TEST(ReadPageCacheHits, emptyBatchAndContract) {
+  auto [tmp, fd] = makeTempFile("AAAA");
+  EXPECT_TRUE(ad_utility::readPageCacheHits(fd, {}, {}, {}).empty());
+  std::vector<size_t> numBytes{4, 4};
+  std::vector<uint64_t> offsets{0};
+  std::string buffer(8, '-');
+  std::vector<char*> targets{buffer.data(), buffer.data() + 4};
+  EXPECT_ANY_THROW(
+      ad_utility::readPageCacheHits(fd, numBytes, offsets, targets));
 }
 }  // namespace

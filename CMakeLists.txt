@@ -148,6 +148,19 @@ if (EXPRESSION_GENERATOR_BACKPORTS_FOR_CPP17)
     add_compile_definitions(QLEVER_EXPRESSION_GENERATOR_BACKPORTS_FOR_CPP17)
 endif()
 
+# Compile Export Engine V2 sources into the server by default. Request routing
+# still defaults to Legacy V1 unless `fast-export=1` / `export-engine=v2` /
+# `X-QLever-Export-Engine` opts in (see ExportPipelineRouter).
+option(QLEVER_ENABLE_EXPORT_V2 "Enable Fast-Path Streaming Export Engine V2" ON)
+if (REDUCED_FEATURE_SET_FOR_CPP17)
+  # Export engine V2 requires C++20 coroutines (`cppcoro::generator`), which
+  # are unavailable in the reduced feature set.
+  set(QLEVER_ENABLE_EXPORT_V2 OFF)
+endif()
+if (QLEVER_ENABLE_EXPORT_V2)
+    add_compile_definitions(QLEVER_ENABLE_EXPORT_V2=1)
+endif()
+
 # Select the memory-allocator backend that `qlever::Allocator` resolves to
 # (see `src/util/Allocator.h`):
 #   * `limit` (default): the historical `ad_utility::AllocatorWithLimit`.

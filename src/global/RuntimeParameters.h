@@ -1,6 +1,12 @@
-//   Copyright 2024, University of Freiburg,
-//   Chair of Algorithms and Data Structures.
-//   Author: Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>
+// Copyright 2024 - 2026, The QLever Authors, in particular:
+//
+// 2024 Robin Textor-Falconi <textorr@informatik.uni-freiburg.de>, UFR
+// 2026 Marvin Stoetzel <stoetzem@email.uni-freiburg.de>, UFR
+//
+// UFR = University of Freiburg, Chair of Algorithms and Data Structures
+//
+// You may not use this file except in compliance with the Apache 2.0 License,
+// which can be found in the `LICENSE` file at the root of the QLever project.
 
 #ifndef QLEVER_RUNTIMEPARAMETERS_H
 #define QLEVER_RUNTIMEPARAMETERS_H
@@ -234,6 +240,24 @@ struct RuntimeParameters {
   // particular the computation of cache keys) when caching is not required.
   Bool disableCaching_{false, "disable-caching"};
 
+  // If set to true, `VocabularyOnDisk::lookupBatch` first reads the vocabulary
+  // words (and their offsets) that are in the page cache with non-blocking
+  // `preadv2(RWF_NOWAIT)` calls (adjacent ranges coalesced into one call) and
+  // submits only the remaining reads to its `io_uring` ring. A read that hits
+  // the page cache then costs a share of one syscall instead of an `io_uring`
+  // submission and completion; a read that misses costs one extra failed
+  // syscall per run of adjacent ranges. On by default: it removes the
+  // warm-cache cost of the ring and also speeds up cold exports.
+  Bool vocabularyIouringPageCacheFastPath_{
+      true, "vocabulary-iouring-page-cache-fast-path"};
+
+  // If set to true (and the page-cache fast path above is on), the vocabulary
+  // files are also mapped into memory, and a word (or offset) whose pages this
+  // process has read before is copied from the mapping instead of being read
+  // with a system call (see `ad_utility::ResidentFileMapping`). All other
+  // reads take the paths above.
+  Bool vocabularyMmapResidentReads_{true, "vocabulary-mmap-resident-reads"};
+
   // Configure how many blocks are compressed and written concurrently per
   // permutation. The blocks are compressed and written on the global thread
   // pool, so this is not a number of threads of its own, and it is capped at
@@ -262,6 +286,72 @@ struct RuntimeParameters {
   // triples (per template triple); bounded memory, partial deduplication.
   DeduplicationModeParameter constructDeduplication_{
       DeduplicationMode{DeduplicationMode::None{}}, "construct-deduplication"};
+
+  // If set, the Export V2 SELECT CSV/TSV serializer writes rows with
+  // `MonomorphicRowSerializer` (one compile-time schema per window) instead of
+  // the generic per-cell assembly loop. Output bytes are identical; only
+  // SELECTs with at most three columns take this path.
+  Bool exportV2MonomorphicRows_{false, "export-v2-monomorphic-rows"};
+
+  // Term-result cache of the SELECT export (see
+  // `ql::exportIds::IdToStringAndTypeCache`). A capacity of 0 disables it.
+  // After every window of that many cached lookups, the cache is switched off
+  // for the rest of the export if the window's hit rate is below the minimum
+  // (a window of 0 or a minimum of 0 keeps it on).
+  SizeT selectExportTermCacheCapacity_{1 << 16,
+                                       "select-export-term-cache-capacity"};
+  SizeT selectExportTermCacheWindow_{1 << 13,
+                                     "select-export-term-cache-window"};
+  Double selectExportTermCacheMinHitRate_{
+      0.25, "select-export-term-cache-min-hit-rate"};
+
+  // If set, the batched vocabulary reads (`VocabularyOnDisk::lookupBatch`)
+  // read through a pinned arena of fixed buffers that is registered with each
+  // io_uring ring (`IORING_OP_READ_FIXED`) and copy each word from there.
+  // Without io_uring support this has no effect.
+  Bool vocabularyIoUringRegisteredBuffers_{
+      false, "vocabulary-iouring-registered-buffers"};
+
+  // If set together with `vocabulary-iouring-registered-buffers`, those reads
+  // bypass the page cache: they fetch the enclosing 4 KiB blocks via a second
+  // descriptor of the vocabulary files that is opened with `O_DIRECT`.
+  Bool vocabularyIoUringDirectIo_{false, "vocabulary-iouring-direct-io"};
+
+  // The number of blocks of the per-thread block cache in front of the
+  // `O_DIRECT` vocabulary reads (`vocabulary-iouring-direct-io`): every block
+  // read via `O_DIRECT` is kept, and later requests for bytes in a cached
+  // block are copied from there instead of being read again. The vocabulary
+  // files are immutable after the build, so cached blocks never go stale.
+  // The default of `0` disables the cache. Has no effect without
+  // `vocabulary-iouring-direct-io`.
+  SizeT vocabBlockCacheSize_{0, "vocab-block-cache-size"};
+
+  // The size in bytes of every `O_DIRECT` vocabulary read (aligned to it) and
+  // of the blocks of the cache above (`vocab-block-cache-size` counts blocks
+  // of this size). A positive multiple of 4096. Larger blocks act like
+  // readahead for requests that are close in the file and waste bandwidth on
+  // scattered ones. Has no effect without `vocabulary-iouring-direct-io`.
+  SizeT vocabBlockCacheBlockSize_{4096, "vocab-block-cache-block-size"};
+
+  // If set to `true` (the default), the Turtle export of CONSTRUCT queries
+  // formats the triples with `FastExportStreamFormatter` into strings of about
+  // 64 KiB (`formatTriplesAsTurtleInBatches`) instead of building a
+  // `std::string` per term and per triple (`formatTerm`/`formatTriple`). The
+  // output is byte-identical; `false` selects the previous path.
+  Bool useFastExportStreamFormatter_{true, "use-fast-export-stream-formatter"};
+
+  // If true, the chunks of a streamed query result start at 64 KiB and double
+  // after every chunk up to the fixed 1 MiB, so that the first bytes reach the
+  // client earlier. If false, every chunk has the fixed size of 1 MiB.
+  Bool adaptiveExportChunkSize_{true, "adaptive-export-chunk-size"};
+
+  // If set, Export V2 sizes SELECT CSV/TSV morsels adaptively
+  // (`AdaptiveChunkSizer`): the first morsel targets a small 64 KB buffer for
+  // low time-to-first-byte, then the target doubles on every morsel up to a
+  // 4 MB plateau for sustained throughput. Default off: morsels keep the
+  // fixed 8192-row size, and output bytes are identical either way; only the
+  // chunk boundaries (and thus the number/timing of HTTP writes) change.
+  Bool exportV2AdaptiveChunkSizing_{false, "export-v2-adaptive-chunk-sizing"};
 
   // ___________________________________________________________________________
   // IMPORTANT NOTE: IF YOU ADD PARAMETERS ABOVE, ALSO REGISTER THEM IN THE
