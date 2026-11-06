@@ -1,0 +1,95 @@
+name: Botfix (autofix review threads)
+
+# Fix agent that runs AFTER the fast AI reviewers: reads all unresolved
+# review threads on the PR, implements the mechanical fixes, pushes them
+# to the PR branch, and replies to + resolves each thread.
+#
+# Flow: fast bots review every push -> author/agent adds `autofix-ready`
+# once all bot checks concluded -> this agent fixes -> author/agent adds
+# `ocr-ready` -> fan-out verifies the fixed code.
+#
+# Requires secret BOTFIX_DEEPSEEK_KEY (DeepSeek API key, cents per PR).
+# Executor: opencode GitHub Action (any backend via env passthrough).
+
+on:
+  pull_request_target:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  # Non-command comments and labels other than autofix-ready get a group of
+  # their own, so they cannot cancel a running fix session.
+  group: >-
+    ${{ github.event_name == 'issue_comment' &&
+    !startsWith(github.event.comment.body, '/botfix') &&
+    format('botfix-ignored-{0}', github.run_id) ||
+    github.event_name == 'pull_request_target' &&
+    (github.event.action != 'labeled' ||
+     github.event.label.name != 'autofix-ready') &&
+    format('botfix-ignored-{0}', github.run_id) ||
+    format('botfix-{0}', github.event.pull_request.number ||
+    github.event.issue.number || github.run_id) }}
+  cancel-in-progress: true
+
+jobs:
+  botfix:
+    # pull_request_target runs with write permissions: only maintainers may
+    # trigger it. Labeled path additionally requires an open PR.
+    if: >-
+      ((github.event_name == 'pull_request_target' &&
+        (github.event.pull_request.author_association == 'MEMBER' ||
+         github.event.pull_request.author_association == 'OWNER' ||
+         github.event.pull_request.author_association == 'COLLABORATOR') &&
+        github.event.action == 'labeled' &&
+        github.event.label.name == 'autofix-ready' &&
+        github.event.pull_request.state == 'open') ||
+       (github.event.issue.pull_request &&
+        github.event.comment.user.type != 'Bot' &&
+        (github.event.comment.author_association == 'MEMBER' ||
+         github.event.comment.author_association == 'OWNER' ||
+         github.event.comment.author_association == 'COLLABORATOR') &&
+        startsWith(github.event.comment.body, '/botfix')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: true
+
+      - name: Set up bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Fix review threads
+        uses: anomalyco/opencode/github@2c14fc5586fe0b88e5c04732d2e846769cc35671
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.BOTFIX_DEEPSEEK_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          model: deepseek/deepseek-chat
+          use_github_token: true
+          prompt: |
+            You are fixing review findings on this pull request. Steps:
+            1. Read every unresolved review thread (inline PR comments and
+               review comments from CodeRabbit, Qodo, Greptile, DeepSource,
+               Cubic, and OpenCodeReview).
+            2. Implement ONLY mechanical, unambiguous fixes: typos in
+               comments, missing includes, const-correctness, formatting
+               leftovers, dead code with an exact deletion instruction,
+               renames spelled out by the reviewer. Each finding you fix
+               must quote the reviewer's exact instruction.
+            3. NEVER touch .github/ workflows, never merge, never force-push,
+               never change behavior or APIs, never act on design findings
+               (choose-between-A-and-B, rearchitect, should-this-exist).
+               For those, reply in the thread explaining why you skip them.
+            4. Group the mechanical fixes into a few logical commits
+               (message prefix `botfix: `) and push them to the PR branch.
+            5. Reply in every thread you acted on (what commit fixed it) and
+               resolve the thread. Reply in skipped threads with the reason.
