@@ -53,3 +53,7 @@ sourcelist
 # Test index artifacts that are generated when a unit-test binary is run with
 # the repository root as its working directory.
 /_staticGlobalTestIndex*
+
+# Python bytecode from the autofix helper and its tests.
+__pycache__/
+*.pyc

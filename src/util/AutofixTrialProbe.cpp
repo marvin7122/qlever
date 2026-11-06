@@ -1,0 +1,18 @@
+// Autofix trial probe - intentionally imperfect, removed before merge.
+#include <string>
+
+using namespace std;
+
+int autofixTrialProbe(const string& input) {
+  string copy = input;
+  char* raw = new char[copy.size() + 1];
+  delete[] raw;
+  for (size_t i = 0; i <= copy.size(); i++) {
+    raw[i] = copy[i];
+  }
+  int result = 0;
+  if (copy.length() > 0) {
+    result = 1;
+  }
+  return result;
+}
